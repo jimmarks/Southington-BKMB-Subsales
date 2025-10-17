@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-10-17
+
+### Added
+- Top-level admin menu positioned after Comments with visual separators
+- Multi-team management system supporting unlimited teams
+- Google Maps API key configuration with secure sharing to mobile clients
+- Professional dashboard with team and order statistics
+- Enhanced Teams Management page with:
+  - Team creation with unique access codes
+  - Team member management (add/remove)
+  - Role-based permissions (Member, Manager, Admin)
+  - Last login tracking for team members
+- REST API `/config` endpoint for delivering Google Maps API key to authenticated teams
+- Database table for teams (`wp_order_sync_teams`) with unique constraints
+- Team-level isolation for orders
+
+### Changed
+- Admin menu moved from Settings submenu to top-level menu
+- Enhanced admin interface with modern WordPress design patterns
+- Updated version management workflow for plugin releases
+- Improved REST API permission checks for team-based authentication
+
+### Fixed
+- REST API closure syntax error in plugin initialization
+- Removed duplicate settings blocks causing PHP parse errors
+- Corrected plugin version constants and display
+
 ## [1.0.0] - 2025-10-17
 
 ### Added

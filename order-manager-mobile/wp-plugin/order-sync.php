@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Order Sync
  * Description: A plugin to synchronize orders between the mobile app and WordPress backend.
- * Version: 1.0
+ * Version: 1.1.0
  * Author: Your Name
  */
 
@@ -577,119 +577,7 @@ function order_sync_orders_page() {
             <?php submit_button(); ?>
         </form>
         
-        <!-- Team Management Section -->
-        <h2>Team Management</h2>
-        
-        <!-- Add Team Member Form -->
-        <h3>Add Team Member</h3>
-        <form method="post" action="">
-            <?php wp_nonce_field( 'order_sync_team_nonce' ); ?>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">Name</th>
-                    <td><input type="text" name="team_name" class="regular-text" required /></td>
-                </tr>
-                <tr>
-                    <th scope="row">Email</th>
-                    <td><input type="email" name="team_email" class="regular-text" required /></td>
-                </tr>
-                <tr>
-                    <th scope="row">Role</th>
-                    <td>
-                        <select name="team_role">
-                            <option value="member">Member</option>
-                            <option value="manager">Manager</option>
-                            <option value="admin">Admin</option>
-                        </select>
-                    </td>
-                </tr>
-            </table>
-            <?php submit_button( 'Add Team Member', 'secondary', 'add_team_member' ); ?>
-        </form>
-        
-        <!-- Team Members List -->
-        <h3>Current Team Members</h3>
-        <?php
-        $team_members = order_sync_get_team_members();
-        if ( ! empty( $team_members ) ) :
-        ?>
-        <table class="wp-list-table widefat fixed striped">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Added</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ( $team_members as $member ) : ?>
-                <tr>
-                    <td><?php echo esc_html( $member['name'] ); ?></td>
-                    <td><?php echo esc_html( $member['email'] ); ?></td>
-                    <td><?php echo esc_html( ucfirst( $member['role'] ) ); ?></td>
-                    <td><?php echo esc_html( date( 'M j, Y', strtotime( $member['created_at'] ) ) ); ?></td>
-                    <td>
-                        <span class="status-<?php echo esc_attr( $member['status'] ); ?>">
-                            <?php echo esc_html( ucfirst( $member['status'] ) ); ?>
-                        </span>
-                    </td>
-                    <td>
-                        <form method="post" action="" style="display: inline;">
-                            <?php wp_nonce_field( 'order_sync_team_nonce' ); ?>
-                            <input type="hidden" name="member_id" value="<?php echo esc_attr( $member['id'] ); ?>" />
-                            <input type="submit" name="remove_team_member" value="Remove" class="button button-small" 
-                                   onclick="return confirm('Are you sure you want to remove this team member?')" />
-                        </form>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-        <?php else : ?>
-        <p>No team members added yet.</p>
-        <?php endif; ?>
-        
-        <h2>Order Statistics</h2>
-        <?php
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
-        $order_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$table_name}" );
-        $team_count = count( $team_members );
-        ?>
-        <div class="stats-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 20px;">
-            <div class="stat-card" style="background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 4px;">
-                <h3 style="margin: 0 0 10px 0; color: #23282d;">Team Name</h3>
-                <p style="font-size: 18px; font-weight: bold; margin: 0; color: #0073aa; font-family: monospace;">
-                    <?php echo ! empty( $team_name ) ? esc_html( $team_name ) : 'Not Set'; ?>
-                </p>
-            </div>
-            <div class="stat-card" style="background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 4px;">
-                <h3 style="margin: 0 0 10px 0; color: #23282d;">Access Code</h3>
-                <p style="font-size: 18px; font-weight: bold; margin: 0; color: #0073aa; font-family: monospace;">
-                    <?php echo ! empty( $access_code ) ? esc_html( $access_code ) : 'Not Set'; ?>
-                </p>
-            </div>
-            <div class="stat-card" style="background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 4px;">
-                <h3 style="margin: 0 0 10px 0; color: #23282d;">Total Orders</h3>
-                <p style="font-size: 24px; font-weight: bold; margin: 0; color: #0073aa;"><?php echo intval( $order_count ); ?></p>
-            </div>
-            <div class="stat-card" style="background: #fff; padding: 20px; border: 1px solid #ddd; border-radius: 4px;">
-                <h3 style="margin: 0 0 10px 0; color: #23282d;">Team Members</h3>
-                <p style="font-size: 24px; font-weight: bold; margin: 0; color: #0073aa;"><?php echo intval( $team_count ); ?></p>
-            </div>
-        </div>
-        
-        <style>
-        .status-active { color: #46b450; font-weight: bold; }
-        .status-pending { color: #ffb900; font-weight: bold; }
-        .status-inactive { color: #dc3232; font-weight: bold; }
-        </style>
-    </div>
-    <?php
-}
+
 
 // Create database table on activation
 register_activation_hook( __FILE__, 'order_sync_create_table' );
@@ -932,6 +820,7 @@ add_action( 'rest_api_init', function () {
         'callback' => 'get_app_config',
         'permission_callback' => 'order_sync_check_permissions',
     ));
+});
 // Permission callback for API endpoints
 function order_sync_check_permissions( WP_REST_Request $request ) {
     // Check for Google Maps API access - always allow config endpoint for authenticated teams
@@ -1171,7 +1060,7 @@ function get_app_config( WP_REST_Request $request ) {
     
     return new WP_REST_Response( array(
         'google_maps_api_key' => $google_maps_api_key,
-        'app_version' => '1.0.0'
+        'app_version' => '1.1.0'
     ), 200 );
 }
 ?>
