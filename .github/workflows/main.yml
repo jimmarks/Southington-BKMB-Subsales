@@ -1,0 +1,55 @@
+name: Build WordPress Plugin Zip
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    name: Build plugin zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP (for composer)
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+
+      - name: Ensure zip is available
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Install Composer dependencies (if any)
+        working-directory: ./order-manager-mobile-1/wp-plugin
+        run: |
+          if [ -f composer.json ]; then
+            composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+          else
+            echo "No composer.json found, skipping composer install"
+          fi
+
+      - name: Build plugin zip
+        run: |
+          PLUGIN_PARENT="order-manager-mobile-1"
+          PLUGIN_DIR="wp-plugin"
+          OUT_ZIP="southington-order-manager.zip"
+          # ensure we are in repo root
+          rm -f "$OUT_ZIP"
+          cd "$PLUGIN_PARENT"
+          # zip the plugin directory so that the top-level folder in the zip is "wp-plugin"
+          zip -r "../$OUT_ZIP" "$PLUGIN_DIR" -x "**/.git/**" "**/.DS_Store" "**/node_modules/**"
+          cd ..
+          ls -lh "$OUT_ZIP"
+        shell: bash
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: southington-wordpress-plugin
+          path: southington-order-manager.zip
