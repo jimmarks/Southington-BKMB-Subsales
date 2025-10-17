@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>API_KEY</key>
+    <string>YOUR_API_KEY_HERE</string>
+    <key>GCM_SENDER_ID</key>
+    <string>YOUR_GCM_SENDER_ID_HERE</string>
+    <key>PROJECT_ID</key>
+    <string>YOUR_PROJECT_ID_HERE</string>
+    <key>STORAGE_BUCKET</key>
+    <string>YOUR_STORAGE_BUCKET_HERE</string>
+    <key>DATABASE_URL</key>
+    <string>YOUR_DATABASE_URL_HERE</string>
+    <key>REVERSE_CLIENT_ID</key>
+    <string>YOUR_REVERSE_CLIENT_ID_HERE</string>
+    <key>CLIENT_ID</key>
+    <string>YOUR_CLIENT_ID_HERE</string>
+</dict>
+</plist>
