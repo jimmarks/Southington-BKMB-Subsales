@@ -78,23 +78,24 @@ npm start
 ### WordPress Plugin Setup
 1. Upload `wp-plugin/order-sync.php` to WordPress `/wp-content/plugins/`
 2. Activate the plugin through the WordPress admin 'Plugins' menu
-3. Go to **Settings > Order Sync** to configure the plugin
-4. Set an API key for mobile app authentication
-5. Set a team name and access code for mobile app login
+3. Navigate to **BKMB Subsales** in the main admin menu (located after Comments)
+4. Configure Google Maps API key in Settings
+5. Create teams with unique names and access codes in Teams section
 6. Add team members with appropriate roles (Member, Manager, Admin)
 7. Configure sync interval (minimum 60 seconds)
-8. Plugin creates database tables `wp_order_sync_orders` and `wp_order_sync_team_members` on activation
-9. Ensure WordPress REST API is enabled
+8. Plugin creates database tables `wp_order_sync_orders`, `wp_order_sync_teams`, and `wp_order_sync_team_members` on activation
+9. Teams can access Google Maps API key via mobile app after authentication
 
 ### WordPress Plugin Features
-- **Admin Interface**: Settings page at WP Admin > Settings > Order Sync
-- **Team Authentication**: Set team name and access code for mobile app login
-- **Team Management**: Add/remove team members with different roles (Member, Manager, Admin)
-- **Database**: Custom tables for order storage and team member management
-- **API Security**: Multiple authentication methods (API key, team login, individual member credentials)
-- **CRUD Operations**: Full REST API for orders and team management
+- **Top-Level Admin Menu**: Located after Comments with separators for easy access
+- **Multi-Team Management**: Support for unlimited teams with unique access codes
+- **Google Maps Integration**: API key management with sharing to mobile clients
+- **Professional Admin Interface**: Dashboard with statistics and team management
+- **Database**: Custom tables for orders, teams, and team member management
+- **API Security**: Team-based authentication with Google Maps API sharing
+- **CRUD Operations**: Full REST API for orders and multi-team management
 - **Permission Control**: Requires `manage_options` capability for admin access
-- **Mobile App Login**: Team name + access code required for mobile app authentication
+- **Mobile App Support**: Team-based login with Google Maps API key delivery
 
 ## Project-Specific Conventions
 
