@@ -1,0 +1,24 @@
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import AuthScreen from '../screens/AuthScreen';
+import OrdersScreen from '../screens/OrdersScreen';
+import OrderScreen from '../screens/OrderScreen';
+import ReportsScreen from '../screens/ReportsScreen';
+
+const Stack = createStackNavigator();
+
+const AppNavigator = () => {
+  return (
+    <NavigationContainer>
+      <Stack.Navigator initialRouteName="Auth">
+        <Stack.Screen name="Auth" component={AuthScreen} />
+        <Stack.Screen name="Orders" component={OrdersScreen} />
+        <Stack.Screen name="OrderDetail" component={OrderScreen} />
+        <Stack.Screen name="Reports" component={ReportsScreen} />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+};
+
+export default AppNavigator;
