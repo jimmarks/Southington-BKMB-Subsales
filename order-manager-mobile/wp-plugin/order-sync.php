@@ -73,15 +73,7 @@ add_action( 'admin_menu', 'order_sync_admin_menu' );
 
 // Add admin menu item
 function order_sync_admin_menu() {
-    global $menu;
-    
-    // Find the position after Comments (25)
-    $position = 26;
-    
-    // Add separator before our menu
-    $menu[$position - 0.5] = array( '', 'read', 'separator-before-order-sync', '', 'wp-menu-separator' );
-    
-    // Add main menu item
+    // Add main menu item at position 26 (after Comments at 25)
     add_menu_page(
         'BKMB Subsales Management',           // Page title
         'BKMB Subsales',                     // Menu title
@@ -89,7 +81,7 @@ function order_sync_admin_menu() {
         'bkmb-subsales-management',          // Menu slug
         'order_sync_main_page',              // Function
         'dashicons-clipboard',               // Icon
-        $position                            // Position
+        26                                   // Position (after Comments)
     );
     
     // Add submenu pages
@@ -119,9 +111,6 @@ function order_sync_admin_menu() {
         'bkmb-subsales-orders',
         'order_sync_orders_page'
     );
-    
-    // Add separator after our menu
-    $menu[$position + 0.5] = array( '', 'read', 'separator-after-order-sync', '', 'wp-menu-separator' );
 }
 
 // Main dashboard page

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.1] - 2025-10-17
+## [1.1.1] - 2025-10-18
 
 ### Fixed
 - Fixed database table creation on plugin activation using proper dbDelta SQL formatting
@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed team creation error handling with specific validation messages
 - Consolidated activation hooks into single function for reliable initialization
 - Added activation notice to confirm successful database setup
+- **Fixed menu separator conflict that caused Comments menu to disappear when plugin activated**
+- Removed custom menu separators that interfered with WordPress core menu system
 
 ## [1.1.0] - 2025-10-17
 
