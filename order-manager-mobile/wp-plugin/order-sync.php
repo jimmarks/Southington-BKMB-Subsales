@@ -1,14 +1,71 @@
 <?php
 /**
- * Plugin Name: Order Sync
- * Description: A plugin to synchronize orders between the mobile app and WordPress backend.
- * Version: 1.1.0
- * Author: Your Name
+ * Plugin Name: BKMB Subsales Management
+ * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
+ * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface.
+ * Version: 1.1.1
+ * Author: Jim Marks
+ * Author URI: https://github.com/jimmarks
+ * Requires at least: 5.0
+ * Tested up to: 6.4
+ * Requires PHP: 7.4
+ * License: MIT
+ * License URI: https://opensource.org/licenses/MIT
+ * Text Domain: bkmb-subsales-management
+ * Domain Path: /languages
+ * Network: false
  */
 
 // Exit if accessed directly
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
+}
+
+// Define plugin constants
+define( 'BKMB_SUBSALES_VERSION', '1.1.0' );
+define( 'BKMB_SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+define( 'BKMB_SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
+define( 'BKMB_SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+
+// Activation hook - runs when plugin is activated
+register_activation_hook( __FILE__, 'bkmb_subsales_activate' );
+
+function bkmb_subsales_activate() {
+    // Check WordPress version
+    global $wp_version;
+    if ( version_compare( $wp_version, '5.0', '<' ) ) {
+        deactivate_plugins( BKMB_SUBSALES_PLUGIN_BASENAME );
+        wp_die( 'BKMB Subsales Management requires WordPress 5.0 or higher.' );
+    }
+    
+    // Create database tables
+    order_sync_create_table();
+    
+    // Set activation flag for admin notice
+    set_transient( 'bkmb_subsales_activated', true, 30 );
+}
+
+// Show admin notice on activation
+add_action( 'admin_notices', 'bkmb_subsales_activation_notice' );
+
+function bkmb_subsales_activation_notice() {
+    if ( get_transient( 'bkmb_subsales_activated' ) ) {
+        delete_transient( 'bkmb_subsales_activated' );
+        
+        global $wpdb;
+        $teams_table = $wpdb->prefix . 'order_sync_teams';
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$teams_table}'" ) === $teams_table;
+        
+        if ( $table_exists ) {
+            echo '<div class="notice notice-success is-dismissible">';
+            echo '<p><strong>BKMB Subsales Management activated successfully!</strong> Database tables created. You can now manage teams and orders from the <a href="' . admin_url( 'admin.php?page=bkmb-subsales-management' ) . '">BKMB Subsales</a> menu.</p>';
+            echo '</div>';
+        } else {
+            echo '<div class="notice notice-error is-dismissible">';
+            echo '<p><strong>BKMB Subsales Management:</strong> Warning - Database tables may not have been created properly. Please deactivate and reactivate the plugin.</p>';
+            echo '</div>';
+        }
+    }
 }
 
 // Hook to add admin menu
@@ -234,11 +291,32 @@ function order_sync_teams_page() {
         $access_code = sanitize_text_field( $_POST['access_code'] );
         $description = sanitize_text_field( $_POST['description'] );
         
-        if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-            if ( order_sync_add_team( $team_name, $access_code, $description ) ) {
-                echo '<div class="notice notice-success"><p>Team added successfully!</p></div>';
+        if ( empty( $team_name ) || empty( $access_code ) ) {
+            echo '<div class="notice notice-error"><p>Team name and access code are required.</p></div>';
+        } else {
+            // Check if database table exists
+            global $wpdb;
+            $teams_table = $wpdb->prefix . 'order_sync_teams';
+            $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$teams_table}'" ) === $teams_table;
+            
+            if ( ! $table_exists ) {
+                echo '<div class="notice notice-error"><p>Error: Database tables are not created. Please deactivate and reactivate the plugin.</p></div>';
             } else {
-                echo '<div class="notice notice-error"><p>Error adding team. Team name or access code may already exist.</p></div>';
+                if ( order_sync_add_team( $team_name, $access_code, $description ) ) {
+                    echo '<div class="notice notice-success"><p>Team added successfully!</p></div>';
+                } else {
+                    // Get more specific error info
+                    $existing_name = $wpdb->get_var( $wpdb->prepare( "SELECT name FROM {$teams_table} WHERE name = %s", $team_name ) );
+                    $existing_code = $wpdb->get_var( $wpdb->prepare( "SELECT access_code FROM {$teams_table} WHERE access_code = %s", $access_code ) );
+                    
+                    if ( $existing_name ) {
+                        echo '<div class="notice notice-error"><p>Error: A team with the name "' . esc_html( $team_name ) . '" already exists. Please choose a different name.</p></div>';
+                    } elseif ( $existing_code ) {
+                        echo '<div class="notice notice-error"><p>Error: The access code "' . esc_html( $access_code ) . '" is already in use. Please choose a different code.</p></div>';
+                    } else {
+                        echo '<div class="notice notice-error"><p>Error adding team. Database error: ' . esc_html( $wpdb->last_error ) . '</p></div>';
+                    }
+                }
             }
         }
     }
@@ -536,52 +614,9 @@ function order_sync_orders_page() {
     </div>
     <?php
 }
-    
-    ?>
-    <div class="wrap">
-        <h1>Order Sync Settings</h1>
-        
-        <!-- Main Settings Form -->
-        <form method="post" action="">
-            <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">API Key</th>
-                    <td>
-                        <input type="text" name="api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" />
-                        <p class="description">Enter your mobile app API key for authentication.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Team Name</th>
-                    <td>
-                        <input type="text" name="team_name" value="<?php echo esc_attr( $team_name ); ?>" class="regular-text" />
-                        <p class="description">Enter your team name for mobile app authentication.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Access Code</th>
-                    <td>
-                        <input type="text" name="access_code" value="<?php echo esc_attr( $access_code ); ?>" class="regular-text" />
-                        <p class="description">Set an access code for team members to join the system.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Sync Interval (seconds)</th>
-                    <td>
-                        <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
-                        <p class="description">How often to sync orders (minimum 60 seconds).</p>
-                    </td>
-                </tr>
-            </table>
-            <?php submit_button(); ?>
-        </form>
-        
 
 
 // Create database table on activation
-register_activation_hook( __FILE__, 'order_sync_create_table' );
-
 function order_sync_create_table() {
     global $wpdb;
     
@@ -591,7 +626,7 @@ function order_sync_create_table() {
     
     $charset_collate = $wpdb->get_charset_collate();
     
-    // Orders table
+    // Orders table - dbDelta requires specific format: no IF NOT EXISTS, two spaces after PRIMARY KEY
     $sql = "CREATE TABLE $table_name (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
         order_id varchar(255) NOT NULL,
@@ -601,7 +636,7 @@ function order_sync_create_table() {
         sync_status varchar(50) DEFAULT 'pending',
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
+        PRIMARY KEY  (id),
         UNIQUE KEY order_id (order_id),
         KEY team_id (team_id)
     ) $charset_collate;";
@@ -615,7 +650,7 @@ function order_sync_create_table() {
         status varchar(50) NOT NULL DEFAULT 'active',
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
+        PRIMARY KEY  (id),
         UNIQUE KEY name (name),
         UNIQUE KEY access_code (access_code)
     ) $charset_collate;";
@@ -631,7 +666,7 @@ function order_sync_create_table() {
         last_login datetime,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id),
+        PRIMARY KEY  (id),
         UNIQUE KEY email (email),
         KEY team_id (team_id)
     ) $charset_collate;";
@@ -647,6 +682,21 @@ function order_sync_add_team( $name, $access_code, $description = '' ) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'order_sync_teams';
     
+    // Check if team name or access code already exists
+    $existing = $wpdb->get_row( 
+        $wpdb->prepare(
+            "SELECT id FROM {$table_name} WHERE name = %s OR access_code = %s",
+            $name,
+            $access_code
+        )
+    );
+    
+    if ( $existing ) {
+        // Log the specific conflict for debugging
+        error_log( 'BKMB Subsales: Team creation failed - name or access code already exists: ' . $name );
+        return false;
+    }
+    
     $result = $wpdb->insert(
         $table_name,
         array(
@@ -658,7 +708,13 @@ function order_sync_add_team( $name, $access_code, $description = '' ) {
         array( '%s', '%s', '%s', '%s' )
     );
     
-    return $result !== false;
+    if ( $result === false ) {
+        // Log the database error
+        error_log( 'BKMB Subsales: Database error creating team: ' . $wpdb->last_error );
+        return false;
+    }
+    
+    return true;
 }
 
 function order_sync_remove_team( $team_id ) {
