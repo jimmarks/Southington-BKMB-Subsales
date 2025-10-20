@@ -24,12 +24,12 @@ const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
         state.config.config?.google_maps_api_key
     );
     
-    // Show loading state if no API key is available yet
+    // Show offline address input if no API key or network issues
     if (!googleMapsApiKey) {
         return (
             <View>
                 <TextInput
-                    placeholder={placeholder}
+                    placeholder={`${placeholder} (Manual Entry)`}
                     value={address}
                     onChangeText={(text) => {
                         setAddress(text);
@@ -44,9 +44,11 @@ const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({
                         padding: 8,
                         backgroundColor: '#fff',
                     }}
+                    multiline={true}
+                    numberOfLines={2}
                 />
-                <Text style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                    Maps integration loading...
+                <Text style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                    📍 Enter full address manually (Maps offline)
                 </Text>
             </View>
         );

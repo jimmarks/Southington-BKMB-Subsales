@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, Button, Alert } from 'react-native';
-import AddressAutocomplete from '../map/AddressAutocomplete';
+import SmartAddressInput from '../map/SmartAddressInput';
 import { useDispatch } from 'react-redux';
 import { addOrder } from '../../store/ordersSlice';
 
@@ -57,10 +57,13 @@ const OrderForm = () => {
                 value={name}
                 onChangeText={setName}
             />
-            <AddressAutocomplete
-                placeholder="Address"
+            <SmartAddressInput
+                placeholder="Customer Address"
                 value={address}
                 onChangeText={setAddress}
+                onAddressSelect={(data) => {
+                    setAddress(data.description);
+                }}
             />
             <TextInput
                 placeholder="Phone Number"
