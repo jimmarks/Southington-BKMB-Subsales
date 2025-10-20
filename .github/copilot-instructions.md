@@ -5,16 +5,18 @@ This is a **React Native order management mobile app** with WordPress backend in
 
 ## Architecture Overview
 
-### Mobile App (`order-manager-mobile-1/`)
-- **Tech Stack**: React Native 0.64 + TypeScript + Redux (legacy) + React Navigation 6
-- **State Management**: Basic Redux store with `authSlice` and `ordersSlice` (needs RTK migration)
+### Mobile App (`mobile-app/`)
+- **Tech Stack**: React Native 0.64 + TypeScript + Redux Toolkit + React Navigation 6
+- **State Management**: RTK store with `authSlice`, `ordersSlice`, and `configSlice`
 - **Navigation**: Stack-based navigation with 4 main screens (Auth, Orders, OrderDetail, Reports)
-- **Service Layer**: Basic services in `authService`, `orderService`, and `wpSyncService`
+- **Service Layer**: Services in `authService`, `orderService`, `wpSyncService`, and `configService`
+- **Smart Features**: Automatic online/offline address input switching with local caching
 
-### WordPress Plugin (`bkmb-subsales-management/`)
-- **Backend**: Full-featured WordPress plugin with admin interface and REST API
-- **API Base**: `/wp-json/order-manager/v1/` for order operations
+### WordPress Plugin (`wordpress-plugin/`)
+- **Backend**: Full-featured WordPress plugin with professional admin interface and REST API
+- **API Base**: `/wp-json/order-manager/v1/` for orders, auth, and config endpoints
 - **Authentication**: Multi-team system with access codes (not JWT-based)
+- **Database**: Custom tables for orders, teams, and team members
 
 ## Key Architectural Patterns
 
@@ -41,7 +43,7 @@ export const functionName = async (params) => {
 - Orders state: `orders[]`, `isSyncing` flag
 
 ### Mobile App Structure
-- **Active project**: `order-manager-mobile-1/` (not `order-manager-mobile/`)
+- **Active project**: `mobile-app/` (clean, renamed from `order-manager-mobile-1/`)
 - **Missing dependencies**: Redux Toolkit not in package.json but used in slices
 - **Outdated React Native**: Version 0.64.0 (consider upgrading)
 - **Google Maps**: Uses `react-native-google-places-autocomplete` (needs API key setup)
@@ -94,7 +96,7 @@ For the best Android testing experience with Android Studio Narwhal:
 - **Dynamic Config**: Google Maps API key fetched from WordPress backend via `/config` endpoint after team authentication
 
 ### WordPress Plugin Setup
-1. Upload `wp-plugin/order-sync.php` to WordPress `/wp-content/plugins/`
+1. Upload `wordpress-plugin/bkmb-subsales-management.php` to WordPress `/wp-content/plugins/`
 2. Activate the plugin through the WordPress admin 'Plugins' menu
 3. Navigate to **BKMB Subsales** in the main admin menu (located after Comments)
 4. Configure Google Maps API key in Settings
@@ -143,7 +145,7 @@ For the best Android testing experience with Android Studio Narwhal:
 
 ### Adding New API Endpoints
 1. Add function to appropriate service file (`authService`, `orderService`, `wpSyncService`)
-2. Update WordPress plugin `order-sync.php` with corresponding REST route
+2. Update WordPress plugin `wordpress-plugin/bkmb-subsales-management.php` with corresponding REST route
 3. Update TypeScript interfaces in `src/types/index.ts`
 
 ### State Management Updates
