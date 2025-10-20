@@ -1,20 +1,68 @@
 import React, { useState } from 'react';
 import { TextInput, View, FlatList, Text, TouchableOpacity } from 'react-native';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
+import { useSelector } from 'react-redux';
+import { RootState } from '../../store';
 
-const AddressAutocomplete = ({ onAddressSelect }) => {
-    const [address, setAddress] = useState('');
+interface AddressAutocompleteProps {
+    onAddressSelect?: (data: any, details: any) => void;
+    placeholder?: string;
+    value?: string;
+    onChangeText?: (text: string) => void;
+}
+
+const AddressAutocomplete: React.FC<AddressAutocompleteProps> = ({ 
+    onAddressSelect, 
+    placeholder = 'Enter address',
+    value,
+    onChangeText 
+}) => {
+    const [address, setAddress] = useState(value || '');
+    
+    // Get Google Maps API key from Redux store
+    const googleMapsApiKey = useSelector((state: RootState) => 
+        state.config.config?.google_maps_api_key
+    );
+    
+    // Show loading state if no API key is available yet
+    if (!googleMapsApiKey) {
+        return (
+            <View>
+                <TextInput
+                    placeholder={placeholder}
+                    value={address}
+                    onChangeText={(text) => {
+                        setAddress(text);
+                        onChangeText?.(text);
+                    }}
+                    style={{
+                        height: 38,
+                        color: '#5d5d5d',
+                        fontSize: 16,
+                        borderWidth: 1,
+                        borderColor: '#ccc',
+                        padding: 8,
+                        backgroundColor: '#fff',
+                    }}
+                />
+                <Text style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+                    Maps integration loading...
+                </Text>
+            </View>
+        );
+    }
 
     return (
         <View>
             <GooglePlacesAutocomplete
-                placeholder='Enter address'
+                placeholder={placeholder}
                 onPress={(data, details = null) => {
                     setAddress(data.description);
-                    onAddressSelect(data, details);
+                    onChangeText?.(data.description);
+                    onAddressSelect?.(data, details);
                 }}
                 query={{
-                    key: 'YOUR_GOOGLE_MAPS_API_KEY',
+                    key: googleMapsApiKey,
                     language: 'en',
                 }}
                 styles={{
@@ -33,8 +81,15 @@ const AddressAutocomplete = ({ onAddressSelect }) => {
                     },
                 }}
                 debounce={200}
+                enablePoweredByContainer={false}
+                textInputProps={{
+                    value: address,
+                    onChangeText: (text: string) => {
+                        setAddress(text);
+                        onChangeText?.(text);
+                    }
+                }}
             />
-            <Text>{address}</Text>
         </View>
     );
 };

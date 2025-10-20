@@ -1,31 +1,32 @@
 # GitHub Copilot Instructions
 
 ## Project Overview
-This is a **React Native order management mobile app** with WordPress backend integration. The app features user authentication, Google Maps integration, and real-time order synchronization with a WordPress plugin.
+This is a **React Native order management mobile app** with WordPress backend integration for subsales management. The app features team-based authentication, Google Maps integration, and order synchronization with a comprehensive WordPress plugin.
 
 ## Architecture Overview
 
-### Mobile App (`order-manager-mobile/`)
-- **Tech Stack**: React Native 0.64 + TypeScript + Redux Toolkit + React Navigation
-- **State Management**: Redux store with `authSlice` and `ordersSlice` (RTK patterns)
-- **Navigation**: Stack-based navigation with 5 main screens (Auth, Orders, Order, Map, Reports)
-- **Service Layer**: Separated into `authService`, `orderService`, and `wpSyncService`
+### Mobile App (`order-manager-mobile-1/`)
+- **Tech Stack**: React Native 0.64 + TypeScript + Redux (legacy) + React Navigation 6
+- **State Management**: Basic Redux store with `authSlice` and `ordersSlice` (needs RTK migration)
+- **Navigation**: Stack-based navigation with 4 main screens (Auth, Orders, OrderDetail, Reports)
+- **Service Layer**: Basic services in `authService`, `orderService`, and `wpSyncService`
 
-### WordPress Integration (`wp-plugin/`)
-- **Backend**: Custom WordPress plugin with REST API endpoints
+### WordPress Plugin (`bkmb-subsales-management/`)
+- **Backend**: Full-featured WordPress plugin with admin interface and REST API
 - **API Base**: `/wp-json/order-manager/v1/` for order operations
-- **Authentication**: JWT token-based auth via WordPress REST API
+- **Authentication**: Multi-team system with access codes (not JWT-based)
 
 ## Key Architectural Patterns
 
 ### Service Architecture
-Services follow a consistent pattern with error handling and async/await:
+Services use basic axios/fetch patterns with error handling:
 ```typescript
-// Pattern: All services use axios with proper error handling
+// Pattern: Basic service structure in src/services/
 export const functionName = async (params) => {
     try {
-        const response = await axios.method(url, data, config);
-        return response.data;
+        const response = await fetch(url, options);
+        const data = await response.json();
+        return data;
     } catch (error) {
         console.error('Error description:', error);
         throw error;
@@ -34,14 +35,16 @@ export const functionName = async (params) => {
 ```
 
 ### State Management
-- Use **Redux Toolkit slices** for state management
-- Follow the existing slice pattern in `src/store/authSlice.ts`
-- All slices export actions and reducer, imported in `src/store/index.ts`
+- **Basic Redux**: Simple slice patterns without RTK
+- **Critical**: `package.json` shows Redux but slices use RTK syntax - needs dependency alignment
+- Auth state: `isAuthenticated`, `teamName`, `code` (no token-based auth)
+- Orders state: `orders[]`, `isSyncing` flag
 
-### Component Structure
-- **Screens** (`src/screens/`): Top-level navigation components
-- **Components** (`src/components/`): Organized by feature (auth/, orders/, map/)
-- **Shared Components**: Place reusable UI components in appropriate feature folders
+### Mobile App Structure
+- **Active project**: `order-manager-mobile-1/` (not `order-manager-mobile/`)
+- **Missing dependencies**: Redux Toolkit not in package.json but used in slices
+- **Outdated React Native**: Version 0.64.0 (consider upgrading)
+- **Google Maps**: Uses `react-native-google-places-autocomplete` (needs API key setup)
 
 ### API Integration
 - **Base URL**: Configure in `src/services/api/index.ts`
@@ -138,9 +141,9 @@ npm start
 - **Conflict Resolution**: Last-write-wins strategy for order updates
 
 ### Authentication Flow
-- Login via WordPress JWT Auth plugin
-- Token stored in Redux state and AsyncStorage for persistence
-- All API calls include Bearer token for user context
+- Team-based login with access codes (not JWT tokens)
+- Team credentials stored in Redux state and AsyncStorage
+- All API calls include team headers for authentication
 
 ## Testing Strategy
 - Jest configuration in `package.json`
