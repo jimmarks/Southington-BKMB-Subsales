@@ -1,4 +1,4 @@
-package com.tempproject;
+package com.ordermanagermobile;
 
 import com.facebook.react.ReactActivity;
 
