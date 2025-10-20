@@ -72,11 +72,26 @@ npm run android
 npm start
 ```
 
+### Android Studio Testing (Recommended)
+For the best Android testing experience with Android Studio Narwhal:
+
+1. **Open in Android Studio**: Open `android/` folder in Android Studio
+2. **Sync Project**: Let Gradle sync and download dependencies
+3. **Create AVD**: Tools → AVD Manager → Create Virtual Device (API 30+ recommended)
+4. **Start Metro**: `npm start` in the project root (dev container)
+5. **Run App**: Use Android Studio's Run button or `npm run android`
+
+### Troubleshooting Android Setup
+- **Missing Android files**: If `android/` lacks Gradle files, run `npx react-native init TempProject` and copy Android structure
+- **Google Services**: Ensure `android/app/google-services.json` exists for Maps functionality
+- **Port forwarding**: Use `adb reverse tcp:8081 tcp:8081` if Metro connection fails
+
 ### Critical Configuration Files
-- **Environment**: Copy `.env.example` to `.env` (contains WordPress URL and API keys)
+- **Environment**: Copy `.env.example` to `.env` (contains WordPress URL - API keys fetched dynamically)
 - **Google Services**: 
   - Android: `android/app/google-services.json`
   - iOS: `ios/App/GoogleService-Info.plist`
+- **Dynamic Config**: Google Maps API key fetched from WordPress backend via `/config` endpoint after team authentication
 
 ### WordPress Plugin Setup
 1. Upload `wp-plugin/order-sync.php` to WordPress `/wp-content/plugins/`
@@ -108,13 +123,16 @@ npm start
 - **Hooks**: Custom hooks like `useAuth` in `src/hooks/`
 
 ### API URL Configuration
-- **Mobile**: Update `API_BASE_URL` in `src/services/api/index.ts`
+- **Mobile**: Update `API_BASE_URL` in `src/services/api/index.ts` and `src/services/configService.ts`
 - **WordPress**: Replace placeholder URLs in `wpSyncService.ts`
+- **Config Endpoint**: `/wp-json/order-manager/v1/config` provides Google Maps API key and app settings
 
 ### Google Maps Integration
-- Maps component in `src/components/map/MapView.tsx`
-- Used for address autofill in order forms
-- Requires Google Maps API key in environment configuration
+- Smart address components in `src/components/map/` (`SmartAddressInput`, `OfflineAddressInput`, `AddressAutocomplete`)
+- Used for address autofill in order forms with automatic online/offline fallback
+- **API Key Management**: Google Maps API key dynamically fetched from WordPress `/config` endpoint after team login
+- **Flow**: Login → `configService.fetchAppConfig()` → Store in Redux → Pass to Google Places components
+- **Caching**: API key cached locally via `AsyncStorage` for offline scenarios
 
 ## Common Development Tasks
 
