@@ -1,64 +1,63 @@
 #!/bin/bash
 
-# Simple APK Build Script for React Native with Java 21 compatibility
-# This script creates a basic debug APK
+# Build script for React Native 0.64 APK with manual JavaScript bundling
+# This script handles the compatibility issues with RN 0.64
 
-echo "🚀 Starting APK build process..."
+set -e
+
+echo "🚀 Building React Native 0.64 APK with manual bundling..."
+echo
 
 # Set up environment
-export ANDROID_HOME=/opt/android-sdk
-export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+export NODE_OPTIONS="--openssl-legacy-provider"
 
-# Navigate to project
-cd /workspaces/Southington-BKMB-Subsales/mobile-app
+cd "$(dirname "$0")"
 
-echo "📦 Installing npm dependencies..."
-npm install --force
+echo "📦 Step 1: Installing npm dependencies..."
+npm install --legacy-peer-deps --silent
 
-echo "🔧 Preparing Android build..."
+echo "🧹 Step 2: Cleaning previous builds..."
+rm -rf android/app/build
+rm -rf android/build
+rm -rf android/app/src/main/assets/index.android.bundle
 
-# Create a minimal index.js if it doesn't exist
-if [ ! -f "index.js" ]; then
-    echo "Creating index.js..."
-    cat > index.js << 'EOF'
-import {AppRegistry} from 'react-native';
-import App from './src/App';
-import {name as appName} from './package.json';
+echo "📱 Step 3: Creating assets directory..."
+mkdir -p android/app/src/main/assets
 
-AppRegistry.registerComponent(appName, () => App);
-EOF
+echo "� Step 4: Bundling JavaScript manually..."
+npx react-native bundle \
+  --platform android \
+  --dev false \
+  --entry-file index.js \
+  --bundle-output android/app/src/main/assets/index.android.bundle \
+  --assets-dest android/app/src/main/res
+
+if [ ! -f "android/app/src/main/assets/index.android.bundle" ]; then
+    echo "❌ Error: JavaScript bundle was not created!"
+    exit 1
 fi
 
-echo "🏗️ Building JavaScript bundle..."
-npx react-native bundle \
-    --platform android \
-    --dev false \
-    --entry-file index.js \
-    --bundle-output android/app/src/main/assets/index.android.bundle \
-    --assets-dest android/app/src/main/res/
+echo "✅ JavaScript bundle created: $(du -h android/app/src/main/assets/index.android.bundle | cut -f1)"
 
-echo "📱 Creating APK..."
+echo "🔨 Step 5: Building APK..."
 cd android
+./gradlew clean
+./gradlew assembleDebug
 
-# Create assets directory
-mkdir -p app/src/main/assets
-
-# Try to build with specific Java version settings
-export JAVA_OPTS="-XX:MaxMetaspaceSize=512m"
-export GRADLE_OPTS="-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2048m"
-
-# Build APK
-./gradlew assembleDebug --no-daemon --warning-mode all
-
-if [ $? -eq 0 ]; then
-    echo "✅ APK build successful!"
-    echo "📍 APK location: android/app/build/outputs/apk/debug/app-debug.apk"
-    ls -la app/build/outputs/apk/debug/ 2>/dev/null || echo "APK files not found in expected location"
+APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+if [ -f "$APK_PATH" ]; then
+    APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
+    echo
+    echo "🎉 SUCCESS! APK built successfully!"
+    echo "� Location: android/$APK_PATH"
+    echo "📊 Size: $APK_SIZE"
+    echo
+    echo "📋 Next steps:"
+    echo "1. Copy the APK to your device"
+    echo "2. Enable 'Unknown Sources' in Android settings" 
+    echo "3. Install and test the app"
 else
-    echo "❌ APK build failed. Trying alternative approach..."
-    
-    # Alternative: Try with bundled JS approach
-    echo "🔄 Trying React Native run-android with build-only flag..."
-    cd ..
-    npx react-native run-android --no-packager
+    echo "❌ Error: APK was not created!"
+    exit 1
 fi
