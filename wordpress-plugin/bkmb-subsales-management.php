@@ -1108,4 +1108,36 @@ function get_app_config( WP_REST_Request $request ) {
         'app_version' => '1.1.0'
     ), 200 );
 }
+
+/**
+ * PWA shortcode and script registration
+ */
+function bkmb_subsales_register_pwa_scripts() {
+    // Register the app script located in the plugin pwa/ folder
+    wp_register_script( 'bkmb-pwa-app', BKMB_SUBSALES_PLUGIN_URL . 'pwa/app.js', array(), BKMB_SUBSALES_VERSION, true );
+
+    $settings = array(
+        'api_base' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
+        'plugin_url' => BKMB_SUBSALES_PLUGIN_URL . 'pwa/'
+    );
+
+    wp_localize_script( 'bkmb-pwa-app', 'BKMB_PWA_SETTINGS', $settings );
+}
+add_action( 'wp_enqueue_scripts', 'bkmb_subsales_register_pwa_scripts' );
+
+function bkmb_subsales_pwa_shortcode( $atts = array() ) {
+    // Ensure script is enqueued when shortcode is present
+    wp_enqueue_script( 'bkmb-pwa-app' );
+
+    // Ensure manifest link is present in head
+    add_action( 'wp_head', function() {
+        echo '<link rel="manifest" href="' . esc_url( BKMB_SUBSALES_PLUGIN_URL . 'pwa/manifest.json' ) . '">';
+        echo '<meta name="theme-color" content="#2d6cdf">';
+    } );
+
+    // Simple container; the app script will populate UI
+    $html = '<div id="bkmb-pwa-root"></div>';
+    return $html;
+}
+add_shortcode( 'bkmb_subsales_pwa', 'bkmb_subsales_pwa_shortcode' );
 ?>
