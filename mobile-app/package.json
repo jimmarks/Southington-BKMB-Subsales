@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "react-native start",
-    "android": "react-native run-android",
-    "ios": "react-native run-ios",
+    "start:web": "npx serve -s web",
+    "build:web": "echo \"Static web (no build step)\"",
     "test": "jest",
     "lint": "eslint ."
   },

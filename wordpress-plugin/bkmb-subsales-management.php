@@ -1117,11 +1117,12 @@ function bkmb_subsales_register_pwa_scripts() {
     wp_register_script( 'bkmb-pwa-app', BKMB_SUBSALES_PLUGIN_URL . 'pwa/app.js', array(), BKMB_SUBSALES_VERSION, true );
 
     $settings = array(
-        'api_base' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
-        'plugin_url' => BKMB_SUBSALES_PLUGIN_URL . 'pwa/'
+        'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
+        'pluginBase' => BKMB_SUBSALES_PLUGIN_URL . 'pwa/'
     );
 
-    wp_localize_script( 'bkmb-pwa-app', 'BKMB_PWA_SETTINGS', $settings );
+    // Localize into a config object the frontend expects
+    wp_localize_script( 'bkmb-pwa-app', 'BKMB_PWA_CONFIG', $settings );
 }
 add_action( 'wp_enqueue_scripts', 'bkmb_subsales_register_pwa_scripts' );
 
@@ -1135,9 +1136,58 @@ function bkmb_subsales_pwa_shortcode( $atts = array() ) {
         echo '<meta name="theme-color" content="#2d6cdf">';
     } );
 
-    // Simple container; the app script will populate UI
-    $html = '<div id="bkmb-pwa-root"></div>';
-    return $html;
+    // Output the full app shell markup so the enqueued script can bind to the DOM
+    ob_start();
+    ?>
+    <div id="bkmb-pwa-root">
+        <header>
+            <h1>BKMB Subsales</h1>
+            <div id="installBox" class="hidden"><button id="installBtn">Install App</button></div>
+        </header>
+        <main>
+            <section id="loginSection">
+                <h2>Team Login</h2>
+                <p>Sign in with your team name and access code. After login the PWA install prompt will be shown (if available).</p>
+                <input id="teamName" placeholder="Team name" />
+                <input id="teamCode" placeholder="Access code" />
+                <button id="loginBtn">Login</button>
+            </section>
+            <!-- <section id="appSection" class="hidden"> -->
+            <section id="appSection">
+                <div class="row">
+                    <div class="col-2">
+                        <h2>Create Order</h2>
+                        <input id="customerName" placeholder="Customer name" />
+                        <input id="address" placeholder="Address" />
+                        <textarea id="notes" placeholder="Notes (optional)"></textarea>
+                        <button id="saveOrderBtn">Save Order (offline-capable)</button>
+                    </div>
+                    <div class="col-2">
+                        <h2>Status</h2>
+                        <div id="networkStatus" class="status-offline">Offline</div>
+                        <div id="syncStatus">Not synced</div>
+                    </div>
+                </div>
+                <section class="orders">
+                    <h3>Local Orders</h3>
+                    <div id="ordersList"></div>
+                </section>
+            </section>
+        </main>
+    </div>
+    <style>
+      /* Minimal inline styles to keep the embedded app usable */
+      #bkmb-pwa-root { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial; padding: 12px; }
+      #bkmb-pwa-root input, #bkmb-pwa-root button, #bkmb-pwa-root textarea { font-size:1rem; padding:8px; margin:4px 0; width:100%; box-sizing:border-box }
+      .row { display:flex; gap:8px }
+      .col-2 { flex:1 }
+      .order { border:1px solid #ddd; padding:8px; margin-bottom:8px }
+      .status-offline { color:orange }
+      .status-online { color:green }
+      .hidden{ display:none }
+    </style>
+    <?php
+    return ob_get_clean();
 }
 add_shortcode( 'bkmb_subsales_pwa', 'bkmb_subsales_pwa_shortcode' );
 ?>
