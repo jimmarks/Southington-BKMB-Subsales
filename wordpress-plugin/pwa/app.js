@@ -3,6 +3,7 @@
   // Prefer config injected by WP; fall back to localStorage
   const apiBase = (window.BKMB_PWA_CONFIG && window.BKMB_PWA_CONFIG.apiBase) || localStorage.getItem('API_BASE_URL') || '';
   const pluginBase = (window.BKMB_PWA_CONFIG && window.BKMB_PWA_CONFIG.pluginBase) || '';
+  const portalBase = (window.BKMB_PWA_CONFIG && window.BKMB_PWA_CONFIG.portalBase) || '';
 
   // Storage (IndexedDB preferred)
   const Storage = (function(){
@@ -56,9 +57,9 @@
   // Register service worker if config was not used elsewhere
   (function(){
     if ('serviceWorker' in navigator) {
-      // If plugin provided a pluginBase use it; otherwise fallback to site-root registration (rare)
-      const swPath = (pluginBase ? pluginBase + 'service-worker.js' : '/service-worker.js');
-      const swScope = (pluginBase ? pluginBase : '/');
+      // Prefer portalBase (site slug) if provided, otherwise pluginBase, otherwise site-root
+      const swPath = (portalBase ? portalBase + 'service-worker.js' : (pluginBase ? pluginBase + 'service-worker.js' : '/service-worker.js'));
+      const swScope = (portalBase ? portalBase : (pluginBase ? pluginBase : '/'));
       navigator.serviceWorker.register(swPath, { scope: swScope }).then(()=>console.log('sw registered')).catch(()=>{});
     }
   })();
@@ -78,9 +79,11 @@
   const apiBase = (typeof BKMB_PWA_SETTINGS !== 'undefined' && BKMB_PWA_SETTINGS.api_base) ? BKMB_PWA_SETTINGS.api_base : '/wp-json/order-manager/v1';
   const pluginUrl = (typeof BKMB_PWA_SETTINGS !== 'undefined' && BKMB_PWA_SETTINGS.plugin_url) ? BKMB_PWA_SETTINGS.plugin_url : '';
 
-  // Service worker registration scoped to plugin pwa folder
-  if ('serviceWorker' in navigator && pluginUrl) {
-    navigator.serviceWorker.register(pluginUrl + 'service-worker.js', { scope: pluginUrl })
+  // Service worker registration preferred order: portalBase (site slug) -> pluginUrl -> none
+  const portalBase2 = (window.BKMB_PWA_CONFIG && window.BKMB_PWA_CONFIG.portalBase) || '';
+  const swBase = portalBase2 || pluginUrl;
+  if ('serviceWorker' in navigator && swBase) {
+    navigator.serviceWorker.register(swBase + 'service-worker.js', { scope: swBase })
       .then(()=>console.log('BKMB PWA service worker registered'))
       .catch(err=>console.warn('BKMB PWA sw failed', err));
   }

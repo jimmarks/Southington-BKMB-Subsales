@@ -40,6 +40,9 @@ function bkmb_subsales_activate() {
     
     // Create database tables
     order_sync_create_table();
+    // Ensure PWA page exists with default slug
+    $slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
+    order_sync_ensure_pwa_page( $slug );
     
     // Set activation flag for admin notice
     set_transient( 'bkmb_subsales_activated', true, 30 );
@@ -192,16 +195,31 @@ function order_sync_settings_page() {
         
         $api_key = sanitize_text_field( $_POST['api_key'] );
         $sync_interval = intval( $_POST['sync_interval'] );
-        
+        $portal_slug = sanitize_title( $_POST['portal_slug'] ?? '' );
+
+        if ( empty( $portal_slug ) ) {
+            $portal_slug = 'subsales-portal';
+        }
+
+        // If slug changed, ensure page exists for new slug
+        $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
         update_option( 'order_sync_interval', $sync_interval );
-        
+        update_option( 'order_sync_portal_slug', $portal_slug );
+
+        if ( $portal_slug !== $old_slug ) {
+            order_sync_ensure_pwa_page( $portal_slug );
+            // flush rewrite rules as a safety (rarely needed here)
+            flush_rewrite_rules();
+        }
+
         echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
     }
 
     $api_key = get_option( 'order_sync_google_maps_api_key', '' );
     $sync_interval = get_option( 'order_sync_interval', 300 );
-    
+    $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
+    $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
     ?>
     <div class="wrap">
         <h1>BKMB Subsales Settings</h1>
@@ -222,6 +240,14 @@ function order_sync_settings_page() {
                     <td>
                         <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
                         <p class="description">How often to sync orders (minimum 60 seconds).</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Portal Slug</th>
+                    <td>
+                        <input type="text" name="portal_slug" value="<?php echo esc_attr( $portal_slug ); ?>" class="regular-text" />
+                        <p class="description">The public slug (URL path) where the PWA will be available. Default: <code>subsales-portal</code>.</p>
+                        <p class="description">Portal URL: <strong><?php echo esc_url( $portal_url ); ?></strong></p>
                     </td>
                 </tr>
             </table>
@@ -1102,10 +1128,13 @@ function verify_team_access( WP_REST_Request $request ) {
 function get_app_config( WP_REST_Request $request ) {
     // Get Google Maps API key for authenticated teams
     $google_maps_api_key = get_option( 'order_sync_google_maps_api_key', '' );
-    
+    $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
+    $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
+
     return new WP_REST_Response( array(
         'google_maps_api_key' => $google_maps_api_key,
-        'app_version' => '1.1.0'
+        'app_version' => BKMB_SUBSALES_VERSION,
+        'portal_url' => $portal_url
     ), 200 );
 }
 
@@ -1118,7 +1147,8 @@ function bkmb_subsales_register_pwa_scripts() {
 
     $settings = array(
         'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
-        'pluginBase' => BKMB_SUBSALES_PLUGIN_URL . 'pwa/'
+        'pluginBase' => BKMB_SUBSALES_PLUGIN_URL . 'pwa/',
+        'portalBase' => esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) )
     );
 
     // Localize into a config object the frontend expects
@@ -1132,7 +1162,12 @@ function bkmb_subsales_pwa_shortcode( $atts = array() ) {
 
     // Ensure manifest link is present in head
     add_action( 'wp_head', function() {
-        echo '<link rel="manifest" href="' . esc_url( BKMB_SUBSALES_PLUGIN_URL . 'pwa/manifest.json' ) . '">';
+        $portal_slug = get_option( 'order_sync_portal_slug', '' );
+        if ( $portal_slug ) {
+            echo '<link rel="manifest" href="' . esc_url( home_url( '/' . $portal_slug . '/manifest.json' ) ) . '">';
+        } else {
+            echo '<link rel="manifest" href="' . esc_url( BKMB_SUBSALES_PLUGIN_URL . 'pwa/manifest.json' ) . '">';
+        }
         echo '<meta name="theme-color" content="#2d6cdf">';
     } );
 
@@ -1190,4 +1225,81 @@ function bkmb_subsales_pwa_shortcode( $atts = array() ) {
     return ob_get_clean();
 }
 add_shortcode( 'bkmb_subsales_pwa', 'bkmb_subsales_pwa_shortcode' );
+
+/**
+ * Ensure a PWA page exists at the provided slug with the PWA shortcode.
+ * Stores the created page ID in option 'order_sync_pwa_page_id'.
+ */
+function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
+    $slug = sanitize_title( $slug );
+
+    // See if we already recorded a page ID
+    $page_id = get_option( 'order_sync_pwa_page_id', 0 );
+
+    // If page_id exists and the page still exists, update if slug changed
+    if ( $page_id ) {
+        $page = get_post( $page_id );
+        if ( $page && 'publish' === $page->post_status ) {
+            // If slug different, update post_name
+            if ( $page->post_name !== $slug ) {
+                wp_update_post( array( 'ID' => $page_id, 'post_name' => $slug ) );
+            }
+            return $page_id;
+        }
+    }
+
+    // Try to find existing page by path
+    $existing = get_page_by_path( $slug );
+    if ( $existing ) {
+        update_option( 'order_sync_pwa_page_id', $existing->ID );
+        return $existing->ID;
+    }
+
+    // Create a new page with the shortcode
+    $postarr = array(
+        'post_title'   => 'Subsales Portal',
+        'post_name'    => $slug,
+        'post_content' => '[bkmb_subsales_pwa]',
+        'post_status'  => 'publish',
+        'post_type'    => 'page',
+    );
+
+    $new_id = wp_insert_post( $postarr );
+    if ( $new_id && ! is_wp_error( $new_id ) ) {
+        update_option( 'order_sync_pwa_page_id', $new_id );
+        return $new_id;
+    }
+
+    return false;
+}
+
+// Serve portal assets (service-worker.js and manifest.json) from plugin folder at the portal path
+add_action( 'template_redirect', 'bkmb_subsales_serve_portal_assets' );
+function bkmb_subsales_serve_portal_assets() {
+    $portal_slug = get_option( 'order_sync_portal_slug', '' );
+    if ( empty( $portal_slug ) ) {
+        return;
+    }
+
+    $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
+    $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
+
+    if ( $req_path === $portal_base . '/service-worker.js' ) {
+        $file = BKMB_SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
+        if ( file_exists( $file ) ) {
+            header( 'Content-Type: application/javascript' );
+            readfile( $file );
+            exit;
+        }
+    }
+
+    if ( $req_path === $portal_base . '/manifest.json' ) {
+        $file = BKMB_SUBSALES_PLUGIN_PATH . 'pwa/manifest.json';
+        if ( file_exists( $file ) ) {
+            header( 'Content-Type: application/json' );
+            readfile( $file );
+            exit;
+        }
+    }
+}
 ?>
