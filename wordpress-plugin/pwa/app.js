@@ -45,13 +45,13 @@
   window.addEventListener('offline', updateNetworkUI);
   updateNetworkUI();
 
-  async function renderOrders(){ const list = await Storage.all(); ordersList.innerHTML = list.length ? list.map(o=>`<div class="order"><strong>${o.customer}</strong><div>${o.address}</div><div>${o.notes||''}</div><small>id:${o.id}</small></div>`).join('') : '<div>No local orders</div>'; }
+  async function renderOrders(){ const list = await Storage.all(); if (!list || !list.length) { ordersList.innerHTML = '<div>No local orders</div>'; return; } ordersList.innerHTML = list.map(o=>{ const qtyInfo = `Turkey: ${o.turkeyQty||0} — Ham: ${o.hamQty||0} — Combo: ${o.comboQty||0}`; const donation = o.donationAmount ? `Donation: $${parseFloat(o.donationAmount).toFixed(2)}` : ''; return `<div class="order"><strong>${o.customer}</strong><div>${o.address}</div><div>${qtyInfo}</div><div>${donation}</div><div>${o.notes||''}</div><small>id:${o.id}</small></div>`; }).join(''); }
 
   async function trySync(){ const list = await Storage.all(); if (!list.length) { syncStatus.textContent = 'No queued orders'; return; } if (!navigator.onLine) { syncStatus.textContent = 'Waiting for network'; return; } syncStatus.textContent = 'Syncing...'; const teamName = localStorage.getItem('teamName'); const teamCode = localStorage.getItem('teamCode'); for (const order of list) { try { const resp = await fetch((apiBase || '') + '/wp-json/order-manager/v1/orders', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Team-Name': teamName || '', 'X-Access-Code': teamCode || '' }, body: JSON.stringify(order) }); if (resp.ok) { await Storage.remove(order.id); } } catch (err) { console.warn('sync failed for', order.id, err); syncStatus.textContent = 'Sync error, will retry'; return; } } syncStatus.textContent = 'All queued orders synced'; renderOrders(); }
 
   loginBtn.addEventListener('click', ()=>{ const team = qs('#teamName').value.trim(); const code = qs('#teamCode').value.trim(); if (!team || !code) return alert('Please provide team name and code'); localStorage.setItem('teamName', team); localStorage.setItem('teamCode', code); loginSection.classList.add('hidden'); appSection.classList.remove('hidden'); if (deferredPrompt) installBox.classList.remove('hidden'); });
 
-  saveOrderBtn.addEventListener('click', async ()=>{ const customer = qs('#customerName').value.trim(); const address = qs('#address').value.trim(); const notes = qs('#notes').value.trim(); if (!customer || !address) return alert('Customer and address required'); const order = { id: 'o_'+Date.now(), customer, address, notes, createdAt: new Date().toISOString() }; await Storage.add(order); renderOrders(); syncStatus.textContent = 'Queued for sync'; if (navigator.onLine) trySync(); });
+  saveOrderBtn.addEventListener('click', async ()=>{ const customer = qs('#customerName').value.trim(); const address = qs('#address').value.trim(); const notes = qs('#notes').value.trim(); const turkeyQty = parseInt(qs('#turkeyQty') && qs('#turkeyQty').value,10) || 0; const hamQty = parseInt(qs('#hamQty') && qs('#hamQty').value,10) || 0; const comboQty = parseInt(qs('#comboQty') && qs('#comboQty').value,10) || 0; const donationAmount = parseFloat(qs('#donationAmount') && qs('#donationAmount').value) || 0; if (!customer || !address) return alert('Customer and address required'); const order = { id: 'o_'+Date.now(), customer, address, turkeyQty, hamQty, comboQty, donationAmount, notes, createdAt: new Date().toISOString() }; await Storage.add(order); renderOrders(); syncStatus.textContent = 'Queued for sync'; if (navigator.onLine) trySync(); });
 
   // Register service worker if config was not used elsewhere
   (function(){
@@ -129,6 +129,12 @@
               <h2>Create Order</h2>
               <input id="customerName" placeholder="Customer name" />
               <input id="address" placeholder="Address" />
+              <div style="display:flex;gap:8px;margin-top:6px;margin-bottom:6px">
+                <div><label>Turkey</label><input id="turkeyQty" type="number" min="0" value="0" /></div>
+                <div><label>Ham</label><input id="hamQty" type="number" min="0" value="0" /></div>
+                <div><label>Combo</label><input id="comboQty" type="number" min="0" value="0" /></div>
+              </div>
+              <input id="donationAmount" type="number" min="0" step="0.01" value="0" placeholder="Donation amount (USD)" />
               <textarea id="notes" placeholder="Notes (optional)"></textarea>
               <button id="saveOrderBtn">Save Order</button>
             </div>
@@ -151,14 +157,14 @@
   function updateNetworkUI(){ const ns=qs('#networkStatus'); if (!ns) return; if (navigator.onLine){ ns.textContent='Online'; ns.style.color='green'; } else { ns.textContent='Offline'; ns.style.color='orange'; } }
   window.addEventListener('online', ()=>{ updateNetworkUI(); trySync(); }); window.addEventListener('offline', updateNetworkUI); updateNetworkUI();
 
-  async function renderOrders(){ const list = await Storage.all(); const root = qs('#ordersList'); if (!root) return; if (!list.length) { root.innerHTML='<div>No local orders</div>'; return; } root.innerHTML = list.map(o=>`<div style="border:1px solid #ddd;padding:8px;margin-bottom:8px"><strong>${o.customer}</strong><div>${o.address}</div><small>${o.id}</small></div>`).join(''); }
+  async function renderOrders(){ const list = await Storage.all(); const root = qs('#ordersList'); if (!root) return; if (!list || !list.length) { root.innerHTML='<div>No local orders</div>'; return; } root.innerHTML = list.map(o=>{ const qtyInfo = `Turkey: ${o.turkeyQty||0} — Ham: ${o.hamQty||0} — Combo: ${o.comboQty||0}`; const donation = o.donationAmount ? `Donation: $${parseFloat(o.donationAmount).toFixed(2)}` : ''; return `<div style="border:1px solid #ddd;padding:8px;margin-bottom:8px"><strong>${o.customer}</strong><div>${o.address}</div><div>${qtyInfo}</div><div>${donation}</div><div>${o.notes||''}</div><small>${o.id}</small></div>`; }).join(''); }
 
   async function trySync(){ const list = await Storage.all(); if (!list.length){ qs('#syncStatus') && (qs('#syncStatus').textContent='No queued orders'); return; } if (!navigator.onLine){ qs('#syncStatus') && (qs('#syncStatus').textContent='Waiting for network'); return; } qs('#syncStatus') && (qs('#syncStatus').textContent='Syncing...'); const teamName = localStorage.getItem('teamName'); const teamCode = localStorage.getItem('teamCode'); for (const order of list){ try{ const resp = await fetch(apiBase + '/orders', { method: 'POST', headers: { 'Content-Type':'application/json', 'X-Team-Name': teamName||'', 'X-Access-Code': teamCode||'' }, body: JSON.stringify({ order_id: order.id, user_id: teamName||'team', customer: order.customer, address: order.address, notes: order.notes, createdAt: order.createdAt }) }); if (resp.ok) { await Storage.remove(order.id); } } catch(err){ console.warn('sync failed', err); qs('#syncStatus') && (qs('#syncStatus').textContent='Sync error, will retry'); return; } } qs('#syncStatus') && (qs('#syncStatus').textContent='All queued orders synced'); renderOrders(); }
 
   // Login and save order handlers
   qs('#loginBtn').addEventListener('click', ()=>{ const team=qs('#teamName').value.trim(); const code=qs('#teamCode').value.trim(); if (!team||!code) return alert('Provide team and code'); localStorage.setItem('teamName', team); localStorage.setItem('teamCode', code); qs('#loginSection').style.display='none'; qs('#appSection').style.display='block'; if (deferredPrompt) qs('#installBox').style.display='block'; trySync(); });
 
-  qs('#saveOrderBtn').addEventListener('click', async ()=>{ const customer=qs('#customerName').value.trim(); const address=qs('#address').value.trim(); const notes=qs('#notes').value.trim(); if (!customer||!address) return alert('Customer and address required'); const order={ id:'o_'+Date.now(), customer, address, notes, createdAt:new Date().toISOString() }; await Storage.add(order); renderOrders(); qs('#syncStatus') && (qs('#syncStatus').textContent='Queued for sync'); if (navigator.onLine) trySync(); });
+  qs('#saveOrderBtn').addEventListener('click', async ()=>{ const customer=qs('#customerName').value.trim(); const address=qs('#address').value.trim(); const notes=qs('#notes').value.trim(); const turkeyQty = parseInt(qs('#turkeyQty') && qs('#turkeyQty').value,10) || 0; const hamQty = parseInt(qs('#hamQty') && qs('#hamQty').value,10) || 0; const comboQty = parseInt(qs('#comboQty') && qs('#comboQty').value,10) || 0; const donationAmount = parseFloat(qs('#donationAmount') && qs('#donationAmount').value) || 0; if (!customer||!address) return alert('Customer and address required'); const order={ id:'o_'+Date.now(), customer, address, turkeyQty, hamQty, comboQty, donationAmount, notes, createdAt:new Date().toISOString() }; await Storage.add(order); renderOrders(); qs('#syncStatus') && (qs('#syncStatus').textContent='Queued for sync'); if (navigator.onLine) trySync(); });
 
   // initial
   renderOrders(); trySync();
