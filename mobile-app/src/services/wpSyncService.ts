@@ -1,15 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Order } from '../types';
-import { api } from './api';
+import apiClient from './api';
 
-const WP_API_URL = 'https://your-wordpress-site.com/wp-json/your-endpoint';
-
+// Use the configured axios instance in src/services/api/index.ts
 export const syncOrdersWithWordPress = async () => {
     try {
         const orders = await AsyncStorage.getItem('pendingOrders');
         if (orders) {
             const parsedOrders: Order[] = JSON.parse(orders);
-            await Promise.all(parsedOrders.map(order => api.post(`${WP_API_URL}/orders`, order)));
+            // apiClient is already configured with the correct baseURL and auth headers
+            await Promise.all(parsedOrders.map(order => apiClient.post(`/orders`, order)));
             await AsyncStorage.removeItem('pendingOrders');
         }
     } catch (error) {
