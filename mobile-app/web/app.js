@@ -2,7 +2,7 @@
 // Features: team login, offline order capture (IndexedDB + localStorage fallback), background sync when online
 
 (function(){
-  const apiBase = (window.BKMB_PWA_CONFIG && window.BKMB_PWA_CONFIG.apiBase) || localStorage.getItem('API_BASE_URL') || '';
+  const apiBase = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.apiBase) || localStorage.getItem('API_BASE_URL') || '';
 
   const qs = s => document.querySelector(s);
 
@@ -24,7 +24,7 @@
 
   // Simple Storage: IndexedDB with localStorage fallback
   const Storage = (function(){
-    const DB_NAME = 'bkmb-pwa-db';
+  const DB_NAME = 'subsales-pwa-db';
     const STORE = 'orders';
     function idbOpen(){
       return new Promise((resolve)=>{
@@ -35,10 +35,10 @@
         req.onerror = ()=>resolve(null);
       });
     }
-    async function getDB(){ if (!window._bkmb_db) window._bkmb_db = await idbOpen(); return window._bkmb_db; }
-    async function add(order){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(order); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('bkmb_orders')||'[]'); list.push(order); localStorage.setItem('bkmb_orders', JSON.stringify(list)); return true; }
-    async function all(){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readonly'); const req = tx.objectStore(STORE).getAll(); req.onsuccess = ()=>res(req.result || []); req.onerror = ()=>res([]); }); } return JSON.parse(localStorage.getItem('bkmb_orders')||'[]'); }
-    async function remove(id){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(id); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('bkmb_orders')||'[]').filter(o=>o.id!==id); localStorage.setItem('bkmb_orders', JSON.stringify(list)); return true; }
+  async function getDB(){ if (!window._subsales_db) window._subsales_db = await idbOpen(); return window._subsales_db; }
+  async function add(order){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(order); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('subsales_orders')||'[]'); list.push(order); localStorage.setItem('subsales_orders', JSON.stringify(list)); return true; }
+  async function all(){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readonly'); const req = tx.objectStore(STORE).getAll(); req.onsuccess = ()=>res(req.result || []); req.onerror = ()=>res([]); }); } return JSON.parse(localStorage.getItem('subsales_orders')||'[]'); }
+  async function remove(id){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(id); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('subsales_orders')||'[]').filter(o=>o.id!==id); localStorage.setItem('subsales_orders', JSON.stringify(list)); return true; }
     return { add, all, remove };
   })();
 
@@ -56,6 +56,21 @@
 
   // Bind save order
   saveOrderBtn && saveOrderBtn.addEventListener('click', async ()=>{ const customer = qs('#customerName') ? qs('#customerName').value.trim() : ''; const address = qs('#address') ? qs('#address').value.trim() : ''; const notes = qs('#notes') ? qs('#notes').value.trim() : ''; const turkeyQty = parseInt((qs('#turkeyQty') && qs('#turkeyQty').value) || 0,10) || 0; const hamQty = parseInt((qs('#hamQty') && qs('#hamQty').value) || 0,10) || 0; const comboQty = parseInt((qs('#comboQty') && qs('#comboQty').value) || 0,10) || 0; const donationAmount = parseFloat((qs('#donationAmount') && qs('#donationAmount').value) || 0) || 0; if (!customer || !address) return alert('Customer and address required'); const order = { id: 'o_'+Date.now(), customer, address, turkeyQty, hamQty, comboQty, donationAmount, notes, createdAt: new Date().toISOString() }; await Storage.add(order); renderOrders(); if (syncStatus) syncStatus.textContent = 'Queued for sync'; if (navigator.onLine) trySync(); });
+  // Payment checkbox behavior and total update
+  const payCheck = qs('#payCheck');
+  const payCash = qs('#payCash');
+  const checkNumberRow = qs('#checkNumberRow');
+  function updatePaymentUI(){ if (payCheck && payCheck.checked) { checkNumberRow && checkNumberRow.classList.remove('hidden'); } else { checkNumberRow && checkNumberRow.classList.add('hidden'); } }
+  if (payCheck) payCheck.addEventListener('change', updatePaymentUI);
+  if (payCash) payCash.addEventListener('change', ()=>{ if (payCash.checked && payCheck) { payCheck.checked = false; updatePaymentUI(); } });
+
+  function computeTotal(){ const turkey = parseInt((qs('#turkeyQty') && qs('#turkeyQty').value) || 0,10)||0; const ham = parseInt((qs('#hamQty') && qs('#hamQty').value) || 0,10)||0; const combo = parseInt((qs('#comboQty') && qs('#comboQty').value) || 0,10)||0; const donation = parseFloat((qs('#donationAmount') && qs('#donationAmount').value) || 0) || 0; const total = ((turkey+ham+combo)*10) + donation; const el = qs('#orderTotal'); if (el) el.textContent = total.toFixed(2); return total; }
+  ['#turkeyQty','#hamQty','#comboQty','#donationAmount'].forEach(id=>{ const el = qs(id); if (el) el.addEventListener('input', computeTotal); });
+  // ensure initial total
+  computeTotal();
+
+  // enhance address with Google Places if key provided
+  (function(){ const key = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.googleMapsApiKey) || ''; if (!key) return; if (window.google && google.maps && google.maps.places) { initAutocomplete(); return; } window.initAutocomplete = function(){ try { const input = document.getElementById('address'); if (!input) return; const ac = new google.maps.places.Autocomplete(input, {}); ac.setFields(['formatted_address','address_components','geometry','name']); ac.addListener('place_changed', ()=>{ const place = ac.getPlace(); if (place && place.formatted_address) input.value = place.formatted_address; }); } catch(e){} }; const s = document.createElement('script'); s.src = 'https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(key)+'&libraries=places&callback=initAutocomplete'; s.async=true; s.defer=true; document.head.appendChild(s); })();
 
   // Initial render
   renderOrders();
