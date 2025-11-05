@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -377,9 +377,18 @@ add_action( 'rest_api_init', function () {
         'permission_callback' => '__return_true',
     ));
     
+    // Expose config publicly so the PWA shell can fetch branding/variant without authentication.
+    // Sensitive items (like google_maps_api_key) will only be returned when valid team headers are present.
     register_rest_route( 'order-manager/v1', '/config', array(
         'methods' => 'GET',
         'callback' => 'get_app_config',
+        'permission_callback' => '__return_true',
+    ));
+
+    // Return team members for authenticated team (reads X-Team-Name/X-Access-Code headers)
+    register_rest_route( 'order-manager/v1', '/teams/members', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_get_team_members_endpoint',
         'permission_callback' => 'order_sync_check_permissions',
     ));
 });
@@ -432,15 +441,28 @@ function get_orders( WP_REST_Request $request ) {
     
     $limit = $request->get_param( 'limit' ) ? intval( $request->get_param( 'limit' ) ) : 10;
     $offset = $request->get_param( 'offset' ) ? intval( $request->get_param( 'offset' ) ) : 0;
+    $entered_by_id = $request->get_param( 'entered_by_id' );
     
-    $orders = $wpdb->get_results( 
-        $wpdb->prepare( 
-            "SELECT * FROM {$table_name} ORDER BY created_at DESC LIMIT %d OFFSET %d", 
-            $limit, 
-            $offset 
-        ),
-        ARRAY_A
-    );
+    if ( ! empty( $entered_by_id ) ) {
+        $orders = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$table_name} WHERE user_id = %s ORDER BY created_at DESC LIMIT %d OFFSET %d",
+                $entered_by_id,
+                $limit,
+                $offset
+            ),
+            ARRAY_A
+        );
+    } else {
+        $orders = $wpdb->get_results( 
+            $wpdb->prepare( 
+                "SELECT * FROM {$table_name} ORDER BY created_at DESC LIMIT %d OFFSET %d", 
+                $limit, 
+                $offset 
+            ),
+            ARRAY_A
+        );
+    }
     
     foreach ( $orders as &$order ) {
         $order['order_data'] = json_decode( $order['order_data'], true );
@@ -617,7 +639,13 @@ function verify_team_access( WP_REST_Request $request ) {
 }
 
 function get_app_config( WP_REST_Request $request ) {
-    $google_maps_api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    // Only expose sensitive values (like Google Maps key) when the request includes valid team headers
+    $is_authenticated = false;
+    try{
+        $is_authenticated = order_sync_check_permissions( $request ) === true;
+    }catch(Exception $e){ $is_authenticated = false; }
+
+    $google_maps_api_key = $is_authenticated ? get_option( 'order_sync_google_maps_api_key', '' ) : '';
     $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
 
@@ -630,8 +658,27 @@ function get_app_config( WP_REST_Request $request ) {
         'app_version' => SUBSALES_VERSION,
         'portal_url' => $portal_url,
         'brandName' => $branding,
-        'brandingImage' => $header_image_url
+        'brandingImage' => $header_image_url,
+        'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
+        'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
+        'authenticated' => $is_authenticated
     ), 200 );
+}
+
+// REST callback to return team members for the authenticated team
+function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
+    $team_name = $request->get_header( 'X-Team-Name' );
+    $access_code = $request->get_header( 'X-Access-Code' );
+    if ( empty( $team_name ) || empty( $access_code ) ) {
+        return new WP_REST_Response( array( 'error' => 'Missing team headers' ), 400 );
+    }
+    $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+    if ( ! $team ) {
+        return new WP_REST_Response( array( 'error' => 'Invalid credentials' ), 401 );
+    }
+    $members = order_sync_get_team_members_by_team( $team['id'] );
+    if ( ! $members ) $members = array();
+    return new WP_REST_Response( $members, 200 );
 }
 
 /**
@@ -639,6 +686,7 @@ function get_app_config( WP_REST_Request $request ) {
  */
 function subsales_register_pwa_scripts() {
     wp_register_script( 'subsales-pwa-app', SUBSALES_PLUGIN_URL . 'pwa/app.js', array(), SUBSALES_VERSION, true );
+    wp_register_style( 'subsales-pwa-style', SUBSALES_PLUGIN_URL . 'pwa/styles.css', array(), SUBSALES_VERSION );
     $portal_base = esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) );
     $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
     $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
@@ -648,11 +696,16 @@ function subsales_register_pwa_scripts() {
         'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
         'portalBase' => $portal_base,
         'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
+        'sessionDuration' => intval( get_option( 'order_sync_session_duration', 86400000 ) ),
+        'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
+        'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
         'brandName' => get_option( 'subsales_branding', 'Subsales' ),
         'brandingImage' => $header_image_url
     );
 
     wp_localize_script( 'subsales-pwa-app', 'SUBSALES_PWA_CONFIG', $settings );
+    // Enqueue style for PWA UI (also useful for shortcode pages)
+    wp_enqueue_style( 'subsales-pwa-style' );
 }
 add_action( 'wp_enqueue_scripts', 'subsales_register_pwa_scripts' );
 
@@ -671,34 +724,50 @@ function subsales_pwa_shortcode( $atts = array() ) {
 
         ob_start();
         ?>
-        <div id="subsales-pwa-root">
-            <header style="display:flex;align-items:center;justify-content:space-between">
-                <div style="display:flex;align-items:center;gap:12px">
-                    <img id="brandHeaderImage" style="max-height:48px;display:none" />
-                    <h1 style="margin:0"><?php echo esc_html( get_option( 'subsales_branding', 'Subsales' ) ); ?></h1>
+    <?php $subsales_primary = esc_attr( get_option( 'order_sync_primary_color', '#2d6cdf' ) ); $subsales_variant = esc_attr( get_option( 'order_sync_style_variant', 'default' ) ); ?>
+    <div id="subsales-pwa-root" class="sm-variant-<?php echo $subsales_variant; ?>" style="--sm-primary: <?php echo $subsales_primary; ?>;">
+            <style>/* Ensure auth-only controls are hidden server-side until client reveals them */
+                .sm-auth-hidden{display:none!important;visibility:hidden!important}
+                /* Force branding image visible in case theme defines a generic .hidden */
+                .sm-brand-image.hidden, #brandHeaderImage.hidden { display:block!important; visibility:visible!important; opacity:1!important; max-width:40%!important; height:auto!important; }
+            </style>
+                .sm-auth-hidden{display:none!important;visibility:hidden!important}
+            </style>
+            <header class="sm-header" role="banner">
+                <div class="sm-header-left"></div>
+                <div class="sm-header-center">
+                    <?php $header_image_id = intval( get_option( 'subsales_header_image', 0 ) ); $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : ''; ?>
+                    <img id="brandHeaderImage" class="sm-brand-image" src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" />
+                    <h1 class="sm-brand-name"><?php echo esc_html( get_option( 'subsales_branding', 'Subsales' ) ); ?></h1>
                 </div>
-                <div>
-                    <button id="viewOnlineBtn" style="margin-right:8px">View online orders</button>
-                    <span id="installBox" style="display:none"><button id="installBtn">Install App</button></span>
+                <div class="sm-header-right">
+                    <div id="headerStatus" class="sm-auth-hidden" title="Network status" aria-live="polite" aria-label="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
+                    <button id="forceSyncBtn" class="sm-btn sm-auth-hidden" title="Force sync offline orders">Sync now</button>
+                    <button id="viewOnlineBtn" class="sm-btn sm-auth-hidden" style="margin-right:8px">View online orders</button>
+                    <span id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></span>
+                    <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
+                    <button id="logoutBtn" class="sm-btn sm-auth-hidden" title="Log out">Log out</button>
+                    <button id="openInlayBtn" class="sm-btn hidden sm-auth-hidden">Queued Orders</button>
                 </div>
             </header>
 
-            <section id="loginSection">
+            <section id="loginSection" class="sm-login-section">
                 <h2>Team Login</h2>
                 <p>Sign in with your team name and access code. After login the PWA install prompt will be shown (if available).</p>
-                <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-                    <img id="brandHeaderImage" style="max-height:48px;display:none" />
+                <div class="row" style="margin-bottom:8px">
+                    <img id="brandHeaderImage" class="sm-brand-image hidden" src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" />
                     <div style="flex:1"></div>
                 </div>
                 <input id="teamName" placeholder="Team name" />
                 <input id="teamCode" placeholder="Access code" />
-                <div id="loginError" style="color:#c00;margin-top:8px;display:none"></div>
-                <button id="loginBtn">Login</button>
+                <!-- Team member selection and session duration are handled by the PWA client after login -->
+                <div id="loginError" class="hidden" style="color:#c00;margin-top:8px"></div>
+                <div class="btn-row"><button id="loginBtn" class="sm-btn">Login</button></div>
             </section>
 
-            <section id="appSection" style="display:none">
-                <div style="display:flex;gap:12px;flex-direction:column">
-                    <div style="flex:1">
+            <section id="appSection" class="hidden sm-app-section" style="display:none">
+                <div class="row">
+                    <div class="col-2">
                         <h2>Create Order</h2>
                         <label>Customer name</label>
                         <input id="customerName" placeholder="Customer name" />
@@ -706,35 +775,38 @@ function subsales_pwa_shortcode( $atts = array() ) {
                         <input id="address" placeholder="Address" />
                         <label>Cell number</label>
                         <input id="cellNumber" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Cell number" />
-                        <div style="display:flex;gap:8px;margin-top:6px;margin-bottom:6px">
-                            <div><label>Turkey</label><input id="turkeyQty" type="number" min="0" value="0" /></div>
-                            <div><label>Ham</label><input id="hamQty" type="number" min="0" value="0" /></div>
-                            <div><label>Combo</label><input id="comboQty" type="number" min="0" value="0" /></div>
+                        <div class="row row-spaced">
+                            <div class="col-2"><label>Turkey</label><input id="turkeyQty" type="number" min="0" placeholder="0" /></div>
+                            <div class="col-2"><label>Ham</label><input id="hamQty" type="number" min="0" placeholder="0" /></div>
+                            <div class="col-2"><label>Combo</label><input id="comboQty" type="number" min="0" placeholder="0" /></div>
                         </div>
                         <label>Donation amount (USD)</label>
-                        <input id="donationAmount" type="number" min="0" step="0.01" value="0" placeholder="$0.00" />
-                        <div style="margin-top:6px"><strong>Order total: $<span id="orderTotal">0.00</span></strong></div>
-                        <div style="margin-top:8px;display:flex;gap:12px;align-items:center">
-                            <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
-                            <label style="display:inline-flex;align-items:center;gap:6px"><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
+                        <input id="donationAmount" type="number" min="0" step="0.01" placeholder="$0.00" />
+                        <div class="order-total"><strong>Order total: $<span id="orderTotal">0.00</span></strong></div>
+                        <div class="pay-options">
+                            <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
+                            <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
                         </div>
-                        <div id="checkNumberRow" style="display:none;margin-top:6px"><label>Check number</label><input id="checkNumber" placeholder="Check number" /></div>
+                        <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" placeholder="Check number" /></div>
                         <label>Notes</label>
                         <textarea id="notes" placeholder="Notes (optional)"></textarea>
-                        <button id="saveOrderBtn">Save Order</button>
+                        <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
                     </div>
-                    <h3>Local orders</h3>
-                    <div id="ordersList"></div>
-                    <div style="margin-top:12px; border-top:1px solid #eee; padding-top:8px">
-                        <h3>Status</h3>
-                        <div id="networkStatus">Offline</div>
-                        <div id="syncStatus">Not synced</div>
-                    </div>
+                </div>
+                <h3>Local orders</h3>
+                <div id="ordersList"></div>
+                <div style="margin-top:12px; border-top:1px solid #eee; padding-top:8px">
+                    <h3>Status</h3>
+                    <div id="networkStatus">Offline</div>
+                    <div id="syncStatus">Not synced</div>
                 </div>
             </section>
         </div>
         <?php
-        return ob_get_clean();
+    // Add a small script to set the page title and show branding if available in the localized config
+    // Also add a robust inline fallback to hide the app section until the PWA client explicitly shows it
+    echo "<script>try{const cfg=window.SUBSALES_PWA_CONFIG||{}; if(cfg.brandName){document.title=cfg.brandName+' — PWA'; const h=document.querySelector('#subsales-pwa-root h1'); if(h) h.textContent=cfg.brandName;} if(cfg.brandingImage){const img=document.getElementById('brandHeaderImage'); if(img){img.src=cfg.brandingImage; img.classList.remove('hidden');}} // robust fallback: hide app section until client shows it\n    (function(){ try{ var app=document.getElementById('appSection'); if(app){ app.style.display='none'; app.dataset.smFallbackHidden='1'; } var login=document.getElementById('loginSection'); if(login){ login.style.display='block'; } }catch(e){} })(); }catch(e){};</script>";
+    return ob_get_clean();
 }
 add_shortcode( 'subsales_pwa', 'subsales_pwa_shortcode' );
 
@@ -808,18 +880,52 @@ function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
 }
 
 // Serve portal assets from plugin folder at portal path
-add_action( 'template_redirect', 'subsales_serve_portal_assets' );
+add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
 function subsales_serve_portal_assets() {
     $portal_slug = get_option( 'order_sync_portal_slug', '' ); if ( empty( $portal_slug ) ) return;
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
     $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
 
+    // Also serve manifest at the site root (/manifest.json) to handle cases where the browser requests it from /
+    if ( $req_path === 'manifest.json' ) {
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/manifest.json';
+        if ( file_exists( $file ) ) {
+            $manifest_raw = file_get_contents( $file );
+            $manifest = json_decode( $manifest_raw, true );
+            if ( is_array( $manifest ) && isset( $manifest['icons'] ) && is_array( $manifest['icons'] ) ) {
+                $plugin_base = SUBSALES_PLUGIN_URL . 'pwa/';
+                foreach ( $manifest['icons'] as $i => $icon ) {
+                    if ( isset( $icon['src'] ) ) {
+                        if ( strpos( $icon['src'], '//' ) === false && strpos( $icon['src'], 'http' ) !== 0 ) {
+                            $manifest['icons'][ $i ]['src'] = $plugin_base . ltrim( $icon['src'], '/' );
+                        }
+                    }
+                }
+            }
+            header( 'Content-Type: application/json' );
+            header( 'Cache-Control: public, max-age=3600' );
+            header( 'Access-Control-Allow-Origin: *' );
+            http_response_code(200);
+            echo wp_json_encode( $manifest );
+            exit;
+        }
+    }
+
     if ( $req_path === $portal_base . '/service-worker.js' ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js'; if ( file_exists( $file ) ) { header( 'Content-Type: application/javascript' ); readfile( $file ); exit; }
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
+        if ( file_exists( $file ) ) {
+            // Serve publicly with permissive caching and CORS so browsers can register the SW without auth issues
+            header( 'Content-Type: application/javascript' );
+            header( 'Cache-Control: public, max-age=3600' );
+            header( 'Access-Control-Allow-Origin: *' );
+            readfile( $file );
+            exit;
+        }
     }
 
     if ( $req_path === $portal_base || $req_path === $portal_base . '/index.html' || $req_path === $portal_base . '/' ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html'; if ( file_exists( $file ) ) {
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
+        if ( file_exists( $file ) ) {
             $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
             $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
 
@@ -835,13 +941,80 @@ function subsales_serve_portal_assets() {
             $html = file_get_contents( $file );
             $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
             $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            $html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            header( 'Content-Type: text/html; charset=utf-8' ); echo $html; exit;
+            // Rewrite relative stylesheet hrefs to absolute plugin path to avoid portal-relative 404s
+            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
+            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
+            // If replacement didn't find the exact marker (different spacing/paths), inject config before </head>
+            if ( $new_html === $html ) {
+                $pos = stripos( $html, '</head>' );
+                if ( $pos !== false ) {
+                    $new_html = substr_replace( $html, $inject . "\n<script src=\"" . $app_src . "\"></script>\n", $pos, 0 );
+                } else {
+                    // fallback: prepend to document
+                    $new_html = $inject . "\n<script src=\"" . $app_src . "\"></script>\n" . $html;
+                }
+            }
+            $html = $new_html;
+            // Serve index publicly so the portal can be loaded without authentication
+            header( 'Content-Type: text/html; charset=utf-8' );
+            header( 'Cache-Control: public, max-age=300' );
+            header( 'Access-Control-Allow-Origin: *' );
+            echo $html; exit;
         }
     }
 
     if ( $req_path === $portal_base . '/manifest.json' ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/manifest.json'; if ( file_exists( $file ) ) { header( 'Content-Type: application/json' ); readfile( $file ); exit; }
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/manifest.json';
+        if ( file_exists( $file ) ) {
+            // Read and rewrite icon URLs to absolute plugin paths so browsers fetch icons directly
+            $manifest_raw = file_get_contents( $file );
+            $manifest = json_decode( $manifest_raw, true );
+            if ( is_array( $manifest ) && isset( $manifest['icons'] ) && is_array( $manifest['icons'] ) ) {
+                $plugin_base = SUBSALES_PLUGIN_URL . 'pwa/';
+                foreach ( $manifest['icons'] as $i => $icon ) {
+                    if ( isset( $icon['src'] ) ) {
+                        // If src is already absolute, leave it alone
+                        if ( strpos( $icon['src'], '//' ) === false && strpos( $icon['src'], 'http' ) !== 0 ) {
+                            $manifest['icons'][ $i ]['src'] = $plugin_base . ltrim( $icon['src'], '/' );
+                        }
+                    }
+                }
+            }
+            header( 'Content-Type: application/json' );
+            header( 'Cache-Control: public, max-age=3600' );
+            header( 'Access-Control-Allow-Origin: *' );
+            // Explicit 200 in case other hooks attempted auth handling
+            http_response_code(200);
+            echo wp_json_encode( $manifest );
+            exit;
+        }
+    }
+    
+    // Serve any other portal assets (icons, styles, images, etc.) from the pwa/ folder
+    // More permissive: match any request containing '/icons/...'
+    if ( preg_match('#/icons/(.+)$#', '/' . $req_path, $m) ) {
+        $rel = 'icons/' . $m[1];
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel;
+        if ( file_exists( $file ) ) {
+            $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
+            switch ( $ext ) {
+                case 'svg': $ct = 'image/svg+xml'; break;
+                case 'png': $ct = 'image/png'; break;
+                case 'jpg':
+                case 'jpeg': $ct = 'image/jpeg'; break;
+                case 'webp': $ct = 'image/webp'; break;
+                case 'ico': $ct = 'image/x-icon'; break;
+                case 'css': $ct = 'text/css'; break;
+                case 'js': $ct = 'application/javascript'; break;
+                case 'json': $ct = 'application/json'; break;
+                default: $ct = 'application/octet-stream';
+            }
+            header( 'Content-Type: ' . $ct );
+            header( 'Cache-Control: public, max-age=86400' );
+            header( 'Access-Control-Allow-Origin: *' );
+            readfile( $file );
+            exit;
+        }
     }
 }
 
@@ -896,6 +1069,52 @@ function order_sync_main_page() {
                         </p>
                     </div>
                 </div>
+                
+                <?php
+                // Compute aggregate product totals (turkey/ham/combo) from stored order_data JSON
+                $turkey_total = 0;
+                $ham_total = 0;
+                $combo_total = 0;
+                $rows = $wpdb->get_results( "SELECT order_data FROM {$orders_table}", ARRAY_A );
+                if ( $rows ) {
+                    foreach ( $rows as $r ) {
+                        $od = json_decode( $r['order_data'], true );
+                        if ( is_array( $od ) ) {
+                            // support multiple key variants (turkeyQty, turkey_qty)
+                            $turkey_total += isset( $od['turkeyQty'] ) ? intval( $od['turkeyQty'] ) : ( isset( $od['turkey_qty'] ) ? intval( $od['turkey_qty'] ) : 0 );
+                            $ham_total += isset( $od['hamQty'] ) ? intval( $od['hamQty'] ) : ( isset( $od['ham_qty'] ) ? intval( $od['ham_qty'] ) : 0 );
+                            $combo_total += isset( $od['comboQty'] ) ? intval( $od['comboQty'] ) : ( isset( $od['combo_qty'] ) ? intval( $od['combo_qty'] ) : 0 );
+                        }
+                    }
+                }
+                ?>
+
+                <div class="postbox">
+                    <div class="postbox-header"><h2>Turkey sold</h2></div>
+                    <div class="inside">
+                        <p style="font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center;">
+                            <?php echo intval( $turkey_total ); ?>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="postbox">
+                    <div class="postbox-header"><h2>Ham sold</h2></div>
+                    <div class="inside">
+                        <p style="font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center;">
+                            <?php echo intval( $ham_total ); ?>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="postbox">
+                    <div class="postbox-header"><h2>Combos sold</h2></div>
+                    <div class="inside">
+                        <p style="font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center;">
+                            <?php echo intval( $combo_total ); ?>
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -926,6 +1145,9 @@ function order_sync_settings_page() {
         $sync_interval = intval( $_POST['sync_interval'] );
         $portal_slug = sanitize_title( $_POST['portal_slug'] ?? '' );
     $branding = sanitize_text_field( $_POST['subsales_branding'] ?? '' );
+        $session_duration = intval( $_POST['session_duration'] ?? 86400000 );
+        $style_variant = sanitize_text_field( $_POST['style_variant'] ?? 'default' );
+        $primary_color = sanitize_text_field( $_POST['primary_color'] ?? '#2d6cdf' );
         $delete_on_uninstall = isset( $_POST['delete_on_uninstall'] ) ? 1 : 0;
         $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
 
@@ -939,6 +1161,9 @@ function order_sync_settings_page() {
         update_option( 'order_sync_interval', $sync_interval );
         update_option( 'order_sync_portal_slug', $portal_slug );
     update_option( 'subsales_branding', $branding );
+        update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'order_sync_style_variant', $style_variant );
+        update_option( 'order_sync_primary_color', $primary_color );
     update_option( 'subsales_delete_on_uninstall', $delete_on_uninstall );
     update_option( 'subsales_header_image', $header_image );
 
@@ -967,6 +1192,8 @@ function order_sync_settings_page() {
     $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 0 );
     $branding = get_option( 'subsales_branding', 'Subsales' );
+    $style_variant = get_option( 'order_sync_style_variant', 'default' );
+    $primary_color = get_option( 'order_sync_primary_color', '#2d6cdf' );
     $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
     $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
     $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
@@ -1025,10 +1252,45 @@ function order_sync_settings_page() {
                     </td>
                 </tr>
                 <tr>
+                    <th scope="row">Style options</th>
+                    <td>
+                        <p class="description">Choose a visual style for the PWA. Samples are shown below; primary color can be customized.</p>
+                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="default" <?php checked( $style_variant, 'default' ); ?> /> Default</label>
+                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="flat" <?php checked( $style_variant, 'flat' ); ?> /> Flat</label>
+                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
+                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
+                        </div>
+                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                            <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                <div style="margin-bottom:6px;font-weight:600">Button sample</div>
+                                <button class="button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
+                            </div>
+                            <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                <div style="margin-bottom:6px;font-weight:600">Header sample</div>
+                                <div style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
+                            </div>
+                        </div>
+                        <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
+                        <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
+                    </td>
+                </tr>
+                <tr>
                     <th scope="row">Delete plugin data on uninstall</th>
                     <td>
                         <label><input type="checkbox" name="delete_on_uninstall" value="1" <?php checked( 1, intval( $delete_on_uninstall ) ); ?> /> Delete all plugin tables and options when the plugin is uninstalled.</label>
                         <p class="description">When enabled, the plugin will DROP its custom tables when uninstalled from the WordPress Plugins screen.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Default session duration</th>
+                    <td>
+                        <select name="session_duration">
+                            <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                            <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
+                            <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
+                        </select>
+                        <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
                     </td>
                 </tr>
             </table>
@@ -1308,7 +1570,6 @@ function order_sync_teams_page() {
         .status-pending { color: #ffb900; font-weight: bold; }
         .status-inactive { color: #dc3232; font-weight: bold; }
         </style>
-    </div>
     </div>
     <?php
 }
