@@ -1,0 +1,32 @@
+[
+  {
+    "id": "1",
+    "label": "Main St & Central Ave, Southington, CT 06489",
+    "street": "Main St",
+    "city": "Southington",
+    "state": "CT",
+    "zip": "06489",
+    "lat": 41.5589,
+    "lng": -72.8856
+  },
+  {
+    "id": "2",
+    "label": "Queen St 123, Southington, CT 06489",
+    "street": "123 Queen St",
+    "city": "Southington",
+    "state": "CT",
+    "zip": "06489",
+    "lat": 41.5472,
+    "lng": -72.8801
+  },
+  {
+    "id": "3",
+    "label": "Depot St & Maple St, Plantsville, CT 06479",
+    "street": "Depot St",
+    "city": "Plantsville",
+    "state": "CT",
+    "zip": "06479",
+    "lat": 41.5480,
+    "lng": -72.8834
+  }
+]

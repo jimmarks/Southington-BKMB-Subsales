@@ -1,18 +1,11 @@
 # GitHub Copilot Instructions
 
 ## Project Overview
-This is a **React Native order management mobile app** with WordPress backend integration for subsales management. The app features team-based authentication, Google Maps integration, and order synchronization with a comprehensive WordPress plugin.
+This is a **PWA that is meant to be served as part of a larger wordpress plugin** with WordPress backend integration for subsales management. The app features team-based authentication, Google Maps integration, and order synchronization with a comprehensive WordPress plugin.
 
 ## Architecture Overview
 
-### Mobile App (`mobile-app/`)
-- **Tech Stack**: React Native 0.64 + TypeScript + Redux Toolkit + React Navigation 6
-- **State Management**: RTK store with `authSlice`, `ordersSlice`, and `configSlice`
-- **Navigation**: Stack-based navigation with 4 main screens (Auth, Orders, OrderDetail, Reports)
-- **Service Layer**: Services in `authService`, `orderService`, `wpSyncService`, and `configService`
-- **Smart Features**: Automatic online/offline address input switching with local caching
-
-### WordPress Plugin (`wordpress-plugin/`)
+## WordPress Plugin (`wordpress-plugin/`)
 - **Backend**: Full-featured WordPress plugin with professional admin interface and REST API
 - **API Base**: `/wp-json/order-manager/v1/` for orders, auth, and config endpoints
 - **Authentication**: Multi-team system with access codes (not JWT-based)
@@ -100,72 +93,102 @@ For the best Android testing experience with Android Studio Narwhal:
 2. Activate the plugin through the WordPress admin 'Plugins' menu
 3. Navigate to **BKMB Subsales** in the main admin menu (located after Comments)
 4. Configure Google Maps API key in Settings
-5. Create teams with unique names and access codes in Teams section
-6. Add team members with appropriate roles (Member, Manager, Admin)
-7. Configure sync interval (minimum 60 seconds)
-8. Plugin creates database tables `wp_order_sync_orders`, `wp_order_sync_teams`, and `wp_order_sync_team_members` on activation
-9. Teams can access Google Maps API key via mobile app after authentication
+# Copilot / Assistant Instructions
 
-### WordPress Plugin Features
-- **Top-Level Admin Menu**: Located after Comments with separators for easy access
-- **Multi-Team Management**: Support for unlimited teams with unique access codes
-- **Google Maps Integration**: API key management with sharing to mobile clients
-- **Professional Admin Interface**: Dashboard with statistics and team management
-- **Database**: Custom tables for orders, teams, and team member management
-- **API Security**: Team-based authentication with Google Maps API sharing
-- **CRUD Operations**: Full REST API for orders and multi-team management
-- **Permission Control**: Requires `manage_options` capability for admin access
-- **Mobile App Support**: Team-based login with Google Maps API key delivery
+Purpose
+-------
+Short, actionable instructions for automated code assistants and new contributors working on this repository. The goal is to have clear, repo-specific guidance so edits are safe, consistent, and easy to validate.
 
-## Project-Specific Conventions
+Audience & tone
+---------------
+- Primary audience: automated assistants and new maintainers.
+- Tone: concise and prescriptive — tell the assistant what to change, where, and how to validate.
 
-### File Organization
-- **Types**: All TypeScript interfaces in `src/types/index.ts`
-- **Validators**: Form validation functions in `src/utils/validators.ts`
-- **Hooks**: Custom hooks like `useAuth` in `src/hooks/`
+Project snapshot (key facts)
+---------------------------
+- This repo is a WordPress plugin that ships a small PWA client. The plugin provides an admin UI, a REST/API surface, and a server-side ZIP-based address-extract generator used by the PWA for offline address completion.
+- Canonical address input in the PWA is the plain text field with id `#address` (the client intentionally avoids fragile DOM heuristics).
+- Admin ZIP extract generator (PHP) queries OpenStreetMap's Overpass API and writes per-ZIP JSON files to `wp-content/uploads/subsales-zipdata/<zip>.json`.
+- Packaging script: `scripts/package-plugin.sh` creates a distributable plugin ZIP at the repo root.
 
-### API URL Configuration
-- **Mobile**: Update `API_BASE_URL` in `src/services/api/index.ts` and `src/services/configService.ts`
-- **WordPress**: Replace placeholder URLs in `wpSyncService.ts`
-- **Config Endpoint**: `/wp-json/order-manager/v1/config` provides Google Maps API key and app settings
+Where to look first
+-------------------
+- Plugin bootstrap and admin pages: `wordpress-plugin/subsales-management.php` and `wordpress-plugin/includes/`.
+- Admin JS for ZIP generation: `wordpress-plugin/assets/js/subsales-zip-admin.js`.
+- PWA client entrypoint: `wordpress-plugin/pwa/app.js` (uses `#address`).
+- Packaging: `scripts/package-plugin.sh` (builds `subsales-management.zip`).
 
-### Google Maps Integration
-- Smart address components in `src/components/map/` (`SmartAddressInput`, `OfflineAddressInput`, `AddressAutocomplete`)
-- Used for address autofill in order forms with automatic online/offline fallback
-- **API Key Management**: Google Maps API key dynamically fetched from WordPress `/config` endpoint after team login
-- **Flow**: Login → `configService.fetchAppConfig()` → Store in Redux → Pass to Google Places components
-- **Caching**: API key cached locally via `AsyncStorage` for offline scenarios
+Quick editing rules
+-------------------
+- Never commit secrets (API keys, service account files) — put them in environment variables or secure vaults and document usage in the README.
+- Avoid adding long-running network calls in tests. Overpass queries are allowed from admin actions but not in automated unit tests.
+- Make minimal, focused edits. Preserve existing style and indentation.
 
-## Common Development Tasks
+Change/PR checklist for assistants
+---------------------------------
+Before creating a PR or making a patch, run these checks locally (or in the dev container):
 
-### Adding New Screens
-1. Create screen component in `src/screens/`
-2. Add to navigation stack in `src/App.tsx` and `src/navigation/AppNavigator.tsx`
-3. Update TypeScript navigation types if needed
+1. Lint/Typecheck
+  - If you modify TypeScript in `mobile-app/`, run tsc (project has `tsconfig.json`).
 
-### Adding New API Endpoints
-1. Add function to appropriate service file (`authService`, `orderService`, `wpSyncService`)
-2. Update WordPress plugin `wordpress-plugin/bkmb-subsales-management.php` with corresponding REST route
-3. Update TypeScript interfaces in `src/types/index.ts`
+2. Quick runtime validation (for PHP/admin changes)
+  - If you edit admin pages or the ZIP generator, run the packaging script and then, if possible, test on a local WP install:
 
-### State Management Updates
-1. Modify existing slice or create new slice in `src/store/`
-2. Add reducer to store configuration in `src/store/index.ts`
-3. Use RTK patterns with `createSlice` and proper TypeScript typing
+```bash
+# create plugin zip
+bash scripts/package-plugin.sh
 
-## Integration Points
+# Inspect the zip exists
+ls -lh subsales-management.zip
+```
 
-### WordPress Sync Strategy
-- **Local First**: Orders saved locally via `AsyncStorage` for offline support
-- **Background Sync**: `wpSyncService` handles bi-directional synchronization
-- **Conflict Resolution**: Last-write-wins strategy for order updates
+3. Functional smoke tests
+  - For ZIP generator edits: in WP admin, Subsales → Address Extracts, save some test ZIPs and click Generate. Then verify `wp-content/uploads/subsales-zipdata/<zip>.json` exists and is valid JSON.
 
-### Authentication Flow
-- Team-based login with access codes (not JWT tokens)
-- Team credentials stored in Redux state and AsyncStorage
-- All API calls include team headers for authentication
+4. Unit tests
+  - Run `npm test` in `mobile-app/` if you changed client code.
 
-## Testing Strategy
-- Jest configuration in `package.json`
-- Run tests with `npm test`
-- Test files should follow React Native testing patterns
+5. Commit messages / PR title
+  - Use concise titles and reference issues when relevant. Example: "Add Overpass ZIP extract generator and admin UI".
+
+When to ask a human
+--------------------
+- If a code change requires secrets or credentials (Google API keys, service account files).
+- If a long-running data import is needed (OpenAddresses ingest) — discuss strategy before implementing.
+- If changes affect DB schema or add new persistent tables.
+
+Quality gates (minimal)
+-----------------------
+- Build: run `bash scripts/package-plugin.sh` and ensure it completes.
+- Lint/Typecheck: run TypeScript checks for `mobile-app/` when relevant.
+- Tests: run client unit tests with `npm test` when modifying JS/TS code.
+
+Security & network policies
+---------------------------
+- Do not hard-code API keys or tokens in the repo.
+- Overpass usage: allowed from admin actions. Be mindful of rate limits and timeouts. Do not call Overpass from CI tests.
+
+Project-specific notes & conventions
+----------------------------------
+- The PWA relies on per-ZIP JSON extracts for offline address completion. The intended flow is:
+  1) Admin saves served ZIPs in Subsales → Address Extracts.
+  2) Admin triggers generation (server calls Overpass and writes `wp-content/uploads/subsales-zipdata/<zip>.json`).
+  3) The PWA lazy-loads those files (client-side caching, IndexedDB) to provide offline suggestions.
+- Canonical address field: `#address` is authoritative. Do not attempt to extract visible suggestion text from third-party widgets in production code — instead provide a controlled autocomplete that writes to `#address`.
+
+Small changelog
+---------------
+- 2025-11-08: Updated to reflect the admin ZIP extract generator, Overpass usage, canonical `#address` behavior, and packaging script.
+
+Next recommended improvements (for contributors)
+-----------------------------------------------
+1. Implement a lightweight client autocomplete module that lazy-loads per-ZIP JSON and caches it in IndexedDB. Keep the module small and testable.
+2. Add a CI job that runs TypeScript checks and the packaging script (without deploying). Exclude Overpass calls.
+3. Add a short integration doc: "How to test the ZIP generator locally" with screenshots or sample logs.
+
+Contact / ownership
+-------------------
+If you're unsure about a non-trivial change, tag a human reviewer in the PR. Keep PRs small.
+
+---
+If you'd like I can now apply this update to `.github/copilot-instructions.md` and run two quick validations: (1) confirm `scripts/package-plugin.sh` exists and is executable, and (2) grep for the admin ZIP generator function name to ensure the file references are correct.

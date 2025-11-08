@@ -1,0 +1,42 @@
+/* Admin dashboard styles for Subsales plugin */
+.subsales-dashboard-grid{ margin-top:20px; display:flex; flex-direction:column; gap:20px }
+.subsales-top-row, .subsales-second-row{ display:grid; gap:20px }
+
+/* Top row: 3 columns large, 2 medium, 1 small */
+.subsales-top-row{ grid-template-columns: repeat(3, 1fr); }
+@media (max-width:1200px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
+@media (max-width:700px){ .subsales-top-row{ grid-template-columns: 1fr; } }
+
+/* Second row: dynamic responsive grid, try to keep items on one line for very wide displays */
+.subsales-second-row{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+@media (min-width:1400px){
+  .subsales-second-row{ display:grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items:start; }
+}
+
+.subsales-box{ border:1px solid #ececec; border-radius:8px; overflow:hidden; background:#fff }
+.subsales-box .postbox-header{ padding:16px 20px; border-bottom:1px solid #e9e9e9; background:#fafafa; display:flex; align-items:center }
+.subsales-box .postbox-header h2{ margin:0; font-size:1.05rem; font-weight:700; color:#222; display:flex; align-items:center; gap:10px }
+.subsales-box .inside{ padding:20px; display:flex; align-items:center; justify-content:center }
+
+/* Give header text some breathing room on very small screens */
+@media (max-width:480px){
+  .subsales-box .postbox-header{ padding:14px 12px }
+  .subsales-box .inside{ padding:14px }
+}
+.subsales-box .stat-value{ font-size:36px; font-weight:700; color:#0073aa; margin:0 }
+
+/* Icon styling */
+.subsales-box .ss-icon{ font-size:20px; color:#2d6cdf }
+
+/* Hover/interaction */
+.subsales-box{ transition: transform .12s ease, box-shadow .12s ease }
+.subsales-box:hover{ transform: translateY(-4px); box-shadow: 0 10px 30px rgba(2,6,23,0.08) }
+
+/* Small adjustments for admin UI consistency */
+.subsales-second-row .postbox{ min-height:110px; display:flex; flex-direction:column }
+
+/* Ensure quick actions spacing */
+.subsales-quick-actions{ margin-top:30px }
+
+/* Badge for pending */
+.subsales-badge{ display:inline-block; background:#f59e0b; color:#fff; padding:4px 8px; border-radius:999px; font-size:12px; margin-left:8px }
