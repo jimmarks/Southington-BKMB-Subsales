@@ -773,7 +773,11 @@ function order_sync_fetch_orders_ajax() {
     $rows = $wpdb->get_results( $prepared, ARRAY_A );
 
     $orders = array();
-    $totals = array( 'cash' => 0.0, 'check' => 0.0, 'grand' => 0.0 );
+    $totals = array( 'cash' => 0.0, 'check' => 0.0, 'grand' => 0.0, 'product_totals' => array() );
+    // initialize product totals for the page
+    foreach ( $configured_products as $pconf ) {
+        $totals['product_totals'][ $pconf['id'] ] = 0;
+    }
     // Load configured products once for building products_map. Normalize whether option is stored as array or JSON string.
     $configured_products = order_sync_get_products_config();
 
@@ -836,6 +840,15 @@ function order_sync_fetch_orders_ajax() {
         if ( strtolower( $payment ) === 'check' ) $totals['check'] += $order_total;
         elseif ( strtolower( $payment ) === 'cash' ) $totals['cash'] += $order_total;
         $totals['grand'] += $order_total;
+
+            // add to page product totals
+            foreach ( $products_map as $pid => $qty ) {
+                if ( isset( $totals['product_totals'][ $pid ] ) ) {
+                    $totals['product_totals'][ $pid ] += intval( $qty );
+                } else {
+                    $totals['product_totals'][ $pid ] = intval( $qty );
+                }
+            }
 
         $team_name = '';
         if ( ! empty( $r['team_id'] ) ) {
@@ -2981,25 +2994,36 @@ function order_sync_orders_page() {
                         <?php foreach ( $products_conf as $pcol ) : ?>
                             <th style="text-align:center"><?php echo esc_html( $pcol['name'] ); ?></th>
                         <?php endforeach; ?>
-                        <th>Items</th>
                         <th>Payment</th>
                         <th style="text-align:right">Order Total (USD)</th>
                     </tr>
                 </thead>
                 <tbody id="subsales-orders-tbody">
-                    <tr><td colspan="<?php echo 7 + count( $products_conf ); ?>">Use the filters above and click Filter to load orders via AJAX.</td></tr>
+                    <tr><td colspan="<?php echo 6 + count( $products_conf ); ?>">Use the filters above and click Filter to load orders via AJAX.</td></tr>
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="<?php echo 6 + count( $products_conf ); ?>" style="text-align:right">Page totals:</td>
+                        <td colspan="4" style="text-align:right">Page totals:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td id="subsales-page-prod-<?php echo esc_attr( $pcol['id'] ); ?>" style="text-align:center">0</td>
+                        <?php endforeach; ?>
+                        <td></td>
                         <td id="subsales-page-total" style="text-align:right">$0.00</td>
                     </tr>
                     <tr>
-                        <td colspan="<?php echo 6 + count( $products_conf ); ?>" style="text-align:right">Cash:</td>
+                        <td colspan="4" style="text-align:right">Cash:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td></td>
+                        <?php endforeach; ?>
+                        <td></td>
                         <td id="subsales-page-cash" style="text-align:right">$0.00</td>
                     </tr>
                     <tr>
-                        <td colspan="<?php echo 6 + count( $products_conf ); ?>" style="text-align:right">Check:</td>
+                        <td colspan="4" style="text-align:right">Check:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td></td>
+                        <?php endforeach; ?>
+                        <td></td>
                         <td id="subsales-page-check" style="text-align:right">$0.00</td>
                     </tr>
                 </tfoot>
@@ -3027,8 +3051,8 @@ function order_sync_orders_page() {
         function renderRows(orders){
             const tbody = document.getElementById('subsales-orders-tbody');
             tbody.innerHTML = '';
-            if (!orders || orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="' + (7 + configuredProducts.length) + '">No orders found for the selected filters.</td></tr>';
+                if (!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="' + (6 + configuredProducts.length) + '">No orders found for the selected filters.</td></tr>';
                 return;
             }
             for (const o of orders){
@@ -3044,7 +3068,7 @@ function order_sync_orders_page() {
                     const qty = (o.products_map && typeof o.products_map[pid] !== 'undefined') ? Number(o.products_map[pid]) : 0;
                     html += '<td style="text-align:center">' + escapeHtml(qty) + '</td>';
                 }
-                html += '<td>' + escapeHtml(o.items || '') + '</td>';
+                // Items column removed; individual product columns are shown above.
                 html += '<td>' + escapeHtml(o.payment_display || '') + '</td>';
                 html += '<td style="text-align:right">$' + Number(o.order_total).toFixed(2) + '</td>';
                 tr.innerHTML = html;
@@ -3058,9 +3082,22 @@ function order_sync_orders_page() {
         }
 
         function renderTotals(totals){
-            document.getElementById('subsales-page-total').textContent = '$' + Number(totals.grand).toFixed(2);
-            document.getElementById('subsales-page-cash').textContent = '$' + Number(totals.cash).toFixed(2);
-            document.getElementById('subsales-page-check').textContent = '$' + Number(totals.check).toFixed(2);
+            // totals.product_totals is expected to be a map of productId => qty for the current page
+            try{
+                if (totals && totals.product_totals){
+                    for (const p of configuredProducts){
+                        const pid = p.id;
+                        const el = document.getElementById('subsales-page-prod-' + pid);
+                        if (el) el.textContent = (totals.product_totals[pid] !== undefined) ? String(totals.product_totals[pid]) : '0';
+                    }
+                } else {
+                    // clear product totals
+                    for (const p of configuredProducts){ const el = document.getElementById('subsales-page-prod-' + p.id); if (el) el.textContent = '0'; }
+                }
+            }catch(e){ console.warn('renderTotals product totals error', e); }
+            document.getElementById('subsales-page-total').textContent = '$' + Number(totals.grand || 0).toFixed(2);
+            document.getElementById('subsales-page-cash').textContent = '$' + Number(totals.cash || 0).toFixed(2);
+            document.getElementById('subsales-page-check').textContent = '$' + Number(totals.check || 0).toFixed(2);
         }
 
         function renderPagination(page, pages){
