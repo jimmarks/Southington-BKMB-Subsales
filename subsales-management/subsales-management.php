@@ -874,37 +874,7 @@ function order_sync_fetch_orders_ajax() {
 }
 
 // AJAX endpoint to run migration helper from the admin UI (runs under current user, requires manage_options)
-add_action( 'wp_ajax_subsales_run_migration', 'order_sync_run_migration_ajax' );
-function order_sync_run_migration_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Insufficient permissions' );
-    }
-    check_ajax_referer( 'subsales_migrate_nonce', 'nonce' );
-
-    $apply = isset( $_POST['apply'] ) && intval( $_POST['apply'] ) === 1 ? true : false;
-    // Prefer a fixed, cleaned migration script if present (fallback to original)
-    $script = __DIR__ . '/tools/migrate_orders_products_fixed.php';
-    if ( ! file_exists( $script ) ) {
-        $script = __DIR__ . '/tools/migrate_orders_products.php';
-    }
-    if ( ! file_exists( $script ) ) {
-        wp_send_json_error( 'Migration script not found' );
-    }
-    // include the script (it should define migrate_orders_products)
-    include_once $script;
-    if ( ! function_exists( 'migrate_orders_products' ) ) {
-        wp_send_json_error( 'Migration function not available' );
-    }
-    try {
-        $res = migrate_orders_products( $apply );
-        if ( ! isset( $res['success'] ) || $res['success'] !== true ) {
-            wp_send_json_error( isset( $res['error'] ) ? $res['error'] : 'Migration failed' );
-        }
-        wp_send_json_success( $res );
-    } catch ( Exception $e ) {
-        wp_send_json_error( 'Exception: ' . $e->getMessage() );
-    }
-}
+/* Migration AJAX handler removed per request. Migration tools (if any) should be removed separately. */
 
 // AJAX endpoint to run initialization from the onboarding wizard
 add_action( 'wp_ajax_subsales_run_init', 'order_sync_run_init_ajax' );
@@ -1641,6 +1611,7 @@ function subsales_pwa_shortcode( $atts = array() ) {
                     <button id="viewOnlineBtn" class="sm-btn sm-auth-hidden" style="margin-right:8px">View online orders</button>
                     <span id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></span>
                     <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
+                    <button id="eodBtn" class="sm-btn sm-auth-hidden">End of Day Tally</button>
                     <button id="logoutBtn" class="sm-btn sm-auth-hidden" title="Log out">Log out</button>
                     <button id="openInlayBtn" class="sm-btn hidden sm-auth-hidden">Queued Orders</button>
                 </div>
@@ -2154,36 +2125,45 @@ function order_sync_settings_page() {
         return;
     }
 
-    // Handle form submission
-    if ( isset( $_POST['submit'] ) ) {
+    // Handle per-panel form submission
+    if ( isset( $_POST['save_overall'] ) ) {
         check_admin_referer( 'order_sync_settings_nonce' );
-        
-    $api_key = sanitize_text_field( $_POST['api_key'] );
-        $sync_interval = intval( $_POST['sync_interval'] );
-        $portal_slug = sanitize_title( $_POST['portal_slug'] ?? '' );
-    $branding = sanitize_text_field( $_POST['subsales_branding'] ?? '' );
-        $session_duration = intval( $_POST['session_duration'] ?? 86400000 );
-        $style_variant = sanitize_text_field( $_POST['style_variant'] ?? 'default' );
-        $primary_color = sanitize_text_field( $_POST['primary_color'] ?? '#2d6cdf' );
-        $delete_on_uninstall = isset( $_POST['delete_on_uninstall'] ) ? 1 : 0;
-        $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
+        $api_key = isset( $_POST['api_key'] ) ? sanitize_text_field( $_POST['api_key'] ) : '';
+        $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
+        $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
+        $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
 
-        if ( empty( $portal_slug ) ) {
-            $portal_slug = 'subsales-portal';
-        }
-
-        // If slug changed, ensure page exists for new slug
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
         update_option( 'order_sync_interval', $sync_interval );
         update_option( 'order_sync_portal_slug', $portal_slug );
-    update_option( 'subsales_branding', $branding );
         update_option( 'order_sync_session_duration', $session_duration );
+
+        if ( $portal_slug !== $old_slug ) {
+            order_sync_ensure_pwa_page( $portal_slug );
+            flush_rewrite_rules();
+        }
+
+        echo '<div class="notice notice-success"><p>Overall settings saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_branding'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $branding = isset( $_POST['subsales_branding'] ) ? sanitize_text_field( $_POST['subsales_branding'] ) : '';
+        $style_variant = isset( $_POST['style_variant'] ) ? sanitize_text_field( $_POST['style_variant'] ) : 'default';
+        $primary_color = isset( $_POST['primary_color'] ) ? sanitize_text_field( $_POST['primary_color'] ) : '#2d6cdf';
+        $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
+
+        update_option( 'subsales_branding', $branding );
         update_option( 'order_sync_style_variant', $style_variant );
         update_option( 'order_sync_primary_color', $primary_color );
-    update_option( 'subsales_delete_on_uninstall', $delete_on_uninstall );
-    update_option( 'subsales_header_image', $header_image );
+        update_option( 'subsales_header_image', $header_image );
 
+        echo '<div class="notice notice-success"><p>Branding saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_products'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
         // Handle products: repeatable fields product_name[], product_price[], product_visible[], product_id[]
         if ( isset( $_POST['product_name'] ) && is_array( $_POST['product_name'] ) ) {
             $names = $_POST['product_name'];
@@ -2197,31 +2177,19 @@ function order_sync_settings_page() {
                 if ( empty( $name ) ) continue;
                 $price_raw = isset( $prices[ $i ] ) ? $prices[ $i ] : '0';
                 $price = floatval( preg_replace( '/[^0-9.\\-]/', '', $price_raw ) );
-                // ensure two-decimal precision
                 $price = round( $price, 2 );
-                // id/slug: use provided id if present, otherwise generate
                 $id = isset( $ids[ $i ] ) ? sanitize_title( $ids[ $i ] ) : sanitize_title( $name );
                 if ( empty( $id ) ) $id = 'p' . time() . $i;
-                // ensure unique among products
                 $suffix = 1;
                 $base_id = $id;
-                while ( in_array( $id, array_column( $products, 'id' ) ) ) {
-                    $id = $base_id . '-' . $suffix; $suffix++;
-                }
+                while ( in_array( $id, array_column( $products, 'id' ) ) ) { $id = $base_id . '-' . $suffix; $suffix++; }
                 $visible = in_array( (string)$i, $visibles, true ) || in_array( $id, $visibles, true ) || ( isset( $visibles[ $i ] ) && $visibles[ $i ] );
                 $products[] = array( 'id' => $id, 'name' => $name, 'price' => number_format( $price, 2, '.', '' ), 'visible' => $visible ? 1 : 0 );
                 $count++;
             }
             update_option( 'order_sync_products', wp_json_encode( $products ) );
+            echo '<div class="notice notice-success"><p>Products saved!</p></div>';
         }
-
-        if ( $portal_slug !== $old_slug ) {
-            order_sync_ensure_pwa_page( $portal_slug );
-            // flush rewrite rules as a safety (rarely needed here)
-            flush_rewrite_rules();
-        }
-
-        echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
     }
 
     // Handle clear data action (danger zone)
@@ -2248,159 +2216,212 @@ function order_sync_settings_page() {
     ?>
     <div class="wrap">
         <h1>Subsales Settings</h1>
-        <?php if ( ! empty( $_GET['subsales_import_result'] ) ) :
+        <!-- Tabbed navigation -->
+        <div class="subsales-tabs-wrap" style="margin-bottom:12px">
+            <style>
+            .subsales-tabs { list-style:none; padding:0; margin:0 0 8px 0; display:flex; gap:8px; flex-wrap:wrap }
+            .subsales-tabs li { background:#f1f1f1; padding:6px 10px; border-radius:6px; cursor:pointer }
+            .subsales-tabs li.active { background:#2d6cdf; color:#fff }
+            .subsales-tab-link { text-decoration:none; color:inherit; display:inline-block }
+            /* Panels: hide by default, show when active */
+            .subsales-tab-panel { display: none; margin-top: 12px; }
+            .subsales-tab-panel.active { display: block; }
+            </style>
+            <ul class="subsales-tabs" role="tablist" aria-label="Subsales settings tabs">
+                <li class="active" data-target="#tab-overall"><a class="subsales-tab-link" href="javascript:void(0);">Overall Settings</a></li>
+                <li data-target="#tab-branding"><a class="subsales-tab-link" href="javascript:void(0);">Branding / Look &amp; Feel</a></li>
+                <li data-target="#tab-products"><a class="subsales-tab-link" href="javascript:void(0);">Products</a></li>
+                <li data-target="#tab-backup_restore"><a class="subsales-tab-link" href="javascript:void(0);">Backup / Restore</a></li>
+                <li data-target="#tab-system_info"><a class="subsales-tab-link" href="javascript:void(0);">System Info</a></li>
+            </ul>
+            <script>
+            (function(){
+                // Initialize tab show/hide behaviour after DOM ready so panels exist
+                function initSubsalesTabs(){
+                    var tabs = document.querySelectorAll('.subsales-tabs li');
+                    var panels = document.querySelectorAll('.subsales-tab-panel');
+                    function showPanel(id){
+                        // remove active class from all panels
+                        panels.forEach(function(p){ p.classList.remove('active'); });
+                        var el = document.querySelector(id);
+                        if ( el ) el.classList.add('active');
+                    }
+                    tabs.forEach(function(t){ t.addEventListener('click', function(e){
+                        e.preventDefault();
+                        tabs.forEach(function(x){ x.classList.remove('active'); });
+                        t.classList.add('active');
+                        var target = t.getAttribute('data-target');
+                        showPanel(target);
+                        // update hash without jumping
+                        if ( history && history.replaceState ) history.replaceState(null, null, target);
+                    }); });
+                    // Initialize panels: ensure first panel visible
+                    if ( panels.length ) {
+                        var found = document.querySelector('.subsales-tabs li.active');
+                        var start = found ? found.getAttribute('data-target') : (panels[0].id ? ('#'+panels[0].id) : null);
+                        if ( start ) showPanel(start);
+                    }
+                }
+                if ( document.readyState === 'loading' ) {
+                    document.addEventListener('DOMContentLoaded', initSubsalesTabs);
+                } else {
+                    initSubsalesTabs();
+                }
+            })();
+            </script>
+        </div>
+    <?php if ( ! empty( $_GET['subsales_import_result'] ) ) :
             $raw = sanitize_text_field( wp_unslash( $_GET['subsales_import_result'] ) );
             // decode if it was rawurlencoded
             $raw = rawurldecode( $raw );
         ?>
             <div class="notice notice-success"><p><strong>Import result:</strong> <?php echo esc_html( $raw ); ?></p></div>
         <?php endif; ?>
-        <?php if ( ! empty( $branding ) ) : ?>
-            <div style="margin-bottom:12px; padding:10px; background:#f7f7f7; border-left:4px solid #2d6cdf">Branding banner: <strong><?php echo esc_html( $branding ); ?></strong></div>
-        <?php endif; ?>
         
-        <!-- Main Settings Form -->
-        <form method="post" action="">
-            <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">Google Maps API Key</th>
-                    <td>
-                        <input type="text" id="mapsApiKey" name="api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" />
-                        <p class="description">Enter your Google Maps API key. This will be shared with mobile clients after login for map functionality.</p>
-                        <p class="description">Need a key? <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Create a Google Maps API key</a> in Google Cloud Console (enable Maps JavaScript / Geocoding APIs).</p>
-                        <p>
-                            <button type="button" id="test_maps_key_btn" class="button">Test key</button>
-                            <span id="maps_test_status" style="margin-left:12px; font-weight:600"></span>
-                        </p>
-                        <div id="maps_test_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
-                        <script>
-                        (function(){
-                            const ajaxUrl = ajaxurl;
-                            const nonce = <?php echo json_encode( wp_create_nonce( 'subsales_test_maps_key' ) ); ?>;
-                            function setStatus(s){ document.getElementById('maps_test_status').textContent = s; }
-                            document.getElementById('test_maps_key_btn').addEventListener('click', function(){
-                                const key = document.getElementById('mapsApiKey').value || '';
-                                const fd = new FormData();
-                                fd.append('action','subsales_test_maps_key');
-                                fd.append('nonce', nonce);
-                                fd.append('key', key);
-                                const out = document.getElementById('maps_test_output'); out.style.display='block'; out.textContent='Testing...'; setStatus('Testing...');
-                                fetch(ajaxUrl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
-                                    if (!j) { out.textContent = 'No response'; setStatus('Error'); return; }
-                                    if (!j.success) {
-                                        out.textContent = 'Error: ' + (j.data || 'Unknown'); setStatus('Invalid'); return;
-                                    }
-                                    const d = j.data;
-                                    out.textContent = JSON.stringify(d, null, 2);
-                                    setStatus(d.status || 'OK');
-                                }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; setStatus('Error'); });
-                            });
-                        })();
-                        </script>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Migration (legacy → products[])</th>
-                    <td>
-                        <p class="description">If you have older orders using per-field quantities (e.g., turkeyQty), run the migration to convert them into the structured <code>products</code> array.</p>
-                        <?php wp_nonce_field( 'subsales_migrate_nonce' ); ?>
-                        <p>
-                            <button type="button" id="run_migration_dry" class="button">Dry-run migration</button>
-                            <button type="button" id="run_migration_apply" class="button button-primary">Run and apply migration</button>
-                        </p>
-                        <div id="migration_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
-                        <script>
-                        (function(){
-                            function runMigration(apply){
-                                var fd = new FormData();
-                                fd.append('action','subsales_run_migration');
-                                fd.append('nonce', document.querySelector('input[name="_wpnonce"]').value);
-                                fd.append('apply', apply ? '1' : '0');
-                                var out = document.getElementById('migration_output'); out.style.display='block'; out.textContent='Running...';
-                                fetch(ajaxurl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
-                                    if (!j || !j.success) {
-                                        out.textContent = 'Error: ' + (j && j.data ? (typeof j.data === 'string' ? j.data : JSON.stringify(j.data)) : 'Unknown');
-                                    } else {
-                                        out.textContent = JSON.stringify(j.data, null, 2);
-                                    }
-                                }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; });
-                            }
-                            document.getElementById('run_migration_dry').addEventListener('click', function(){ runMigration(false); });
-                            document.getElementById('run_migration_apply').addEventListener('click', function(){ if (!confirm('This will create a backup table and apply changes. Continue?')) return; runMigration(true); });
-                        })();
-                        </script>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Sync Interval (seconds)</th>
-                    <td>
-                        <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
-                        <p class="description">How often to sync orders (minimum 60 seconds).</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Portal Slug</th>
-                    <td>
-                        <input type="text" name="portal_slug" value="<?php echo esc_attr( $portal_slug ); ?>" class="regular-text" />
-                        <p class="description">The public slug (URL path) where the PWA will be available. Default: <code>subsales-portal</code>.</p>
-                        <p class="description">Portal URL: <strong><?php echo esc_url( $portal_url ); ?></strong></p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Branding / Group name</th>
-                    <td>
-                        <input type="text" name="subsales_branding" value="<?php echo esc_attr( $branding ); ?>" class="regular-text" />
-                        <p class="description">Optional branding string that will be shown in the PWA header and admin pages.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Header image</th>
-                    <td>
-                        <input type="hidden" id="subsales_header_image" name="subsales_header_image" value="<?php echo esc_attr( $header_image_id ); ?>" />
-                        <div id="subsales_header_preview" style="margin-bottom:8px;<?php echo $header_image_url ? '' : 'display:none;'; ?>">
-                            <?php if ( $header_image_url ): ?>
-                                <img src="<?php echo esc_url( $header_image_url ); ?>" style="max-width:200px;height:auto;border:1px solid #ddd;padding:4px;background:#fff" />
-                            <?php endif; ?>
-                        </div>
-                        <button type="button" class="button" id="subsales_header_select">Select image</button>
-                        <button type="button" class="button" id="subsales_header_remove" <?php echo $header_image_url ? '' : 'style="display:none;"'; ?>>Remove image</button>
-                        <p class="description">Optional header image that will be shown in the PWA header on mobile clients.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Style options</th>
-                    <td>
-                        <p class="description">Choose a visual style for the PWA. Samples are shown below; primary color can be customized.</p>
-                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="default" <?php checked( $style_variant, 'default' ); ?> /> Default</label>
-                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="flat" <?php checked( $style_variant, 'flat' ); ?> /> Flat</label>
-                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
-                            <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
-                        </div>
-                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-                            <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
-                                <div style="margin-bottom:6px;font-weight:600">Button sample</div>
-                                <button class="button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
-                            </div>
-                            <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
-                                <div style="margin-bottom:6px;font-weight:600">Header sample</div>
-                                <div style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
-                            </div>
-                        </div>
-                        <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
-                        <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
-                    </td>
-                </tr>
+        
+        <!-- Main Settings Panels -->
+            <div class="subsales-tab-panels">
+                <div id="tab-overall" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="overall" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Google Maps API Key</th>
+                            <td>
+                                <input type="text" id="mapsApiKey" name="api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" />
+                                <p class="description">Enter your Google Maps API key. This will be shared with mobile clients after login for map functionality.</p>
+                                <p class="description">Need a key? <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Create a Google Maps API key</a> in Google Cloud Console (enable Maps JavaScript / Geocoding APIs).</p>
+                                <p>
+                                    <button type="button" id="test_maps_key_btn" class="button">Test key</button>
+                                    <span id="maps_test_status" style="margin-left:12px; font-weight:600"></span>
+                                </p>
+                                <div id="maps_test_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
+                                <script>
+                                (function(){
+                                    const ajaxUrl = ajaxurl;
+                                    const nonce = <?php echo json_encode( wp_create_nonce( 'subsales_test_maps_key' ) ); ?>;
+                                    function setStatus(s){ document.getElementById('maps_test_status').textContent = s; }
+                                    document.getElementById('test_maps_key_btn').addEventListener('click', function(){
+                                        const key = document.getElementById('mapsApiKey').value || '';
+                                        const fd = new FormData();
+                                        fd.append('action','subsales_test_maps_key');
+                                        fd.append('nonce', nonce);
+                                        fd.append('key', key);
+                                        const out = document.getElementById('maps_test_output'); out.style.display='block'; out.textContent='Testing...'; setStatus('Testing...');
+                                        fetch(ajaxUrl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+                                            if (!j) { out.textContent = 'No response'; setStatus('Error'); return; }
+                                            if (!j.success) {
+                                                out.textContent = 'Error: ' + (j.data || 'Unknown'); setStatus('Invalid'); return;
+                                            }
+                                            const d = j.data;
+                                            out.textContent = JSON.stringify(d, null, 2);
+                                            setStatus(d.status || 'OK');
+                                        }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; setStatus('Error'); });
+                                    });
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Sync Interval (seconds)</th>
+                            <td>
+                                <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
+                                <p class="description">How often to sync orders (minimum 60 seconds).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Portal Slug</th>
+                            <td>
+                                <input type="text" name="portal_slug" value="<?php echo esc_attr( $portal_slug ); ?>" class="regular-text" />
+                                <p class="description">The public slug (URL path) where the PWA will be available. Default: <code>subsales-portal</code>.</p>
+                                <p class="description">Portal URL: <strong><?php echo esc_url( $portal_url ); ?></strong></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Default session duration</th>
+                            <td>
+                                <select name="session_duration">
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                                    <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
+                                    <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
+                                </select>
+                                <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
+                            </td>
+                        </tr>
+                    </table>
+                    <p><?php submit_button( 'Save Overall Settings', 'primary', 'save_overall' ); ?></p>
+                    </form>
+                </div>
+
+                <div id="tab-branding" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="branding" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Branding / Group name</th>
+                            <td>
+                                <input type="text" name="subsales_branding" value="<?php echo esc_attr( $branding ); ?>" class="regular-text" />
+                                <p class="description">Optional branding string that will be shown in the PWA header and admin pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Header image</th>
+                            <td>
+                                <input type="hidden" id="subsales_header_image" name="subsales_header_image" value="<?php echo esc_attr( $header_image_id ); ?>" />
+                                <div id="subsales_header_preview" style="margin-bottom:8px;<?php echo $header_image_url ? '' : 'display:none;'; ?>">
+                                    <?php if ( $header_image_url ): ?>
+                                        <img src="<?php echo esc_url( $header_image_url ); ?>" style="max-width:200px;height:auto;border:1px solid #ddd;padding:4px;background:#fff" />
+                                    <?php endif; ?>
+                                </div>
+                                <button type="button" class="button" id="subsales_header_select">Select image</button>
+                                <button type="button" class="button" id="subsales_header_remove" <?php echo $header_image_url ? '' : 'style="display:none;"'; ?>>Remove image</button>
+                                <p class="description">Optional header image that will be shown in the PWA header on mobile clients.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Style options</th>
+                            <td>
+                                <p class="description">Choose a visual style for the PWA. Samples are shown below; primary color can be customized.</p>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="default" <?php checked( $style_variant, 'default' ); ?> /> Default</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="flat" <?php checked( $style_variant, 'flat' ); ?> /> Flat</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
+                                </div>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                    <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Button sample</div>
+                                        <button class="button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
+                                    </div>
+                                    <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Header sample</div>
+                                        <div style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
+                                    </div>
+                                </div>
+                                <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
+                                <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
+                            </td>
+                        </tr>
+                    </table>
+                    <p><?php submit_button( 'Save Branding', 'primary', 'save_branding' ); ?></p>
+                    </form>
+                </div>
                 <?php
                 // Products configuration (repeatable control)
                 $configured_products = order_sync_get_products_config();
                 ?>
-                <tr>
-                    <th scope="row">Products</th>
-                    <td>
-                        <div id="products_repeatable">
-                            <table id="products_table" class="widefat" style="max-width:700px;margin-bottom:8px">
+                <div id="tab-products" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="products" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Products</th>
+                            <td>
+                                <div id="products_repeatable">
+                                    <table id="products_table" class="widefat" style="max-width:700px;margin-bottom:8px">
                                 <thead><tr><th style="width:40%">Name</th><th style="width:20%">Price (USD)</th><th style="width:10%">Visible</th><th style="width:10%">Actions</th></tr></thead>
                                 <tbody>
                                 <?php if ( ! empty( $configured_products ) ) : ?>
@@ -2418,7 +2439,7 @@ function order_sync_settings_page() {
                                 <?php endif; ?>
                                 </tbody>
                             </table>
-                            <p><button type="button" id="add_product_btn" class="button">Add product</button> <span class="description">Max 10 products. IDs (slugs) are auto-generated from the name.</span></p>
+                            <p><button type="button" id="add_product_btn" class="button">Add product</button> <span class="description">Max 10 products.</span></p>
                         </div>
                         <script>
                         (function(){
@@ -2463,24 +2484,16 @@ function order_sync_settings_page() {
                             document.querySelectorAll('#products_table .remove-product').forEach(function(b){ b.addEventListener('click', function(){ var tr = b.closest('tr'); tr && tr.parentNode.removeChild(tr); }); });
                         })();
                         </script>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Default session duration</th>
-                    <td>
-                        <select name="session_duration">
-                            <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
-                            <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
-                            <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
-                        </select>
-                        <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
-                    </td>
-                </tr>
-            </table>
-            <?php submit_button(); ?>
-        </form>
+                            </td>
+                        </tr>
+                    </table>
+                    <p><?php submit_button( 'Save Products', 'primary', 'save_products' ); ?></p>
+                    </form>
+                </div>
+            </div> <!-- .subsales-tab-panels -->
 
-        <h2 style="margin-top:18px">Backup / Restore</h2>
+        <div id="tab-backup_restore" class="subsales-tab-panel">
+            <h2 style="margin-top:18px">Backup / Restore</h2>
             <p>Export orders or site settings for backup, and import CSV backups here to restore.</p>
             <table class="form-table">
                 <tr>
@@ -2558,17 +2571,20 @@ function order_sync_settings_page() {
         
         
         <!-- Clear data form -->
-        <form method="post" action="" style="margin-top:18px">
-            <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
-            <p><strong>Danger zone:</strong> Use the button below to permanently remove all plugin data (orders, teams, team members). This will TRUNCATE those tables but leave plugin files intact.</p>
-            <p><button name="clear_data" class="button button-large button-secondary" onclick="return confirm('Permanently clear all plugin data? This cannot be undone.');">Clear plugin data now</button></p>
-        </form>
-        
-        <h2>System Information</h2>
+            <a id="remove_migration"></a>
+            <form method="post" action="" style="margin-top:18px">
+                <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
+                <p><strong>Danger zone:</strong> Use the button below to permanently remove all plugin data (orders, teams, team members). This will TRUNCATE those tables but leave plugin files intact.</p>
+                <p><button name="clear_data" class="button button-large button-secondary" onclick="return confirm('Permanently clear all plugin data? This cannot be undone.');">Clear plugin data now</button></p>
+            </form>
+        </div>
+
+        <div id="tab-system_info" class="subsales-tab-panel">
+            <h2>System Information</h2>
         <table class="form-table">
             <tr>
                 <th scope="row">Plugin Version</th>
-                <td>1.0.0</td>
+                <td><?php echo esc_html( SUBSALES_VERSION ); ?></td>
             </tr>
             <tr>
                 <th scope="row">WordPress Version</th>
@@ -2656,12 +2672,15 @@ function order_sync_teams_page() {
         $member_name = sanitize_text_field( $_POST['member_name'] ?? '' );
         $member_email = sanitize_email( $_POST['member_email'] ?? '' );
         $member_role = sanitize_text_field( $_POST['member_role'] ?? 'member' );
-        if ( $member_team_id && ! empty( $member_name ) && ! empty( $member_email ) ) {
+        // Allow adding a team member without an email address. Only name and team id are required.
+        if ( $member_team_id && ! empty( $member_name ) ) {
+            // Normalize empty emails to empty string (DB field accepts empty value)
+            $member_email = $member_email ?: '';
             $ok = order_sync_add_team_member( $member_team_id, $member_name, $member_email, $member_role );
             if ( $ok ) echo '<div class="notice notice-success"><p>Team member added.</p></div>';
-            else echo '<div class="notice notice-error"><p>Failed to add team member (possible duplicate email?).</p></div>';
+            else echo '<div class="notice notice-error"><p>Failed to add team member (possible duplicate email or DB error).</p></div>';
         } else {
-            echo '<div class="notice notice-error"><p>Name and email are required to add a team member.</p></div>';
+            echo '<div class="notice notice-error"><p>Name is required to add a team member.</p></div>';
         }
     }
 
@@ -2792,7 +2811,7 @@ function order_sync_teams_page() {
                             </tr>
                             <tr>
                                 <th scope="row">Email</th>
-                                <td><input type="email" name="member_email" class="regular-text" required /></td>
+                                <td><input type="email" name="member_email" class="regular-text" placeholder="(optional)" /></td>
                             </tr>
                             <tr>
                                 <th scope="row">Role</th>
@@ -2918,7 +2937,8 @@ function order_sync_orders_page() {
                         <select name="entered_by_id">
                             <option value="">All members</option>
                             <?php foreach ( $members as $m ) : ?>
-                                <option value="<?php echo esc_attr( $m['id'] ); ?>"><?php echo esc_html( $m['name'] ); ?> (<?php echo esc_html( $m['email'] ); ?>)</option>
+                                <?php $label = esc_html( $m['name'] ); $email = trim( strval( $m['email'] ?? '' ) ); if ( $email ) { $label .= ' (' . esc_html( $email ) . ')'; } ?>
+                                <option value="<?php echo esc_attr( $m['id'] ); ?>"><?php echo $label; ?></option>
                             <?php endforeach; ?>
                         </select>
                     </td>

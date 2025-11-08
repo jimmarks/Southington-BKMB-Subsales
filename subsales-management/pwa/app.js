@@ -79,10 +79,11 @@
             <img id="brandHeaderImage" class="sm-brand-image" src="${brandingImage||''}" /><br/>
             <h1 class="sm-brand-name">${brandName}</h1>
           </div>
-          <div class="sm-header-right">
+            <div class="sm-header-right">
             <div id="headerStatus" class="sm-auth-hidden" title="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
             <div id="installBox" class="sm-install-box hidden"><button id="installBtn" class="sm-btn">Install App</button></div>
             <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
+            <button id="eodBtn" class="sm-btn sm-auth-hidden">End of Day Tally</button>
             <button id="openInlayBtn" class="sm-btn hidden">Queued Orders</button>
           </div>
         </header>
@@ -221,6 +222,89 @@
     const closeBtn = qs('#closeInlayBtn'); if (closeBtn) closeBtn.addEventListener('click', ()=>{ qs('#ordersInlay').classList.add('hidden'); });
     const openBtn = qs('#openInlayBtn'); if (openBtn) openBtn.addEventListener('click', ()=>{ qs('#ordersInlay').classList.remove('hidden'); });
   }
+
+  // End-of-day tally inlay/modal
+  function ensureEodExists(){
+    if (qs('#eodInlay')) return;
+    const div = document.createElement('div');
+    div.id = 'eodInlay';
+    div.className = 'orders-inlay hidden';
+    div.innerHTML = `
+      <div class="inlay-header">
+        <strong>End of Day Tally</strong>
+        <button id="closeEodBtn" class="sm-btn">Close</button>
+      </div>
+      <div id="eodContent" style="padding:12px;">
+        <p>Loading tally...</p>
+      </div>
+    `;
+    document.body.appendChild(div);
+    const closeBtn = qs('#closeEodBtn'); if (closeBtn) closeBtn.addEventListener('click', ()=>{ qs('#eodInlay').classList.add('hidden'); });
+  }
+
+  async function renderEod(){
+    ensureEodExists();
+    const container = qs('#eodContent'); if (!container) return;
+    container.innerHTML = '<p>Computing totals...</p>';
+    // Gather local and remote orders
+    let local = [];
+    try{ local = await Storage.all() || []; }catch(e){ local = []; }
+    let remote = [];
+    try{
+      const teamName = localStorage.getItem('teamName') || '';
+      const teamCode = localStorage.getItem('teamCode') || '';
+      const url = apiBase ? (apiBase + '/orders?limit=10000') : '/wp-json/order-manager/v1/orders?limit=10000';
+      const resp = await fetch(url, { headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
+      if (resp && resp.ok) { remote = await resp.json(); }
+    }catch(e){ remote = []; }
+    // Normalize orders: accept both local objects and remote DB rows that may include order_data
+    const all = (local||[]).concat(remote||[]);
+    // Build product totals map
+    const products = (configuredProducts && Array.isArray(configuredProducts)) ? configuredProducts : [];
+    const prodTotals = {};
+    products.forEach(p => { prodTotals[p.id] = 0; });
+    let totalDonation = 0; let totalCash = 0; let totalCheck = 0;
+    function extractOrderInfo(o){
+      // order may be local-format or remote row with order_data
+      const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : o;
+      const productsList = od.products || [];
+      const donation = parseFloat( od.donationAmount || od.donation || od.donation_amount || 0 ) || 0;
+      const payment = od.paymentMethod || od.payment_method || od.payment || '';
+      // compute order total: sum products price*qty plus donation when product prices available
+      let orderTotal = 0;
+      if (Array.isArray(productsList)){
+        productsList.forEach(pi => {
+          try{
+            const pid = pi.id || pi.product_id || pi.name;
+            const qty = parseInt(pi.qty || pi.quantity || pi.qty_sold || 0,10) || 0;
+            // add to product totals if known
+            if (pid && prodTotals.hasOwnProperty(pid)) prodTotals[pid] += qty;
+            // try price
+            const price = parseFloat(pi.price || pi.unit_price || 0) || 0;
+            orderTotal += qty * price;
+          }catch(e){}
+        });
+      }
+      orderTotal += donation;
+      // add donation and payment buckets
+      totalDonation += donation;
+      if (payment === 'cash') totalCash += orderTotal;
+      else if (payment === 'check') totalCheck += orderTotal;
+    }
+    all.forEach(o => { try{ extractOrderInfo(o); }catch(e){} });
+    // Render table
+    let html = '<table class="widefat fixed" style="margin-bottom:12px"><thead><tr><th>Product</th><th style="text-align:right">Qty sold</th></tr></thead><tbody>';
+    products.forEach(p => { const q = prodTotals[p.id] || 0; html += `<tr><td>${escapeHtml(p.name||p.id)}</td><td style="text-align:right">${q}</td></tr>`; });
+    html += '</tbody></table>';
+    html += '<table class="widefat fixed" style="max-width:320px"><tbody>';
+    html += `<tr><td><strong>Total Donation</strong></td><td style="text-align:right">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td><strong>Total Cash</strong></td><td style="text-align:right">$${Number(totalCash||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td><strong>Total Check</strong></td><td style="text-align:right">$${Number(totalCheck||0).toFixed(2)}</td></tr>`;
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  }
+
+  function escapeHtml(s){ if (s===null||s===undefined) return ''; return String(s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
   async function renderInlay(){
     ensureInlayExists();
@@ -1091,6 +1175,7 @@
   }
 
   const myOrdersBtn = qs('#myOrdersBtn'); if (myOrdersBtn) myOrdersBtn.addEventListener('click', showMyOrders);
+  const eodBtn = qs('#eodBtn'); if (eodBtn) eodBtn.addEventListener('click', async ()=>{ try{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }catch(e){ console.warn('EOD open error', e); } });
   // Force Sync button
   const forceSyncBtn = qs('#forceSyncBtn');
   if (forceSyncBtn) {

@@ -302,18 +302,22 @@
       row.setAttribute('role','option');
       row.setAttribute('data-index', ''+idx);
       row.id = 'subsales-option-' + idx;
-      row.addEventListener('click', ()=>{
-        console.log('subsalesNearby: suggestion clicked', it);
+      // unify selection logic so we can trigger it from pointer/touch/click
+      const doSelect = ()=>{
+        console.log('subsalesNearby: suggestion selected', it);
         inputEl.value = normalizeAddress(it);
-        // attach metadata on input for later use
         try{ inputEl.dataset.subsalesSelected = JSON.stringify(it); }catch(e){}
         removeDropdown(inputEl);
         inputEl.dispatchEvent(new Event('input', { bubbles: true }));
         inputEl.focus();
-      });
-      // touch-friendly quick select
-      row.addEventListener('touchstart', (e)=>{ e.preventDefault(); row.classList.add('subsales-highlight'); });
-      row.addEventListener('touchend', (e)=>{ e.preventDefault(); row.click(); });
+      };
+
+      // pointerdown handles touch and mouse earlier than click (prevents blur issues on mobile)
+      row.addEventListener('pointerdown', (e)=>{ try{ e.preventDefault(); }catch(ex){} doSelect(); });
+      // fallback click handler for older browsers
+      row.addEventListener('click', (e)=>{ e.preventDefault(); doSelect(); });
+      // keep a lightweight touchstart highlight for visual feedback (don't prevent default here)
+      row.addEventListener('touchstart', (e)=>{ row.classList.add('subsales-highlight'); });
       list.appendChild(row);
     });
 
@@ -322,8 +326,9 @@
     list.style.top = (window.scrollY + rect.bottom + 6) + 'px';
     list.style.left = (window.scrollX + rect.left) + 'px';
 
-  list.addEventListener('touchstart', (e)=>{ e.preventDefault(); }); // prevent blur on touch
-  list.addEventListener('mousedown', (e)=>{ e.preventDefault(); }); // prevent blur
+  // prevent blur when interacting with the suggestion list; use pointer events for broad support
+  try{ list.addEventListener('pointerdown', (e)=>{ e.preventDefault(); }); }catch(ex){ /* ignore */ }
+  list.addEventListener('mousedown', (e)=>{ e.preventDefault(); }); // fallback
     document.body.appendChild(list);
     // close on outside click
     setTimeout(()=>{

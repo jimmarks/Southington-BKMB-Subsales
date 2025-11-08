@@ -40,3 +40,16 @@
 
 /* Badge for pending */
 .subsales-badge{ display:inline-block; background:#f59e0b; color:#fff; padding:4px 8px; border-radius:999px; font-size:12px; margin-left:8px }
+
+/* Ensure product postboxes in the second row match the subsales box header spacing
+   so product titles (labels) are nicely padded and aligned. Targets plain .postbox
+   elements rendered inside .subsales-second-row. */
+.subsales-second-row .postbox .postbox-header{ padding:16px 20px; border-bottom:1px solid #e9e9e9; background:#fafafa; display:flex; align-items:center }
+.subsales-second-row .postbox .postbox-header h2{ margin:0; font-size:1.05rem; font-weight:700; color:#222; display:flex; align-items:center; gap:10px }
+.subsales-second-row .postbox .inside{ padding:20px; display:flex; align-items:center; justify-content:center }
+
+/* Small screen adjustments to keep consistent spacing */
+@media (max-width:480px){
+  .subsales-second-row .postbox .postbox-header{ padding:14px 12px }
+  .subsales-second-row .postbox .inside{ padding:14px }
+}
