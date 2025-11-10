@@ -158,6 +158,16 @@
       try{ const addr = orderObj.address || orderObj.formatted_address || ''; if (qs('#address')) qs('#address').value = addr; populateAddressWidget(addr); }catch(e){}
       // mark editing state
       try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
+  // mark document as being in edit mode so UI can show a watermark or other affordances
+  try{ document.body.classList.add('sm-edit-mode'); }catch(e){}
+      // inject watermark CSS once (keeps file edits minimal and avoids requiring stylesheet changes)
+      try{
+        if (!document.getElementById('sm-edit-mode-style')){
+          const style = document.createElement('style'); style.id = 'sm-edit-mode-style';
+          style.textContent = `body.sm-edit-mode::before{ content: 'EDIT MODE'; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) rotate(-25deg); font-size:9vw; font-weight:800; color:#000; opacity:0.06; pointer-events:none; z-index:99998; white-space:nowrap; text-align:center; letter-spacing:0.2em; } @media (min-width:1200px){ body.sm-edit-mode::before{ font-size:96px; } }`;
+          document.head.appendChild(style);
+        }
+      }catch(e){}
       // payment method: restore check/cash UI
       try{
         const pm = (orderObj.paymentMethod || orderObj.payment_method || orderObj.payment || (orderObj.order_data && (orderObj.order_data.paymentMethod || orderObj.order_data.payment_method || orderObj.order_data.payment)) || '').toString().toLowerCase();
@@ -687,6 +697,8 @@
       try{ if (orderTotalEl) orderTotalEl.textContent = '$0.00'; }catch(e){}
       // re-run compute to update total state
       try{ computeTotal(); }catch(e){}
+      // remove edit-mode UI marker when clearing the form
+      try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
     }catch(e){ /* silent */ }
   }
 
