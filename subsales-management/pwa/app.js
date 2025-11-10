@@ -194,9 +194,18 @@
       try { document.title = brandName + ' — PWA'; } catch(e){}
       // Ensure there's an open-inlay button in the header (for pages that don't render it)
       const header = document.querySelector('#subsales-pwa-root header, #sm-pwa-root header, header');
-      if (header && !document.querySelector('#openInlayBtn')) {
-        const btn = document.createElement('button'); btn.id = 'openInlayBtn'; btn.textContent = 'Queued Orders'; btn.className = 'sm-btn hidden';
-        header.appendChild(btn);
+      if (header) {
+        if (!document.querySelector('#openInlayBtn')) {
+          const btn = document.createElement('button'); btn.id = 'openInlayBtn'; btn.textContent = 'Queued Orders'; btn.className = 'sm-btn hidden';
+          header.appendChild(btn);
+        }
+        // Ensure End-of-Day button exists so we can reveal it after auth even when server shortcode
+        if (!document.querySelector('#eodBtn')) {
+          const eod = document.createElement('button'); eod.id = 'eodBtn'; eod.textContent = 'End of Day Tally'; eod.className = 'sm-btn sm-auth-hidden';
+          header.appendChild(eod);
+          // attach click handler (functions are hoisted)
+          try{ eod.addEventListener('click', async ()=>{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }); }catch(e){}
+        }
       }
     }catch(e){ /* noop */ }
   })();
@@ -260,13 +269,28 @@
     // Normalize orders: accept both local objects and remote DB rows that may include order_data
     const all = (local||[]).concat(remote||[]);
     // Build product totals map
-    const products = (configuredProducts && Array.isArray(configuredProducts)) ? configuredProducts : [];
+    // Use the client products config (productsConfig) that is maintained elsewhere in the app
+    const products = (productsConfig && Array.isArray(productsConfig)) ? productsConfig : [];
     const prodTotals = {};
     products.forEach(p => { prodTotals[p.id] = 0; });
     let totalDonation = 0; let totalCash = 0; let totalCheck = 0;
+    // Only include today's orders. Helper to detect same-day
+    function isSameDay(dateStr){
+      try{
+        if(!dateStr) return false;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return false;
+        const now = new Date();
+        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      }catch(e){ return false; }
+    }
+
     function extractOrderInfo(o){
-      // order may be local-format or remote row with order_data
-      const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : o;
+      // order may be local-format (with createdAt) or remote row with order_data/created_at
+      const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : (o.order_data && typeof o.order_data === 'string' ? (function(){ try{ return JSON.parse(o.order_data); }catch(e){ return {}; } })() : o);
+      // Determine created timestamp from several possible locations
+      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || o.created_at || o.createdAt;
+      if (!isSameDay(created)) return; // skip orders not from today
       const productsList = od.products || [];
       const donation = parseFloat( od.donationAmount || od.donation || od.donation_amount || 0 ) || 0;
       const payment = od.paymentMethod || od.payment_method || od.payment || '';

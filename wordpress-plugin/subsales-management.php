@@ -1624,7 +1624,7 @@ function subsales_pwa_shortcode( $atts = array() ) {
                     <button id="viewOnlineBtn" class="sm-btn sm-auth-hidden" style="margin-right:8px">View online orders</button>
                     <span id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></span>
                     <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
-                    <button id="eodBtn" class="sm-btn sm-auth-hidden">End of Day Tally</button>
+                    <button id="eodBtn" class="sm-btn sm-auth-hidden">EOD Tally</button>
                     <button id="logoutBtn" class="sm-btn sm-auth-hidden" title="Log out">Log out</button>
                     <button id="openInlayBtn" class="sm-btn hidden sm-auth-hidden">Queued Orders</button>
                 </div>
