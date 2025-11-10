@@ -671,6 +671,13 @@ add_action( 'rest_api_init', function () {
         'permission_callback' => '__return_true',
     ));
 
+    // Expose a tiny server time endpoint so clients can align "today" with server time
+    register_rest_route( 'order-manager/v1', '/time', array(
+        'methods' => 'GET',
+        'callback' => 'order_manager_get_server_time',
+        'permission_callback' => '__return_true',
+    ));
+
     // Return team members for authenticated team (reads X-Team-Name/X-Access-Code headers)
     register_rest_route( 'order-manager/v1', '/teams/members', array(
         'methods' => 'GET',
@@ -1309,6 +1316,10 @@ function get_orders( WP_REST_Request $request ) {
     
     foreach ( $orders as &$order ) {
         $order['order_data'] = json_decode( $order['order_data'], true );
+        // include server-side unix timestamp for created_at to help clients align dates
+        $order['created_at_ts'] = isset( $order['created_at'] ) ? strtotime( $order['created_at'] ) : null;
+        // mark if this order was created today on the server (server local date)
+        $order['is_today'] = isset( $order['created_at'] ) ? ( date( 'Y-m-d', strtotime( $order['created_at'] ) ) === date( 'Y-m-d', current_time( 'timestamp' ) ) ) : false;
     }
     
     return new WP_REST_Response( $orders, 200 );
@@ -1335,6 +1346,14 @@ function get_order_by_id( WP_REST_Request $request ) {
     $order['order_data'] = json_decode( $order['order_data'], true );
     
     return new WP_REST_Response( $order, 200 );
+}
+
+// Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
+function order_manager_get_server_time( WP_REST_Request $request ) {
+    $ts = current_time( 'timestamp' );
+    $date = date( 'Y-m-d', $ts );
+    $gmt_offset = floatval( get_option( 'gmt_offset', 0 ) );
+    return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
 }
 
 function create_order( WP_REST_Request $request ) {

@@ -296,6 +296,13 @@
       const resp = await fetch(url, { headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
       if (resp && resp.ok) { remote = await resp.json(); }
     }catch(e){ remote = []; }
+    // Fetch server date info so we align "today" with server time
+    let serverInfo = null;
+    try{
+      const timeUrl = apiBase ? (apiBase + '/time') : '/wp-json/order-manager/v1/time';
+      const tr = await fetch(timeUrl);
+      if (tr && tr.ok) serverInfo = await tr.json();
+    }catch(e){ serverInfo = null; }
     // Normalize orders: accept both local objects and remote DB rows that may include order_data
     const all = (local||[]).concat(remote||[]);
     // Build product totals map
@@ -304,14 +311,34 @@
     const prodTotals = {};
     products.forEach(p => { prodTotals[p.id] = 0; });
     let totalDonation = 0; let totalCash = 0; let totalCheck = 0;
-    // Only include today's orders. Helper to detect same-day
-    function isSameDay(dateStr){
+    // Only include today's orders (in server time). Helper to detect same-day using serverInfo.
+    function isSameDayForServer(o, created){
       try{
-        if(!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
-        const now = new Date();
-        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        // If server returned an explicit flag for server-side rows, trust it first
+        if (o && typeof o.is_today !== 'undefined') return !!o.is_today;
+        // fallback: if we don't have serverInfo, use local detection
+        if (!serverInfo || !serverInfo.server_date) {
+          if(!created) return false;
+          const d = new Date(created);
+          if (isNaN(d.getTime())) return false;
+          const now = new Date();
+          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        }
+        const serverDate = serverInfo.server_date; // 'YYYY-MM-DD'
+        const gmtOffset = parseFloat(serverInfo.gmt_offset || 0); // hours
+        const offsetSec = Math.round(gmtOffset * 3600);
+        // Determine created timestamp in seconds
+        let ts = null;
+        if (o && o.created_at_ts) ts = parseInt(o.created_at_ts,10);
+        else if (created) {
+          const parsed = Date.parse(created);
+          if (!isNaN(parsed)) ts = Math.floor(parsed/1000);
+        }
+        if (!ts) return false;
+        // shift by server offset to get server-local day and compare YYYY-MM-DD
+        const serverLocalTs = ts + offsetSec;
+        const ymd = new Date(serverLocalTs * 1000).toISOString().slice(0,10);
+        return ymd === serverDate;
       }catch(e){ return false; }
     }
 
@@ -319,8 +346,8 @@
       // order may be local-format (with createdAt) or remote row with order_data/created_at
       const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : (o.order_data && typeof o.order_data === 'string' ? (function(){ try{ return JSON.parse(o.order_data); }catch(e){ return {}; } })() : o);
       // Determine created timestamp from several possible locations
-      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || o.created_at || o.createdAt;
-      if (!isSameDay(created)) return; // skip orders not from today
+      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;
+      if (!isSameDayForServer(o, created)) return; // skip orders not from today (per server)
       const productsList = od.products || [];
       const donation = parseFloat( od.donationAmount || od.donation || od.donation_amount || 0 ) || 0;
       const payment = od.paymentMethod || od.payment_method || od.payment || '';
