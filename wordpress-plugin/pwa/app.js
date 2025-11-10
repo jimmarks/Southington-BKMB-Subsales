@@ -158,8 +158,19 @@
       try{ const addr = orderObj.address || orderObj.formatted_address || ''; if (qs('#address')) qs('#address').value = addr; populateAddressWidget(addr); }catch(e){}
       // mark editing state
       try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
+      // payment method: restore check/cash UI
+      try{
+        const pm = (orderObj.paymentMethod || orderObj.payment_method || orderObj.payment || (orderObj.order_data && (orderObj.order_data.paymentMethod || orderObj.order_data.payment_method || orderObj.order_data.payment)) || '').toString().toLowerCase();
+        if (pm === 'check') { if (payCheck) payCheck.checked = true; if (payCash) payCash.checked = false; checkNumberRow && checkNumberRow.classList.remove('hidden'); }
+        else if (pm === 'cash') { if (payCash) payCash.checked = true; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
+        else { if (payCash) payCash.checked = false; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
+        // normalize onto order object so save flow picks it up
+        try{ orderObj.paymentMethod = pm; }catch(e){}
+      }catch(e){}
       // compute total after populating
       try{ computeTotal(); }catch(e){}
+      // re-run input handlers for phone validation and other live listeners
+      try{ if (qs('#cellNumber')) qs('#cellNumber').dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
     }catch(e){ console.warn('enterEditMode error', e); }
   }
 
