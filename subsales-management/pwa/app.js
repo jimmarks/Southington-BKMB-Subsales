@@ -15,11 +15,19 @@
     try{
       const primary = cfg.primaryColor || cfg.primary_color || '#2d6cdf';
       const variant = cfg.styleVariant || cfg.style_variant || 'default';
-      // set CSS variable for primary color (SM prefix)
-      document.documentElement.style.setProperty('--sm-primary', primary);
-      // set body class for variant handling (styles defined in stylesheet)
-      document.body.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
-      document.body.classList.add('sm-variant-' + (variant || 'default'));
+      // Prefer scoping the CSS variable and variant class to the PWA root so
+      // the host/admin page doesn't inherit PWA colors. Fall back to the
+      // document element/body when no PWA root exists (standalone PWA page).
+      const pwaRootEl = document.getElementById('subsales-pwa-root') || document.getElementById('sm-pwa-root');
+      if (pwaRootEl) {
+        pwaRootEl.style.setProperty('--sm-primary', primary);
+        pwaRootEl.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
+        pwaRootEl.classList.add('sm-variant-' + (variant || 'default'));
+      } else {
+        document.documentElement.style.setProperty('--sm-primary', primary);
+        document.body.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
+        document.body.classList.add('sm-variant-' + (variant || 'default'));
+      }
     }catch(e){}
   })();
 
@@ -158,8 +166,29 @@
       try{ const addr = orderObj.address || orderObj.formatted_address || ''; if (qs('#address')) qs('#address').value = addr; populateAddressWidget(addr); }catch(e){}
       // mark editing state
       try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
+  // mark document as being in edit mode so UI can show a watermark or other affordances
+  try{ document.body.classList.add('sm-edit-mode'); }catch(e){}
+      // inject watermark CSS once (keeps file edits minimal and avoids requiring stylesheet changes)
+      try{
+        if (!document.getElementById('sm-edit-mode-style')){
+          const style = document.createElement('style'); style.id = 'sm-edit-mode-style';
+          style.textContent = `body.sm-edit-mode::before{ content: 'EDIT MODE'; position:fixed; left:50%; top:50%; transform:translate(-50%,-50%) rotate(-25deg); font-size:9vw; font-weight:800; color:#000; opacity:0.06; pointer-events:none; z-index:99998; white-space:nowrap; text-align:center; letter-spacing:0.2em; } @media (min-width:1200px){ body.sm-edit-mode::before{ font-size:96px; } }`;
+          document.head.appendChild(style);
+        }
+      }catch(e){}
+      // payment method: restore check/cash UI
+      try{
+        const pm = (orderObj.paymentMethod || orderObj.payment_method || orderObj.payment || (orderObj.order_data && (orderObj.order_data.paymentMethod || orderObj.order_data.payment_method || orderObj.order_data.payment)) || '').toString().toLowerCase();
+        if (pm === 'check') { if (payCheck) payCheck.checked = true; if (payCash) payCash.checked = false; checkNumberRow && checkNumberRow.classList.remove('hidden'); }
+        else if (pm === 'cash') { if (payCash) payCash.checked = true; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
+        else { if (payCash) payCash.checked = false; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
+        // normalize onto order object so save flow picks it up
+        try{ orderObj.paymentMethod = pm; }catch(e){}
+      }catch(e){}
       // compute total after populating
       try{ computeTotal(); }catch(e){}
+      // re-run input handlers for phone validation and other live listeners
+      try{ if (qs('#cellNumber')) qs('#cellNumber').dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
     }catch(e){ console.warn('enterEditMode error', e); }
   }
 
@@ -201,8 +230,17 @@
         }
         // Ensure End-of-Day button exists so we can reveal it after auth even when server shortcode
         if (!document.querySelector('#eodBtn')) {
-          const eod = document.createElement('button'); eod.id = 'eodBtn'; eod.textContent = 'End of Day Tally'; eod.className = 'sm-btn sm-auth-hidden';
-          header.appendChild(eod);
+          const eod = document.createElement('button'); eod.id = 'eodBtn'; eod.textContent = 'EOD Tally'; eod.className = 'sm-btn sm-auth-hidden';
+          // prefer inserting after the My orders button so placement is: My orders | EOD Tally | Logout
+          const myOrders = header.querySelector('#myOrdersBtn');
+          if (myOrders && myOrders.parentNode) {
+            // insert after myOrders (before its next sibling) if possible
+            const next = myOrders.nextElementSibling;
+            if (next) myOrders.parentNode.insertBefore(eod, next);
+            else myOrders.parentNode.appendChild(eod);
+          } else {
+            header.appendChild(eod);
+          }
           // attach click handler (functions are hoisted)
           try{ eod.addEventListener('click', async ()=>{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }); }catch(e){}
         }
@@ -240,7 +278,7 @@
     div.className = 'orders-inlay hidden';
     div.innerHTML = `
       <div class="inlay-header">
-        <strong>End of Day Tally</strong>
+        <strong>EOD Tally</strong>
         <button id="closeEodBtn" class="sm-btn">Close</button>
       </div>
       <div id="eodContent" style="padding:12px;">
@@ -266,6 +304,13 @@
       const resp = await fetch(url, { headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
       if (resp && resp.ok) { remote = await resp.json(); }
     }catch(e){ remote = []; }
+    // Fetch server date info so we align "today" with server time
+    let serverInfo = null;
+    try{
+      const timeUrl = apiBase ? (apiBase + '/time') : '/wp-json/order-manager/v1/time';
+      const tr = await fetch(timeUrl);
+      if (tr && tr.ok) serverInfo = await tr.json();
+    }catch(e){ serverInfo = null; }
     // Normalize orders: accept both local objects and remote DB rows that may include order_data
     const all = (local||[]).concat(remote||[]);
     // Build product totals map
@@ -274,14 +319,34 @@
     const prodTotals = {};
     products.forEach(p => { prodTotals[p.id] = 0; });
     let totalDonation = 0; let totalCash = 0; let totalCheck = 0;
-    // Only include today's orders. Helper to detect same-day
-    function isSameDay(dateStr){
+    // Only include today's orders (in server time). Helper to detect same-day using serverInfo.
+    function isSameDayForServer(o, created){
       try{
-        if(!dateStr) return false;
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return false;
-        const now = new Date();
-        return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        // If server returned an explicit flag for server-side rows, trust it first
+        if (o && typeof o.is_today !== 'undefined') return !!o.is_today;
+        // fallback: if we don't have serverInfo, use local detection
+        if (!serverInfo || !serverInfo.server_date) {
+          if(!created) return false;
+          const d = new Date(created);
+          if (isNaN(d.getTime())) return false;
+          const now = new Date();
+          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        }
+        const serverDate = serverInfo.server_date; // 'YYYY-MM-DD'
+        const gmtOffset = parseFloat(serverInfo.gmt_offset || 0); // hours
+        const offsetSec = Math.round(gmtOffset * 3600);
+        // Determine created timestamp in seconds
+        let ts = null;
+        if (o && o.created_at_ts) ts = parseInt(o.created_at_ts,10);
+        else if (created) {
+          const parsed = Date.parse(created);
+          if (!isNaN(parsed)) ts = Math.floor(parsed/1000);
+        }
+        if (!ts) return false;
+        // shift by server offset to get server-local day and compare YYYY-MM-DD
+        const serverLocalTs = ts + offsetSec;
+        const ymd = new Date(serverLocalTs * 1000).toISOString().slice(0,10);
+        return ymd === serverDate;
       }catch(e){ return false; }
     }
 
@@ -289,8 +354,8 @@
       // order may be local-format (with createdAt) or remote row with order_data/created_at
       const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : (o.order_data && typeof o.order_data === 'string' ? (function(){ try{ return JSON.parse(o.order_data); }catch(e){ return {}; } })() : o);
       // Determine created timestamp from several possible locations
-      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || o.created_at || o.createdAt;
-      if (!isSameDay(created)) return; // skip orders not from today
+      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;
+      if (!isSameDayForServer(o, created)) return; // skip orders not from today (per server)
       const productsList = od.products || [];
       const donation = parseFloat( od.donationAmount || od.donation || od.donation_amount || 0 ) || 0;
       const payment = od.paymentMethod || od.payment_method || od.payment || '';
@@ -667,6 +732,8 @@
       try{ if (orderTotalEl) orderTotalEl.textContent = '$0.00'; }catch(e){}
       // re-run compute to update total state
       try{ computeTotal(); }catch(e){}
+      // remove edit-mode UI marker when clearing the form
+      try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
     }catch(e){ /* silent */ }
   }
 

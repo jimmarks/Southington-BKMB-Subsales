@@ -15,11 +15,19 @@
     try{
       const primary = cfg.primaryColor || cfg.primary_color || '#2d6cdf';
       const variant = cfg.styleVariant || cfg.style_variant || 'default';
-      // set CSS variable for primary color (SM prefix)
-      document.documentElement.style.setProperty('--sm-primary', primary);
-      // set body class for variant handling (styles defined in stylesheet)
-      document.body.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
-      document.body.classList.add('sm-variant-' + (variant || 'default'));
+      // Prefer scoping the CSS variable and variant class to the PWA root so
+      // the host/admin page doesn't inherit PWA colors. Fall back to the
+      // document element/body when no PWA root exists (standalone PWA page).
+      const pwaRootEl = document.getElementById('subsales-pwa-root') || document.getElementById('sm-pwa-root');
+      if (pwaRootEl) {
+        pwaRootEl.style.setProperty('--sm-primary', primary);
+        pwaRootEl.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
+        pwaRootEl.classList.add('sm-variant-' + (variant || 'default'));
+      } else {
+        document.documentElement.style.setProperty('--sm-primary', primary);
+        document.body.classList.remove('sm-variant-default','sm-variant-flat','sm-variant-rounded','sm-variant-dark');
+        document.body.classList.add('sm-variant-' + (variant || 'default'));
+      }
     }catch(e){}
   })();
 

@@ -671,6 +671,13 @@ add_action( 'rest_api_init', function () {
         'permission_callback' => '__return_true',
     ));
 
+    // Expose a tiny server time endpoint so clients can align "today" with server time
+    register_rest_route( 'order-manager/v1', '/time', array(
+        'methods' => 'GET',
+        'callback' => 'order_manager_get_server_time',
+        'permission_callback' => '__return_true',
+    ));
+
     // Return team members for authenticated team (reads X-Team-Name/X-Access-Code headers)
     register_rest_route( 'order-manager/v1', '/teams/members', array(
         'methods' => 'GET',
@@ -857,11 +864,32 @@ function order_sync_fetch_orders_ajax() {
         }
 
         $entered_by_name = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : '';
+        // Normalize created_at to site-local timezone for display and timestamp calculations.
+        // Stored DB values may be in GMT/UTC; use get_date_from_gmt() to convert to site local time.
+        $created_gmt = isset( $r['created_at'] ) ? $r['created_at'] : null;
+        if ( $created_gmt ) {
+            // get_date_from_gmt returns a formatted date string in the site's timezone
+            $created_local_str = get_date_from_gmt( $created_gmt );
+            $created_ts = strtotime( $created_local_str );
+            $created_formatted = date_i18n( 'M j, Y g:i A', $created_ts );
+        } else {
+            $created_local_str = $created_gmt;
+            $created_ts = $created_gmt ? strtotime( $created_gmt ) : null;
+            $created_formatted = $created_ts ? date_i18n( 'M j, Y g:i A', $created_ts ) : '';
+        }
+
+        // Determine whether this order has been edited (updated_at later than created_at or sync_status updated)
+        $edited = false;
+        if ( isset( $r['updated_at'] ) && isset( $r['created_at'] ) ) {
+            $edited = ( strtotime( $r['updated_at'] ) > strtotime( $r['created_at'] ) ) || ( isset( $r['sync_status'] ) && $r['sync_status'] === 'updated' );
+        }
+
         $orders[] = array(
             'id' => isset( $r['id'] ) ? intval( $r['id'] ) : null,
             'order_id' => $r['order_id'],
-            'created_at' => $r['created_at'],
-            'created_at_formatted' => date( 'M j, Y g:i A', strtotime( $r['created_at'] ) ),
+            'created_at' => $created_local_str,
+            'created_at_formatted' => $created_formatted,
+            'created_at_ts' => $created_ts,
             'user_id' => $r['user_id'],
             'entered_by_name' => $entered_by_name,
             'team_name' => $team_name,
@@ -869,6 +897,7 @@ function order_sync_fetch_orders_ajax() {
             'order_total' => round( $order_total, 2 ),
             'payment' => $payment,
             'payment_display' => $payment ? ucfirst($payment) : '',
+            'edited' => $edited,
             // map of configured product id => quantity for this order
             'products_map' => $products_map
         );
@@ -1309,6 +1338,17 @@ function get_orders( WP_REST_Request $request ) {
     
     foreach ( $orders as &$order ) {
         $order['order_data'] = json_decode( $order['order_data'], true );
+        // Created_at coming from DB may be stored in GMT/UTC. Convert to site-local time for timestamp and "is_today" checks.
+        if ( isset( $order['created_at'] ) && $order['created_at'] ) {
+            $local = get_date_from_gmt( $order['created_at'] );
+            $ts = strtotime( $local );
+            $order['created_at_ts'] = $ts;
+            $order['created_at'] = $local;
+            $order['is_today'] = date_i18n( 'Y-m-d', $ts ) === date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
+        } else {
+            $order['created_at_ts'] = null;
+            $order['is_today'] = false;
+        }
     }
     
     return new WP_REST_Response( $orders, 200 );
@@ -1335,6 +1375,14 @@ function get_order_by_id( WP_REST_Request $request ) {
     $order['order_data'] = json_decode( $order['order_data'], true );
     
     return new WP_REST_Response( $order, 200 );
+}
+
+// Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
+function order_manager_get_server_time( WP_REST_Request $request ) {
+    $ts = current_time( 'timestamp' );
+    $date = date( 'Y-m-d', $ts );
+    $gmt_offset = floatval( get_option( 'gmt_offset', 0 ) );
+    return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
 }
 
 function create_order( WP_REST_Request $request ) {
@@ -1382,6 +1430,11 @@ function create_order( WP_REST_Request $request ) {
         $insert_row['team_id'] = $team_id;
         $formats[] = '%d';
     }
+
+    // Ensure created_at uses the WordPress site-local time (respects timezone settings)
+    // so stored timestamps align with the site's timezone (avoid DB server UTC mismatch).
+    $insert_row['created_at'] = current_time( 'mysql' );
+    $formats[] = '%s';
 
     $result = $wpdb->insert( $table_name, $insert_row, $formats );
 
@@ -1624,7 +1677,7 @@ function subsales_pwa_shortcode( $atts = array() ) {
                     <button id="viewOnlineBtn" class="sm-btn sm-auth-hidden" style="margin-right:8px">View online orders</button>
                     <span id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></span>
                     <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
-                    <button id="eodBtn" class="sm-btn sm-auth-hidden">End of Day Tally</button>
+                    <button id="eodBtn" class="sm-btn sm-auth-hidden">EOD Tally</button>
                     <button id="logoutBtn" class="sm-btn sm-auth-hidden" title="Log out">Log out</button>
                     <button id="openInlayBtn" class="sm-btn hidden sm-auth-hidden">Queued Orders</button>
                 </div>
@@ -1782,6 +1835,35 @@ function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
     $new_id = wp_insert_post( $postarr );
     if ( $new_id && ! is_wp_error( $new_id ) ) { update_option( 'order_sync_pwa_page_id', $new_id ); return $new_id; }
     return false;
+}
+
+/**
+ * Get plugin version from plugin header (preferred) or fallback to SUBSALES_VERSION.
+ * Uses get_file_data when available; falls back to parsing the file header.
+ */
+function order_sync_get_plugin_version() {
+    $file = __FILE__;
+    // Try WP helper if available
+    if ( ! function_exists( 'get_file_data' ) ) {
+        if ( file_exists( ABSPATH . 'wp-admin/includes/plugin.php' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+    }
+    if ( function_exists( 'get_file_data' ) ) {
+        $data = get_file_data( $file, array( 'Version' => 'Version' ) );
+        if ( ! empty( $data['Version'] ) ) return $data['Version'];
+    }
+
+    // Fallback: parse header comment for Version: line
+    $contents = @file_get_contents( $file );
+    if ( $contents ) {
+        if ( preg_match( '/^\s*\*\s*Version:\s*(.+)$/mi', $contents, $m ) ) {
+            return trim( $m[1] );
+        }
+    }
+
+    if ( defined( 'SUBSALES_VERSION' ) ) return SUBSALES_VERSION;
+    return '';
 }
 
 // Serve portal assets from plugin folder at portal path
@@ -2004,6 +2086,10 @@ function order_sync_main_page() {
     ?>
     <div class="wrap">
         <h1>Subsales Management</h1>
+        <div class="subsales-compact-toggle-wrap">
+            <button id="subsales-compact-toggle" class="button">Compact view</button>
+            <span class="description">Toggle compact/comfortable dashboard spacing (stored in your browser).</span>
+        </div>
         <p class="description">Comprehensive order management system for mobile app synchronization.</p>
         
         <?php
@@ -2024,6 +2110,83 @@ function order_sync_main_page() {
 
         <div class="dashboard-widgets-wrap">
             <div class="metabox-holder subsales-dashboard-grid">
+                <script>
+                (function(){
+                    var key = 'subsales_compact';
+                    function getRoot(){ return document.querySelector('.metabox-holder.subsales-dashboard-grid') || document.querySelector('.subsales-dashboard-grid'); }
+                    function applyState(state){ var root = getRoot(); if(!root) return; if(state){ root.classList.add('subsales-compact'); } else { root.classList.remove('subsales-compact'); } var btn = document.getElementById('subsales-compact-toggle'); if(btn) btn.textContent = state ? 'Comfortable view' : 'Compact view'; }
+                    // init from storage
+                    try{ var stored = localStorage.getItem(key) === '1'; applyState(stored); }catch(e){}
+                    document.addEventListener('DOMContentLoaded', function(){ var btn = document.getElementById('subsales-compact-toggle'); if(!btn) return; btn.addEventListener('click', function(){ try{ var cur = localStorage.getItem(key) === '1'; var next = !cur; localStorage.setItem(key, next ? '1' : '0'); applyState(next); }catch(e){} }); });
+                })();
+                </script>
+                <?php
+                // Compute financial summary (sales, cash, checks) by scanning existing orders
+                $sales_total = 0.0;
+                $cash_total = 0.0;
+                $check_total = 0.0;
+                $rows_fin = $wpdb->get_results( "SELECT order_data FROM {$orders_table}", ARRAY_A );
+                if ( $rows_fin ) {
+                    $conf_prods_for_fin = order_sync_get_products_config();
+                    foreach ( $rows_fin as $rf ) {
+                        $od = json_decode( $rf['order_data'], true );
+                        if ( ! is_array( $od ) ) continue;
+                        $order_total = 0.0;
+                        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                            foreach ( $od['products'] as $pr ) {
+                                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                                $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
+                                if ( $qty > 0 ) $order_total += $qty * $price;
+                            }
+                        } else {
+                            if ( is_array( $conf_prods_for_fin ) ) {
+                                foreach ( $conf_prods_for_fin as $p ) {
+                                    $pid = $p['id'];
+                                    $price = isset( $p['price'] ) ? floatval( $p['price'] ) : 0.0;
+                                    $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                                    foreach ( $labels as $k ) {
+                                        if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_total += $q * $price; break; }
+                                    }
+                                }
+                            }
+                        }
+                        if ( isset( $od['donationAmount'] ) ) $order_total += floatval( $od['donationAmount'] );
+                        $sales_total += $order_total;
+                        $payment = '';
+                        if ( isset( $od['paymentMethod'] ) && ! empty( $od['paymentMethod'] ) ) $payment = strtolower( $od['paymentMethod'] );
+                        else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
+                        else if ( ! empty( $od['payCash'] ) || ! empty( $od['pay_cash'] ) ) $payment = 'cash';
+                        if ( $payment === 'check' ) $check_total += $order_total;
+                        elseif ( $payment === 'cash' ) $cash_total += $order_total;
+                    }
+                }
+                ?>
+                <div class="subsales-financial-row" style="margin-bottom:12px; display:grid; gap:20px; grid-template-columns: repeat(3, 1fr);">
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $sales_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-money" aria-hidden="true"></span> Cash</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $cash_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon subsales-checkbook-icon" aria-hidden="true">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true">
+                                <rect x="1" y="4" width="22" height="14" rx="2" />
+                                <path d="M4 8h16" />
+                                <path d="M6 14l3 3 8-8" />
+                            </svg>
+                        </span> Checks</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $check_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                </div>
                 <div class="subsales-top-row">
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
@@ -2258,22 +2421,30 @@ function order_sync_settings_page() {
                         panels.forEach(function(p){ p.classList.remove('active'); });
                         var el = document.querySelector(id);
                         if ( el ) el.classList.add('active');
+                        // update active tab highlight
+                        tabs.forEach(function(x){ x.classList.remove('active'); });
+                        var tab = document.querySelector('.subsales-tabs li[data-target="' + id + '"]');
+                        if ( tab ) tab.classList.add('active');
                     }
                     tabs.forEach(function(t){ t.addEventListener('click', function(e){
                         e.preventDefault();
-                        tabs.forEach(function(x){ x.classList.remove('active'); });
-                        t.classList.add('active');
                         var target = t.getAttribute('data-target');
                         showPanel(target);
                         // update hash without jumping
                         if ( history && history.replaceState ) history.replaceState(null, null, target);
                     }); });
-                    // Initialize panels: ensure first panel visible
-                    if ( panels.length ) {
-                        var found = document.querySelector('.subsales-tabs li.active');
-                        var start = found ? found.getAttribute('data-target') : (panels[0].id ? ('#'+panels[0].id) : null);
-                        if ( start ) showPanel(start);
+                    // Initialize panels: prefer location.hash if present, otherwise fall back to active tab or first panel
+                    var hash = window.location.hash;
+                    var start = null;
+                    if ( hash ) {
+                        // ensure the hash corresponds to a panel id
+                        if ( document.querySelector(hash) ) start = hash;
                     }
+                    if ( ! start ) {
+                        var found = document.querySelector('.subsales-tabs li.active');
+                        start = found ? found.getAttribute('data-target') : (panels[0] && panels[0].id ? ('#'+panels[0].id) : null);
+                    }
+                    if ( start ) showPanel(start);
                 }
                 if ( document.readyState === 'loading' ) {
                     document.addEventListener('DOMContentLoaded', initSubsalesTabs);
@@ -2403,18 +2574,49 @@ function order_sync_settings_page() {
                                     <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
                                     <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
                                 </div>
-                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-                                    <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                <div id="branding_samples" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
                                         <div style="margin-bottom:6px;font-weight:600">Button sample</div>
-                                        <button class="button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
+                                        <button id="branding_button_sample" class="subsales-branding-button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
                                     </div>
-                                    <div style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
                                         <div style="margin-bottom:6px;font-weight:600">Header sample</div>
-                                        <div style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
+                                        <div id="branding_header_sample" class="subsales-branding-header" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
                                     </div>
                                 </div>
                                 <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
                                 <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
+                                <script>
+                                (function(){
+                                    function applyBrandingVariant(variant){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(!btn || !hdr) return;
+                                        // remove existing variant classes
+                                        btn.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        hdr.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        var cls = 'branding-variant-' + (variant || 'default');
+                                        btn.classList.add(cls);
+                                        hdr.classList.add(cls);
+                                    }
+                                    function applyPrimaryColor(color){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(btn) btn.style.background = color;
+                                        if(hdr) hdr.style.background = color;
+                                    }
+                                    // wire radio buttons
+                                    var radios = document.querySelectorAll('input[name="style_variant"]');
+                                    radios.forEach(function(r){ r.addEventListener('change', function(e){ applyBrandingVariant(e.target.value); }); });
+                                    // wire color input
+                                    var colorInput = document.querySelector('input[name="primary_color"]');
+                                    if(colorInput){ colorInput.addEventListener('input', function(e){ applyPrimaryColor(e.target.value); }); }
+                                    // initialize on load
+                                    var sel = document.querySelector('input[name="style_variant"]:checked');
+                                    if(sel) applyBrandingVariant(sel.value);
+                                    if(colorInput) applyPrimaryColor(colorInput.value);
+                                })();
+                                </script>
                             </td>
                         </tr>
                     </table>
@@ -2597,7 +2799,7 @@ function order_sync_settings_page() {
         <table class="form-table">
             <tr>
                 <th scope="row">Plugin Version</th>
-                <td><?php echo esc_html( SUBSALES_VERSION ); ?></td>
+                <td><?php echo esc_html( order_sync_get_plugin_version() ); ?></td>
             </tr>
             <tr>
                 <th scope="row">WordPress Version</th>
@@ -3058,7 +3260,7 @@ function order_sync_orders_page() {
             for (const o of orders){
                 const tr = document.createElement('tr');
                 let html = '';
-                html += '<td>' + escapeHtml(o.order_id) + '</td>';
+                html += '<td>' + escapeHtml(o.order_id) + (o.edited ? ' <span class="subsales-edited-star">*</span>' : '') + '</td>';
                 html += '<td>' + escapeHtml(o.created_at_formatted) + '</td>';
                 html += '<td>' + escapeHtml(o.entered_by_name || o.user_id || '') + '</td>';
                 html += '<td>' + escapeHtml(o.team_name || '') + '</td>';
@@ -3078,7 +3280,9 @@ function order_sync_orders_page() {
 
         function renderMeta(total_count, page, pages){
             const meta = document.getElementById('subsales-orders-meta');
-            meta.textContent = 'Showing page ' + page + ' of ' + pages + ' — ' + total_count + ' matching orders';
+            // Put the page meta on the left and an explanatory note on the right
+            meta.innerHTML = 'Showing page ' + page + ' of ' + pages + ' — ' + total_count + ' matching orders' +
+                '<span class="subsales-orders-meta-note"><span style="color: red;">*</span> indicates edited order</span>';
         }
 
         function renderTotals(totals){
