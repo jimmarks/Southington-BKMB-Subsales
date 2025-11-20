@@ -116,15 +116,15 @@
                   <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
                 </div>
                 <label>Donation amount (USD)</label>
-                <input id="donationAmount" type="number" min="0" step="0.01" placeholder="$0.00" />
+                <input id="donationAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0.00" />
                 <div class="order-total"><strong>Order total: <span id="orderTotal">$0.00</span></strong></div>
                 <div class="pay-options">
                   <label for="payCheck"><input type="checkbox" id="payCheck" /> <span class="pay-label">Pay by check</span></label>
                   <label for="payCash"><input type="checkbox" id="payCash" /> <span class="pay-label">Pay by cash</span></label>
                 </div>
-                <div id="checkNumberRow" class="hidden check-number-row"><label>Check number</label><input id="checkNumber" placeholder="Check number" /></div>
-                <label>Notes</label>
-                <textarea id="notes" placeholder="Notes (optional)"></textarea>
+                <div id="checkNumberRow" class="hidden check-number-row"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
+                <label>Delivery Instructions</label>
+                <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
                 <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
               </div>
               <aside class="sm-aside">
@@ -287,6 +287,91 @@
     `;
     document.body.appendChild(div);
     const closeBtn = qs('#closeEodBtn'); if (closeBtn) closeBtn.addEventListener('click', ()=>{ qs('#eodInlay').classList.add('hidden'); });
+  }
+
+  // Order confirmation popup (compact, mobile-friendly)
+  function ensureOrderConfirmationExists(){
+    if (qs('#orderConfirmation')) return;
+    const div = document.createElement('div');
+    div.id = 'orderConfirmation';
+    div.className = 'order-confirmation hidden';
+    div.innerHTML = `
+      <div class="confirmation-content">
+        <h3 id="confirmationTitle">Order Saved</h3>
+        <div id="confirmationDetails"></div>
+        <div class="confirmation-buttons">
+          <button id="confirmOkBtn" class="sm-btn sm-btn-primary">OK</button>
+          <button id="confirmEditBtn" class="sm-btn">Edit</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(div);
+    // Inject styles for compact mobile-friendly modal
+    if (!document.getElementById('order-confirmation-style')){
+      const style = document.createElement('style'); style.id = 'order-confirmation-style';
+      style.textContent = `
+        .order-confirmation { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:99999; display:flex; align-items:center; justify-content:center; padding:16px; }
+        .order-confirmation.hidden { display:none; }
+        .confirmation-content { background:#fff; border-radius:8px; padding:24px; max-width:400px; width:100%; box-shadow:0 4px 20px rgba(0,0,0,0.3); }
+        .confirmation-content h3 { margin:0 0 16px; font-size:20px; text-align:center; color:#333; }
+        #confirmationDetails { margin-bottom:20px; font-size:14px; line-height:1.6; }
+        #confirmationDetails strong { display:block; margin-top:12px; margin-bottom:4px; color:#555; }
+        #confirmationDetails .product-line { padding:4px 0; border-bottom:1px solid #eee; }
+        #confirmationDetails .product-line:last-child { border-bottom:none; }
+        .confirmation-buttons { display:flex; gap:12px; justify-content:center; }
+        .confirmation-buttons .sm-btn { flex:1; min-height:44px; font-size:16px; border:none; border-radius:6px; cursor:pointer; }
+        .confirmation-buttons .sm-btn-primary { background:var(--sm-primary, #2d6cdf); color:#fff; font-weight:600; }
+        .confirmation-buttons .sm-btn:not(.sm-btn-primary) { background:#f0f0f0; color:#333; }
+      `;
+      document.head.appendChild(style);
+    }
+  }
+
+  // Show order confirmation popup
+  function showOrderConfirmation(order, isUpdate){
+    try{
+      ensureOrderConfirmationExists();
+      const modal = qs('#orderConfirmation');
+      const title = qs('#confirmationTitle');
+      const details = qs('#confirmationDetails');
+      if (!modal || !details) return;
+      
+      // Set title
+      if (title) title.textContent = isUpdate ? 'Order Updated' : 'Order Saved';
+      
+      // Build details HTML
+      let html = `<strong>Order #:</strong> ${escapeHtml(order.id)}<br>`;
+      html += `<strong>Customer:</strong> ${escapeHtml(order.customer || order.name || '')}<br>`;
+      if (order.products && order.products.length) {
+        html += `<strong>Products:</strong>`;
+        order.products.forEach(p => {
+          html += `<div class="product-line">${escapeHtml(p.name || p.id)}: ${p.qty || p.quantity || 0}</div>`;
+        });
+      }
+      details.innerHTML = html;
+      
+      // Attach button handlers
+      const okBtn = qs('#confirmOkBtn');
+      const editBtn = qs('#confirmEditBtn');
+      
+      if (okBtn) {
+        okBtn.onclick = () => {
+          modal.classList.add('hidden');
+          clearOrderForm();
+          window._editingOrder = null;
+        };
+      }
+      
+      if (editBtn) {
+        editBtn.onclick = () => {
+          modal.classList.add('hidden');
+          enterEditMode(order, { local: true });
+        };
+      }
+      
+      // Show modal
+      modal.classList.remove('hidden');
+    }catch(e){ console.warn('showOrderConfirmation error', e); }
   }
 
   async function renderEod(){
@@ -514,7 +599,7 @@
           const pid = String(p.id || p.name).replace(/[^a-z0-9-_]/ig,'_');
           const label = document.createElement('label'); label.textContent = p.name;
           const wrapper = document.createElement('div'); wrapper.className = 'col-2';
-          const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.step = '1'; input.placeholder = '0'; input.setAttribute('data-product-id', p.id); input.setAttribute('data-product-price', String(p.price||'0')); input.id = 'product_' + pid + '_qty';
+          const input = document.createElement('input'); input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1'; input.placeholder = '0'; input.setAttribute('data-product-id', p.id); input.setAttribute('data-product-price', String(p.price||'0')); input.id = 'product_' + pid + '_qty';
           input.className = 'product-qty-input';
           input.addEventListener('input', computeTotal);
           wrapper.appendChild(label);
@@ -983,9 +1068,9 @@
           // update local queued order
           await Storage.update(order);
           renderOrders();
-          clearOrderForm();
-          window._editingOrder = null;
           syncStatus && (syncStatus.textContent='Local order updated');
+          // Show confirmation popup (don't clear form yet - OK button will do it)
+          showOrderConfirmation(order, true);
           if (navigator.onLine) trySync();
           return;
         } else {
@@ -1020,9 +1105,9 @@
           }
           // store local copy for UI
           try{ await Storage.update(order); }catch(e){}
-          window._editingOrder = null;
-          clearOrderForm();
           renderOrders();
+          // Show confirmation popup (don't clear form yet - OK button will do it)
+          showOrderConfirmation(order, true);
           if (navigator.onLine) trySync();
           return;
         }
@@ -1032,9 +1117,9 @@
     // default: create new queued order
     await Storage.add(order);
     renderOrders();
-    // clear the form so user can enter a new order
-    try{ clearOrderForm(); }catch(e){}
     syncStatus && (syncStatus.textContent='Queued for sync');
+    // Show confirmation popup (don't clear form yet - OK button will do it)
+    showOrderConfirmation(order, false);
     if (navigator.onLine) trySync();
   });
 
@@ -1056,9 +1141,19 @@
             } else if (op.type === 'update'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
               const resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type':'application/json', 'X-Team-Name': teamName, 'X-Access-Code': teamCode }, body: JSON.stringify(op.payload) });
-              if (resp.ok) { await Storage.removeQueuedOp(op._id); }
+              if (resp.ok) { 
+                await Storage.removeQueuedOp(op._id); 
+              } else {
+                console.warn('Queued operation failed:', op.type, op.order_id, 'status:', resp.status);
+                const errorMsg = 'Failed to sync ' + op.type + ' for order ' + op.order_id + ' (HTTP ' + resp.status + ')';
+                if (window.smShowSnackbar) window.smShowSnackbar(errorMsg, { timeout: 8000 });
+              }
             }
-          }catch(e){ /* leave op for retry later */ }
+          }catch(e){ 
+            console.warn('Queued operation error:', op.type, op.order_id, e);
+            const errorMsg = 'Error syncing ' + (op.type || 'operation') + ' for order ' + op.order_id + ': ' + (e.message || e.toString());
+            if (window.smShowSnackbar) window.smShowSnackbar(errorMsg, { timeout: 8000 });
+          }
         }
       }
     }catch(e){ /* ignore queued-op processing errors */ }
@@ -1101,10 +1196,29 @@
             await Storage.remove(order.id);
           } else {
             console.warn('sync failed status', resp.status);
+            let errorDetail = '';
+            try {
+              const errText = await resp.text();
+              errorDetail = errText ? ': ' + errText.substring(0, 200) : '';
+            } catch(e) {}
+            const errorMsg = 'Sync failed for order ' + (order.customer || order.id) + ' - HTTP ' + resp.status + errorDetail;
+            syncStatus && (syncStatus.textContent = errorMsg);
+            if (window.smShowSnackbar) {
+              window.smShowSnackbar(errorMsg, { timeout: 10000 });
+            } else {
+              alert(errorMsg);
+            }
+            return; // stop syncing on first error
           }
         } catch (err) {
           console.warn('sync failed for', order.id, err);
-          syncStatus && (syncStatus.textContent='Sync error, will retry');
+          const errorMsg = 'Sync failed for order ' + (order.customer || order.id) + ': ' + (err.message || err.toString());
+          syncStatus && (syncStatus.textContent = errorMsg);
+          if (window.smShowSnackbar) {
+            window.smShowSnackbar(errorMsg, { timeout: 10000 });
+          } else {
+            alert(errorMsg);
+          }
           return;
         }
       }

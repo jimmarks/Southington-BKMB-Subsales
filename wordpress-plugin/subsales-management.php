@@ -28,6 +28,15 @@ if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME
 
 // ---- Implementation (merged from legacy bkmb file) ----
 
+// Optional Composer autoload: if a vendor/autoload.php exists in the plugin directory
+// require it so composer-installed libraries (for example PhpSpreadsheet) are available.
+// This keeps the plugin functional when vendor/ isn't present (fallbacks remain).
+$subsales_vendor_autoload = __DIR__ . '/vendor/autoload.php';
+if ( file_exists( $subsales_vendor_autoload ) ) {
+    require_once $subsales_vendor_autoload;
+}
+
+
 // Activation hook
 register_activation_hook( __FILE__, 'subsales_activate' );
 
@@ -163,6 +172,97 @@ function order_sync_maybe_show_onboarding() {
             </div>
             <div id="onb_status" style="margin-top:12px;display:none"></div>
         </div>
+        <h2 style="margin-top:18px">Route preview</h2>
+        <p class="description">Preview driver assignments on a map. Click Preview to geocode addresses (uses stored Google Maps API key) and render simple routes per driver. No Directions API calls are made.</p>
+        <p><button id="subsales-preview-btn" class="button">Preview routes</button>
+        <span id="subsales-preview-status" style="margin-left:12px"></span></p>
+        <div id="subsales-preview-map" style="height:480px; width:100%; max-width:1100px; border:1px solid #ddd; margin-top:12px"></div>
+
+        <script>
+        (function(){
+            const ajaxUrl = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+            const nonce = '<?php echo esc_js( wp_create_nonce( 'subsales_delivery_preview' ) ); ?>';
+            const previewBtn = document.getElementById('subsales-preview-btn');
+            const statusEl = document.getElementById('subsales-preview-status');
+            const mapEl = document.getElementById('subsales-preview-map');
+            let mapInstance = null;
+            let gmScriptLoaded = false;
+
+            function loadGoogleMaps(key){
+                return new Promise(function(resolve, reject){
+                    if (!key) return reject(new Error('No Google Maps API key configured'));
+                    if (window.google && window.google.maps) return resolve();
+                    const s = document.createElement('script');
+                    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key);
+                    s.async = true; s.defer = true;
+                    s.onload = function(){ gmScriptLoaded = true; resolve(); };
+                    s.onerror = function(){ reject(new Error('Failed to load Google Maps script')); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            function clearMap(){
+                if (!mapInstance) return; // we will recreate markers per preview
+                mapInstance = null; mapEl.innerHTML = '';
+            }
+
+            function renderMap(data, apiKey){
+                // data: { drivers: { '1': [rows], ... }, products: [...] }
+                loadGoogleMaps(apiKey).then(function(){
+                    // create map centered on first point
+                    const allPts = [];
+                    for (const dv in data.drivers){ for (const r of data.drivers[dv]){ if (r.lat && r.lng) allPts.push({lat: parseFloat(r.lat), lng: parseFloat(r.lng)}); } }
+                    if (allPts.length === 0){ statusEl.textContent = 'No geocoded addresses available for preview.'; return; }
+                    const center = allPts[0];
+                    mapInstance = new google.maps.Map(mapEl, { center: center, zoom: 12 });
+
+                    const colors = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'];
+                    let driverIdx = 0;
+                    for (const dv in data.drivers){
+                        const rows = data.drivers[dv];
+                        const path = [];
+                        for (const r of rows){ if (r.lat && r.lng) path.push({lat: parseFloat(r.lat), lng: parseFloat(r.lng)}); }
+                        const col = colors[driverIdx % colors.length];
+                        // markers
+                        for (let i=0;i<rows.length;i++){
+                            const rp = rows[i];
+                            if (!rp.lat || !rp.lng) continue;
+                            const mk = new google.maps.Marker({ position: {lat: parseFloat(rp.lat), lng: parseFloat(rp.lng)}, map: mapInstance, label: String(dv), title: rp.address_raw, icon: { path: google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: col, fillOpacity: 1, strokeWeight: 0 } });
+                        }
+                        if (path.length > 1){
+                            const poly = new google.maps.Polyline({ path: path, geodesic: true, strokeColor: col, strokeOpacity: 0.7, strokeWeight: 3, map: mapInstance });
+                        }
+                        driverIdx++;
+                    }
+                    // fit bounds
+                    const bounds = new google.maps.LatLngBounds();
+                    for (const p of allPts) bounds.extend(p);
+                    if (allPts.length>0) mapInstance.fitBounds(bounds);
+                }).catch(function(err){ statusEl.textContent = err.message; });
+            }
+
+            previewBtn.addEventListener('click', function(){
+                statusEl.textContent = 'Building preview...';
+                const fd = new FormData();
+                fd.append('action','subsales_delivery_preview');
+                fd.append('_ajax_nonce', nonce);
+                // include driver_count, delivery_date and start_address from form
+                const driverCountEl = document.querySelector('input[name="driver_count"]');
+                const startAddrEl = document.querySelector('input[name="start_address"]');
+                const deliveryDateEl = document.querySelector('input[name="delivery_date"]');
+                fd.append('driver_count', driverCountEl ? driverCountEl.value : 2);
+                fd.append('start_address', startAddrEl ? startAddrEl.value : '');
+                fd.append('delivery_date', deliveryDateEl ? deliveryDateEl.value : '');
+                fetch(ajaxUrl, { method: 'POST', body: fd }).then(r=>r.json()).then(function(j){
+                    if (!j || !j.success){ statusEl.textContent = 'Preview failed: ' + (j && j.data ? j.data : 'unknown'); return; }
+                    const payload = j.data;
+                    statusEl.textContent = 'Preview ready';
+                    clearMap();
+                    renderMap(payload, payload.api_key || '');
+                }).catch(function(e){ statusEl.textContent = 'Error: '+ e.message; });
+            });
+        })();
+        </script>
     </div>
     <script>
     (function(){
@@ -248,6 +348,15 @@ function order_sync_admin_menu() {
         'subsales-orders',
         'order_sync_orders_page'
     );
+
+    add_submenu_page(
+        'subsales-management',
+        'Delivery',
+        'Delivery',
+        'manage_options',
+        'subsales-delivery',
+        'order_sync_delivery_page'
+    );
 }
 
 // Add Address Extracts admin page for ZIP-based extracts
@@ -288,6 +397,8 @@ function order_sync_zip_extracts_page() {
             if ( strlen( $pz ) === 5 ) $zips[] = $pz;
         }
         update_option( 'subsales_served_zips', $zips );
+        // Update zip-index.json so PWA knows which ZIPs to prefetch
+        subsales_update_zip_index( $zips );
         echo '<div class="updated"><p>ZIP list saved.</p></div>';
     }
 
@@ -354,6 +465,9 @@ function subsales_generate_zip_extracts() {
         $results[ $zip ] = $res;
     }
 
+    // Update zip-index.json in the PWA directory with the list of served ZIPs
+    subsales_update_zip_index( $zips );
+
     wp_send_json_success( $results );
 }
 
@@ -403,6 +517,21 @@ function subsales_generate_zip_from_overpass( $zip, $base_dir ) {
     $written = file_put_contents( $file, wp_json_encode( $out ) );
     if ( $written === false ) return array( 'error' => 'write_failed' );
     return array( 'count' => count( $out ), 'file' => $file );
+}
+
+// Helper: update zip-index.json in the PWA directory with the list of served ZIPs
+function subsales_update_zip_index( $zips ) {
+    if ( ! is_array( $zips ) ) return false;
+    
+    // Get the plugin directory path
+    $pwa_dir = plugin_dir_path( __FILE__ ) . 'pwa/';
+    $index_file = $pwa_dir . 'zip-index.json';
+    
+    // Write the ZIP list as JSON
+    $json = wp_json_encode( array_values( $zips ), JSON_PRETTY_PRINT );
+    $written = file_put_contents( $index_file, $json );
+    
+    return $written !== false;
 }
 
 // Enqueue admin assets for settings page (media uploader for header image)
@@ -998,6 +1127,366 @@ function order_sync_admin_export_orders() {
     fputcsv( $out, array( 'id','order_id','user_id','team_id','order_data','sync_status','created_at','updated_at' ) );
     foreach ( $rows as $r ) {
         fputcsv( $out, array( $r['id'], $r['order_id'], $r['user_id'], $r['team_id'], $r['order_data'], $r['sync_status'], $r['created_at'], $r['updated_at'] ) );
+    }
+    fclose( $out );
+    exit;
+}
+
+// Handle administrative CSV export (no routing) - one row per normalized address with aggregated product counts
+add_action( 'admin_post_subsales_generate_admin_csv', 'order_sync_handle_generate_admin_csv' );
+function order_sync_handle_generate_admin_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( $_POST['_wpnonce'], 'subsales_generate_admin_csv' ) ) wp_die( 'Invalid nonce' );
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'order_sync_orders';
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // group by normalized address
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) { if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0; $products_map[ $pid ] += $q; }
+                        break;
+                    }
+                }
+            }
+        }
+
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue; // skip donations/empty
+
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue;
+
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+
+        if ( ! isset( $by_address[ $addr_norm ] ) ) $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'products' => array(), 'order_ids' => array(), 'customer' => $customer, 'phone' => $phone, 'seller' => $seller );
+        foreach ( $products_map as $pid => $q ) { if ( ! isset( $by_address[ $addr_norm ]['products'][ $pid ] ) ) $by_address[ $addr_norm ]['products'][ $pid ] = 0; $by_address[ $addr_norm ]['products'][ $pid ] += intval( $q ); }
+        $by_address[ $addr_norm ]['order_ids'][] = $r['order_id'];
+    }
+
+    if ( empty( $by_address ) ) {
+        $msg = rawurlencode( 'No valid product orders found for ' . $delivery_date );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+
+    // Stream CSV
+    $filename = 'administrative_delivery_' . ( $delivery_date ? $delivery_date : 'all' ) . '_' . date('Ymd_His') . '.csv';
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    $out = fopen( 'php://output', 'w' );
+    $headers = array( 'Address' );
+    foreach ( $configured_products as $pcol ) { $headers[] = $pcol['name']; }
+    $headers = array_merge( $headers, array( 'Customer Name', 'Phone', 'Seller', 'Order IDs' ) );
+    fputcsv( $out, $headers );
+
+    foreach ( $by_address as $addr_norm => $g ) {
+        $row = array();
+        $row[] = $g['address_raw'];
+        foreach ( $configured_products as $pcol ) { $pid = $pcol['id']; $row[] = isset( $g['products'][ $pid ] ) ? intval( $g['products'][ $pid ] ) : 0; }
+        $row[] = $g['customer'];
+        $row[] = $g['phone'];
+        $row[] = $g['seller'];
+        $row[] = implode('|', $g['order_ids']);
+        fputcsv( $out, $row );
+    }
+    fclose( $out );
+    exit;
+}
+
+// XLSX (printable workbook) generation — try PhpSpreadsheet and fall back to CSV
+add_action( 'admin_post_subsales_generate_delivery_xlsx', 'order_sync_handle_generate_delivery_xlsx' );
+function order_sync_handle_generate_delivery_xlsx() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    if ( ! isset( $_POST['_wpnonce_xlsx'] ) || ! wp_verify_nonce( $_POST['_wpnonce_xlsx'], 'subsales_generate_delivery_xlsx' ) ) wp_die( 'Invalid nonce' );
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'order_sync_orders';
+
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
+    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( $_POST['start_address'] ) : '';
+    update_option( 'order_sync_delivery_start_address', $start_address );
+    $driver_count = isset( $_POST['driver_count'] ) ? max(1, intval( $_POST['driver_count'] )) : 2;
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // Build orders grouped by normalized address (reusing CSV logic)
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) {
+                            if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                            $products_map[ $pid ] += $q;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue;
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue;
+        $team_name = '';
+        if ( ! empty( $r['team_id'] ) ) {
+            $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}order_sync_teams WHERE id = %d", intval( $r['team_id'] ) ) );
+            $team_name = $t ? $t->name : '';
+        }
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+
+        $entry = array(
+            'order_id' => $r['order_id'],
+            'team' => $team_name,
+            'seller' => $seller,
+            'address_raw' => $address_raw,
+            'address_norm' => $addr_norm,
+            'products_map' => $products_map,
+            'customer' => $customer,
+            'phone' => $phone,
+            'total_qty' => $total_qty,
+        );
+
+        if ( ! isset( $by_address[ $addr_norm ] ) ) {
+            $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'orders' => array() );
+        }
+        $by_address[ $addr_norm ]['orders'][] = $entry;
+    }
+
+    if ( empty( $by_address ) ) {
+        $msg = rawurlencode( 'No valid product orders found for ' . $delivery_date );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+
+    $manifest_rows = array();
+    foreach ( $by_address as $addr_norm => $group ) {
+        $combined_products = array();
+        foreach ( $configured_products as $p ) { $combined_products[ $p['id'] ] = 0; }
+        $order_ids = array();
+        $team = '';
+        $seller = '';
+        $customer = '';
+        $phone = '';
+        foreach ( $group['orders'] as $o ) {
+            $order_ids[] = $o['order_id'];
+            foreach ( $o['products_map'] as $pid => $q ) { if ( ! isset( $combined_products[ $pid ] ) ) $combined_products[ $pid ] = 0; $combined_products[ $pid ] += intval( $q ); }
+            if ( empty( $team ) && ! empty( $o['team'] ) ) $team = $o['team'];
+            if ( empty( $seller ) && ! empty( $o['seller'] ) ) $seller = $o['seller'];
+            if ( empty( $customer ) && ! empty( $o['customer'] ) ) $customer = $o['customer'];
+            if ( empty( $phone ) && ! empty( $o['phone'] ) ) $phone = $o['phone'];
+        }
+        $manifest_rows[] = array(
+            'address_raw' => $group['address_raw'],
+            'address_norm' => $addr_norm,
+            'products_map' => $combined_products,
+            'order_ids' => $order_ids,
+            'team' => $team,
+            'seller' => $seller,
+            'customer' => $customer,
+            'phone' => $phone,
+        );
+    }
+
+    // Assign drivers
+    $drivers = array(); $driver_counts = array();
+    for ( $i = 1; $i <= $driver_count; $i++ ) { $drivers[ $i ] = array(); $driver_counts[ $i ] = 0; }
+    usort( $manifest_rows, function( $a, $b ) {
+        $ca = isset( $a['order_ids'] ) ? count( $a['order_ids'] ) : 0;
+        $cb = isset( $b['order_ids'] ) ? count( $b['order_ids'] ) : 0;
+        return $cb - $ca;
+    } );
+    foreach ( $manifest_rows as $mr ) {
+        $count_here = isset( $mr['order_ids'] ) ? count( $mr['order_ids'] ) : 1;
+        $min_driver = null; $min_count = null;
+        foreach ( $driver_counts as $dnum => $cnt ) { if ( $min_driver === null || $cnt < $min_count ) { $min_driver = $dnum; $min_count = $cnt; } }
+        $drivers[ $min_driver ][] = $mr;
+        $driver_counts[ $min_driver ] += $count_here;
+    }
+
+    // If PhpSpreadsheet available, generate XLSX with one sheet per driver, formatted for printing
+    if ( class_exists( '\PhpOffice\PhpSpreadsheet\Spreadsheet' ) ) {
+        try {
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+            $sheetIndex = 0;
+            foreach ( $drivers as $dnum => $drows ) {
+                if ( $sheetIndex > 0 ) $spreadsheet->createSheet();
+                $sheet = $spreadsheet->setActiveSheetIndex( $sheetIndex );
+                $title = 'Driver ' . $dnum;
+                // Excel sheet title max length 31
+                $sheet->setTitle( substr( $title, 0, 31 ) );
+
+                // Build header columns: Address, <products...>, Customer Name, Phone, Seller
+                $columns = array( 'Address' );
+                foreach ( $configured_products as $pcol ) { $columns[] = $pcol['name']; }
+                $columns = array_merge( $columns, array( 'Customer Name', 'Phone', 'Seller' ) );
+                $colCount = count( $columns );
+
+                // Merge top row for driver/title
+                $lastColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $colCount );
+                $sheet->mergeCells( 'A1:' . $lastColLetter . '1' );
+                $sheet->setCellValue( 'A1', 'Driver ' . $dnum . ( $delivery_date ? ' — ' . $delivery_date : '' ) );
+
+                // Header labels on row 2
+                $r = 2; $c = 1;
+                foreach ( $columns as $col ) {
+                    $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $r;
+                    $sheet->setCellValue( $cell, $col );
+                    $c++;
+                }
+
+                // Data rows starting at row 3
+                $rowNum = 3;
+                foreach ( $drows as $rdata ) {
+                    $c = 1;
+                    $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $rowNum, $rdata['address_raw'] ); $c++;
+                    foreach ( $configured_products as $pcol ) {
+                        $pid = $pcol['id'];
+                        $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $rowNum, isset( $rdata['products_map'][ $pid ] ) ? intval( $rdata['products_map'][ $pid ] ) : 0 ); $c++;
+                    }
+                    $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $rowNum, $rdata['customer'] ); $c++;
+                    $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $rowNum, $rdata['phone'] ); $c++;
+                    $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $rowNum, $rdata['seller'] );
+                    $rowNum++;
+                }
+
+                // Totals row
+                $totalsRow = $rowNum;
+                $c = 1;
+                $sheet->setCellValue( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c ) . $totalsRow, 'Totals' ); $c++;
+                $startDataRow = 3;
+                $endDataRow = $rowNum - 1;
+                foreach ( $configured_products as $pcol ) {
+                    $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $c );
+                    if ( $endDataRow >= $startDataRow ) {
+                        $sheet->setCellValue( $colLetter . $totalsRow, "=SUM({$colLetter}{$startDataRow}:{$colLetter}{$endDataRow})" );
+                    } else {
+                        $sheet->setCellValue( $colLetter . $totalsRow, 0 );
+                    }
+                    $c++;
+                }
+
+                // Column widths: Address wider, product columns moderate, others wider
+                $sheet->getColumnDimension( 'A' )->setWidth( 50 );
+                $colIndex = 2;
+                foreach ( $configured_products as $pcol ) {
+                    $colLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $colIndex );
+                    $sheet->getColumnDimension( $colLetter )->setWidth( 14 );
+                    $colIndex++;
+                }
+                    $sheet->getColumnDimension( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $colIndex ) )->setWidth( 28 ); $colIndex++;
+                $sheet->getColumnDimension( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $colIndex ) )->setWidth( 18 ); $colIndex++;
+                $sheet->getColumnDimension( \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex( $colIndex ) )->setWidth( 22 );
+
+                // Page setup: landscape, fit to width
+                $sheet->getPageSetup()->setOrientation( \PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE );
+                $sheet->getPageSetup()->setPaperSize( \PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::PAPERSIZE_LETTER );
+                $sheet->getPageSetup()->setFitToPage( true );
+                $sheet->getPageSetup()->setFitToWidth( 1 );
+                $sheet->getPageSetup()->setFitToHeight( 0 );
+                $sheet->getPageSetup()->setHorizontalCentered( true );
+
+                // Styling: bold for title and headers
+                $sheet->getStyle( 'A1:' . $lastColLetter . '2' )->getFont()->setBold( true );
+
+                $sheetIndex++;
+            }
+
+            // send workbook
+            $spreadsheet->setActiveSheetIndex( 0 );
+            $filename = 'delivery_manifest_' . ( $delivery_date ? $delivery_date : 'all' ) . '_' . date('Ymd_His') . '.xlsx';
+            header( 'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' );
+            header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx( $spreadsheet );
+            $writer->save( 'php://output' );
+            exit;
+        } catch ( Exception $e ) {
+            // fall through to CSV fallback
+        }
+    }
+
+    // Fallback: stream CSV (same format as existing CSV export)
+    $filename = 'delivery_manifest_' . ( $delivery_date ? $delivery_date : 'all' ) . '_' . date('Ymd_His') . '.csv';
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    $out = fopen( 'php://output', 'w' );
+    $headers = array( 'Driver', 'Address' );
+    foreach ( $configured_products as $pcol ) { $headers[] = $pcol['name']; }
+    $headers = array_merge( $headers, array( 'Customer Name', 'Phone', 'Seller' ) );
+    fputcsv( $out, $headers );
+    foreach ( $drivers as $dnum => $drows ) {
+        foreach ( $drows as $r ) {
+            $row = array();
+            $row[] = $dnum;
+            $row[] = $r['address_raw'];
+            foreach ( $configured_products as $pcol ) { $pid = $pcol['id']; $row[] = isset( $r['products_map'][ $pid ] ) ? intval( $r['products_map'][ $pid ] ) : 0; }
+            $row[] = $r['customer'];
+            $row[] = $r['phone'];
+            $row[] = $r['seller'];
+            fputcsv( $out, $row );
+        }
     }
     fclose( $out );
     exit;
@@ -1708,20 +2197,18 @@ function subsales_pwa_shortcode( $atts = array() ) {
                         <label>Cell number</label>
                         <input id="cellNumber" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Cell number" />
                         <div class="row row-spaced">
-                            <div class="col-2"><label>Turkey</label><input id="turkeyQty" type="number" min="0" placeholder="0" /></div>
-                            <div class="col-2"><label>Ham</label><input id="hamQty" type="number" min="0" placeholder="0" /></div>
-                            <div class="col-2"><label>Combo</label><input id="comboQty" type="number" min="0" placeholder="0" /></div>
+                            <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
                         </div>
                         <label>Donation amount (USD)</label>
-                        <input id="donationAmount" type="number" min="0" step="0.01" placeholder="$0.00" />
+                        <input id="donationAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0.00" />
                         <div class="order-total"><strong>Order total: $<span id="orderTotal">0.00</span></strong></div>
                         <div class="pay-options">
                             <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
                             <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
                         </div>
-                        <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" placeholder="Check number" /></div>
-                        <label>Notes</label>
-                        <textarea id="notes" placeholder="Notes (optional)"></textarea>
+                        <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
+                        <label>Delivery Instructions</label>
+                        <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
                         <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
                     </div>
                 </div>
@@ -2076,6 +2563,537 @@ function subsales_serve_portal_assets() {
     }
 }
 
+// Ensure geocode cache table exists (lightweight, called on demand)
+function order_sync_ensure_geocode_table() {
+    global $wpdb;
+    $table = $wpdb->prefix . 'order_sync_geocodes';
+    $charset = $wpdb->get_charset_collate();
+    $sql = "CREATE TABLE IF NOT EXISTS {$table} (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        address_hash varchar(64) NOT NULL,
+        address_normalized text NOT NULL,
+        lat double DEFAULT NULL,
+        lng double DEFAULT NULL,
+        status varchar(32) DEFAULT 'unknown',
+        updated_at datetime DEFAULT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY address_hash (address_hash(64))
+    ) {$charset};";
+    $wpdb->query( $sql );
+}
+
+function order_sync_normalize_address( $addr ) {
+    if ( ! $addr ) return '';
+    $s = trim( preg_replace('/\s+/', ' ', str_replace( array("\n","\r"), ' ', $addr ) ) );
+    $s = strtolower( $s );
+    return $s;
+}
+
+function order_sync_geocode_address( $address ) {
+    global $wpdb;
+    $address_norm = order_sync_normalize_address( $address );
+    $hash = md5( $address_norm );
+    $table = $wpdb->prefix . 'order_sync_geocodes';
+
+    // ensure table exists
+    order_sync_ensure_geocode_table();
+
+    // check cache
+    $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE address_hash = %s LIMIT 1", $hash ), ARRAY_A );
+    if ( $row && ! empty( $row['lat'] ) && ! empty( $row['lng'] ) && isset( $row['status'] ) && $row['status'] === 'OK' ) {
+        return array( 'lat' => floatval( $row['lat'] ), 'lng' => floatval( $row['lng'] ), 'cached' => true );
+    }
+
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    if ( empty( $api_key ) ) {
+        // store unknown status and return null
+        $now = current_time( 'mysql' );
+        if ( $row ) {
+            $wpdb->update( $table, array( 'address_normalized' => $address_norm, 'status' => 'no_key', 'updated_at' => $now ), array( 'id' => intval( $row['id'] ) ), array( '%s', '%s', '%s' ), array( '%d' ) );
+        } else {
+            $wpdb->insert( $table, array( 'address_hash' => $hash, 'address_normalized' => $address_norm, 'status' => 'no_key', 'updated_at' => $now ), array( '%s', '%s', '%s', '%s' ) );
+        }
+        return null;
+    }
+
+    $url = 'https://maps.googleapis.com/maps/api/geocode/json?address=' . rawurlencode( $address ) . '&key=' . rawurlencode( $api_key );
+    $resp = wp_remote_get( $url, array( 'timeout' => 10 ) );
+    if ( is_wp_error( $resp ) ) return null;
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    $now = current_time( 'mysql' );
+    if ( ! is_array( $json ) || ! isset( $json['status'] ) ) {
+        if ( $row ) {
+            $wpdb->update( $table, array( 'address_normalized' => $address_norm, 'status' => 'error', 'updated_at' => $now ), array( 'id' => intval( $row['id'] ) ), array( '%s', '%s', '%s' ), array( '%d' ) );
+        } else {
+            $wpdb->insert( $table, array( 'address_hash' => $hash, 'address_normalized' => $address_norm, 'status' => 'error', 'updated_at' => $now ), array( '%s', '%s', '%s', '%s' ) );
+        }
+        return null;
+    }
+    if ( isset( $json['status'] ) && $json['status'] === 'OK' && ! empty( $json['results'][0]['geometry']['location'] ) ) {
+        $loc = $json['results'][0]['geometry']['location'];
+        $lat = floatval( $loc['lat'] );
+        $lng = floatval( $loc['lng'] );
+        if ( $row ) {
+            $wpdb->update( $table, array( 'address_normalized' => $address_norm, 'lat' => $lat, 'lng' => $lng, 'status' => 'OK', 'updated_at' => $now ), array( 'id' => intval( $row['id'] ) ), array( '%s', '%f', '%f', '%s', '%s' ), array( '%d' ) );
+        } else {
+            $wpdb->insert( $table, array( 'address_hash' => $hash, 'address_normalized' => $address_norm, 'lat' => $lat, 'lng' => $lng, 'status' => 'OK', 'updated_at' => $now ), array( '%s', '%s', '%f', '%f', '%s', '%s' ) );
+        }
+        return array( 'lat' => $lat, 'lng' => $lng, 'cached' => false );
+    } else {
+        $status = isset( $json['status'] ) ? $json['status'] : 'error';
+        if ( $row ) {
+            $wpdb->update( $table, array( 'address_normalized' => $address_norm, 'status' => $status, 'updated_at' => $now ), array( 'id' => intval( $row['id'] ) ), array( '%s', '%s', '%s' ), array( '%d' ) );
+        } else {
+            $wpdb->insert( $table, array( 'address_hash' => $hash, 'address_normalized' => $address_norm, 'status' => $status, 'updated_at' => $now ), array( '%s', '%s', '%s', '%s' ) );
+        }
+        return null;
+    }
+}
+
+// Admin Delivery page: single-day delivery exports and preview
+function order_sync_delivery_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+    $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
+    // Preflight summary: compute total product orders and unique addresses
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'order_sync_orders';
+    $configured_products = order_sync_get_products_config();
+    $product_totals = array();
+    foreach ( $configured_products as $p ) { $product_totals[ $p['id'] ] = 0; }
+    $rows_all = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+    $pre_total_orders = 0;
+    $by_address_pf = array();
+    if ( $rows_all ) {
+        foreach ( $rows_all as $rr ) {
+            $od = json_decode( $rr['order_data'], true );
+            if ( ! is_array( $od ) ) $od = array();
+            $products_map = array();
+            foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+            if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                foreach ( $od['products'] as $pr ) {
+                    $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                    $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                    if ( $qty > 0 && $pid ) {
+                        if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                        $products_map[ $pid ] += $qty;
+                    }
+                }
+            } else {
+                foreach ( $configured_products as $p ) {
+                    $pid = $p['id'];
+                    $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                    foreach ( $labels as $k ) {
+                        if ( isset( $od[ $k ] ) ) {
+                            $q = intval( $od[ $k ] );
+                            if ( $q > 0 ) {
+                                if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                                $products_map[ $pid ] += $q;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            $total_qty = array_sum( array_values( $products_map ) );
+            if ( $total_qty <= 0 ) continue;
+            $pre_total_orders++;
+            $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+            $addr_norm = order_sync_normalize_address( $address_raw );
+            if ( empty( $addr_norm ) ) continue;
+            if ( ! isset( $by_address_pf[ $addr_norm ] ) ) $by_address_pf[ $addr_norm ] = array();
+            $by_address_pf[ $addr_norm ][] = $rr['order_id'];
+            // accumulate product totals
+            foreach ( $products_map as $pid => $q ) { if ( $q > 0 ) $product_totals[ $pid ] += $q; }
+        }
+    }
+    $pre_unique_addresses = count( $by_address_pf );
+    ?>
+    <div class="wrap">
+        <h1>Delivery</h1>
+        <p class="description">Delivery exports and driver manifest workflows. Donations are excluded. Addresses will be combined by normalized address. By default exports include all orders unless a delivery date is specified.</p>
+        <div style="margin:12px 0; padding:12px; background:#fff; border:1px solid #e5e5e5;">
+            <strong>Preflight summary</strong>
+            <p style="margin:6px 0">Total product orders: <strong><?php echo intval( $pre_total_orders ); ?></strong></p>
+            <p style="margin:6px 0">Unique delivery addresses: <strong><?php echo intval( $pre_unique_addresses ); ?></strong></p>
+            <?php if ( ! empty( $configured_products ) ): ?>
+                <table class="widefat" style="max-width:800px; margin-top:8px;">
+                    <thead><tr><th>Product</th><th style="text-align:right">Total Qty</th></tr></thead>
+                    <tbody>
+                    <?php foreach ( $configured_products as $p ) : ?>
+                        <tr>
+                            <td><?php echo esc_html( $p['name'] ); ?></td>
+                            <td style="text-align:right"><?php echo intval( $product_totals[ $p['id'] ] ); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <!-- Administrative CSV: admin creates their own routes -> simple CSV export (no driver assignment) -->
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <?php wp_nonce_field( 'subsales_generate_admin_csv' ); ?>
+            <input type="hidden" name="action" value="subsales_generate_admin_csv" />
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Administrative CSV (no routing)</th>
+                    <td>
+                        <p class="description">Create a CSV export you can open in a spreadsheet to design your own routes. This export contains one row per normalized address and per-product columns.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Delivery date (optional)</th>
+                    <td><input type="date" name="delivery_date" value="" /></td>
+                </tr>
+            </table>
+            <p class="submit"><button class="button">Generate Administrative CSV</button></p>
+        </form>
+
+        <!-- Driver manifests workflow: routing, manifests (XLSX preferred), and preview map -->
+        <h2 style="margin-top:18px">Generate Driver Manifests</h2>
+        <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <?php wp_nonce_field( 'subsales_generate_delivery' ); ?>
+            <input type="hidden" name="action" value="subsales_generate_delivery_xlsx" />
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Starting address (depot)</th>
+                    <td><input type="text" name="start_address" id="sdm_start_address" class="regular-text" value="<?php echo $start_addr; ?>" placeholder="Street, City, ZIP" /></td>
+                </tr>
+                <tr>
+                    <th scope="row">Delivery date (optional)</th>
+                    <td><input type="date" name="delivery_date" id="sdm_delivery_date" value="" /></td>
+                </tr>
+                <tr>
+                    <th scope="row">Number of drivers</th>
+                    <td><input type="number" name="driver_count" id="sdm_driver_count" value="2" min="1" max="200" /></td>
+                </tr>
+                <tr>
+                    <th scope="row">Notes</th>
+                    <td><span class="description">This workflow will assign addresses to drivers, generate printable driver manifests (XLSX when available, CSV fallback), and allows previewing routes on a map before download.</span></td>
+                </tr>
+            </table>
+            <p class="submit">
+                <button type="button" id="sdm_preview_btn" class="button">Preview routes</button>
+                <button type="submit" class="button button-primary">Generate Driver Manifests</button>
+            </p>
+        </form>
+
+        <div id="subsales_preview_modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:99999;">
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:90%; max-width:1000px; height:80%; background:#fff; border-radius:6px; overflow:hidden;">
+                <div style="padding:8px; background:#f5f5f5; border-bottom:1px solid #e5e5e5; display:flex; align-items:center; justify-content:space-between;">
+                    <strong>Route preview</strong>
+                    <div>
+                        <button id="subsales_preview_close" class="button">Close</button>
+                    </div>
+                </div>
+                <div id="subsales_preview_map" style="width:100%; height:calc(100% - 44px);"></div>
+            </div>
+        </div>
+
+        <script>
+        (function(){
+            const ajaxUrl = ajaxurl;
+            const previewNonce = <?php echo json_encode( wp_create_nonce( 'subsales_delivery_preview' ) ); ?>;
+            const previewBtn = document.getElementById('sdm_preview_btn');
+            const modal = document.getElementById('subsales_preview_modal');
+            const closeBtn = document.getElementById('subsales_preview_close');
+            let mapInstance = null;
+            let googleApiLoaded = false;
+
+            function loadGoogleMaps(key){
+                return new Promise(function(resolve,reject){
+                    if ( window.google && window.google.maps ) return resolve(window.google.maps);
+                    const s = document.createElement('script');
+                    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key);
+                    s.async = true; s.defer = true;
+                    s.onload = function(){ googleApiLoaded = true; resolve(window.google.maps); };
+                    s.onerror = function(){ reject(new Error('Failed to load Google Maps')); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            function buildColor(i){
+                const palette = ['#1E90FF','#FF4500','#32CD32','#FFD700','#8A2BE2','#FF1493','#00CED1','#FF8C00','#00BFFF','#228B22'];
+                return palette[i % palette.length];
+            }
+
+            function renderPreview(data){
+                const products = data.products || [];
+                const drivers = data.drivers || {};
+                const apiKey = data.api_key || '';
+                if ( ! apiKey ) { alert('No Google Maps API key configured in Settings → Overall.'); return; }
+                loadGoogleMaps(apiKey).then(function(gmaps){
+                    modal.style.display = 'block';
+                    // create map
+                    if ( mapInstance ) { /* reuse center */ }
+                    const mapDiv = document.getElementById('subsales_preview_map');
+                    mapDiv.innerHTML = '';
+                    mapInstance = new gmaps.Map(mapDiv, { zoom: 12, center: { lat: 41.0, lng: -73.0 } });
+                    const bounds = new gmaps.LatLngBounds();
+                    Object.keys(drivers).forEach(function(dk, idx){
+                        const rows = drivers[dk];
+                        const path = [];
+                        rows.forEach(function(r, ridx){
+                            if ( r.lat && r.lng ) {
+                                const pos = { lat: parseFloat(r.lat), lng: parseFloat(r.lng) };
+                                path.push(pos);
+                                const marker = new gmaps.Marker({ position: pos, map: mapInstance, title: r.address_raw, label: String(idx+1) });
+                                bounds.extend(pos);
+                            }
+                        });
+                        if ( path.length > 0 ) {
+                            const poly = new gmaps.Polyline({ path: path, geodesic: true, strokeColor: buildColor(idx), strokeOpacity: 0.8, strokeWeight: 3 });
+                            poly.setMap(mapInstance);
+                        }
+                    });
+                    if ( ! bounds.isEmpty() ) mapInstance.fitBounds(bounds);
+                }).catch(function(err){ alert('Map load error: ' + err.message); });
+            }
+
+            previewBtn && previewBtn.addEventListener('click', function(){
+                const fd = new FormData();
+                fd.append('action','subsales_delivery_preview');
+                fd.append('_ajax_nonce', previewNonce);
+                fd.append('start_address', document.getElementById('sdm_start_address').value || '');
+                fd.append('delivery_date', document.getElementById('sdm_delivery_date').value || '');
+                fd.append('driver_count', document.getElementById('sdm_driver_count').value || '2');
+                fetch(ajaxUrl, { method:'POST', body: fd }).then(r=>r.json()).then(function(j){
+                    if ( ! j || ! j.success ) { alert('Preview error: ' + (j && j.data ? j.data : 'Unknown')); return; }
+                    renderPreview(j.data);
+                }).catch(function(e){ alert('Fetch error: ' + e.message); });
+            });
+            closeBtn && closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
+        })();
+        </script>
+
+        <h2 style="margin-top:24px">Geocoding & limits</h2>
+        <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
+    </div>
+    <?php
+}
+
+// Handle generate delivery export (admin POST)
+add_action( 'admin_post_subsales_generate_delivery', 'order_sync_handle_generate_delivery' );
+function order_sync_handle_generate_delivery() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( $_POST['_wpnonce'], 'subsales_generate_delivery' ) ) wp_die( 'Invalid nonce' );
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'order_sync_orders';
+
+    // Delivery date is optional; when omitted export ALL orders.
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
+    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( $_POST['start_address'] ) : '';
+    update_option( 'order_sync_delivery_start_address', $start_address );
+    $driver_count = isset( $_POST['driver_count'] ) ? max(1, intval( $_POST['driver_count'] )) : 2;
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        // No date supplied: export all orders
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // Build orders list, group by normalized address
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+
+        // build products_map like other code
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            // fallback legacy fields
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) {
+                            if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                            $products_map[ $pid ] += $q;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // skip donations / orders with no product quantities
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue;
+
+        // extract fields
+        $team_name = '';
+        if ( ! empty( $r['team_id'] ) ) {
+            $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}order_sync_teams WHERE id = %d", intval( $r['team_id'] ) ) );
+            $team_name = $t ? $t->name : '';
+        }
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue; // skip if no address
+
+        // products string
+        $prod_strs = array();
+        foreach ( $products_map as $pid => $q ) {
+            if ( $q > 0 ) {
+                // find product name
+                $pname = $pid;
+                foreach ( $configured_products as $pconf ) { if ( $pconf['id'] === $pid ) { $pname = $pconf['name']; break; } }
+                $prod_strs[] = $pname . ' × ' . intval( $q );
+            }
+        }
+
+        $entry = array(
+            'order_id' => $r['order_id'],
+            'team' => $team_name,
+            'seller' => $seller,
+            'address_raw' => $address_raw,
+            'address_norm' => $addr_norm,
+            'products_map' => $products_map,
+            'products_str' => implode('; ', $prod_strs),
+            'customer' => $customer,
+            'phone' => $phone,
+            'total_qty' => $total_qty,
+        );
+
+        // combine by normalized address
+        if ( ! isset( $by_address[ $addr_norm ] ) ) {
+            $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'orders' => array() );
+        }
+        $by_address[ $addr_norm ]['orders'][] = $entry;
+    }
+
+    // build flattened list of manifest rows: combine duplicate addresses into single row with aggregated product counts and order ids
+    $manifest_rows = array();
+    foreach ( $by_address as $addr_norm => $group ) {
+        $combined_products = array();
+        foreach ( $configured_products as $p ) { $combined_products[ $p['id'] ] = 0; }
+        $order_ids = array();
+        $team = '';
+        $seller = '';
+        $customer = '';
+        $phone = '';
+        foreach ( $group['orders'] as $o ) {
+            $order_ids[] = $o['order_id'];
+            foreach ( $o['products_map'] as $pid => $q ) { if ( ! isset( $combined_products[ $pid ] ) ) $combined_products[ $pid ] = 0; $combined_products[ $pid ] += intval( $q ); }
+            // keep first non-empty team/seller/customer/phone as representative (driver manifest will include order ids)
+            if ( empty( $team ) && ! empty( $o['team'] ) ) $team = $o['team'];
+            if ( empty( $seller ) && ! empty( $o['seller'] ) ) $seller = $o['seller'];
+            if ( empty( $customer ) && ! empty( $o['customer'] ) ) $customer = $o['customer'];
+            if ( empty( $phone ) && ! empty( $o['phone'] ) ) $phone = $o['phone'];
+        }
+        // build products string
+        $prod_list = array();
+        foreach ( $combined_products as $pid => $q ) {
+            if ( $q > 0 ) {
+                $pname = $pid;
+                foreach ( $configured_products as $pconf ) { if ( $pconf['id'] === $pid ) { $pname = $pconf['name']; break; } }
+                $prod_list[] = $pname . ' × ' . intval( $q );
+            }
+        }
+
+        $manifest_rows[] = array(
+            'address_raw' => $group['address_raw'],
+            'address_norm' => $addr_norm,
+            'products_map' => $combined_products,
+            'products_str' => implode('; ', $prod_list),
+            'order_ids' => $order_ids,
+            'team' => $team,
+            'seller' => $seller,
+            'customer' => $customer,
+            'phone' => $phone,
+        );
+    }
+
+    // Assign to drivers evenly by order count (user requested even distribution by orders).
+    // Use a greedy assignment: sort manifest rows by descending order count and assign each row
+    // to the driver that currently has the fewest assigned orders. This balances number of
+    // orders per driver even when some addresses represent multiple orders.
+    $drivers = array();
+    $driver_counts = array();
+    for ( $i = 1; $i <= $driver_count; $i++ ) { $drivers[ $i ] = array(); $driver_counts[ $i ] = 0; }
+
+    // sort manifest rows by descending number of orders at that address
+    usort( $manifest_rows, function( $a, $b ) {
+        $ca = isset( $a['order_ids'] ) ? count( $a['order_ids'] ) : 0;
+        $cb = isset( $b['order_ids'] ) ? count( $b['order_ids'] ) : 0;
+        return $cb - $ca;
+    } );
+
+    foreach ( $manifest_rows as $mr ) {
+        $count_here = isset( $mr['order_ids'] ) ? count( $mr['order_ids'] ) : 1;
+        // find driver with minimum assigned orders
+        $min_driver = null;
+        $min_count = null;
+        foreach ( $driver_counts as $dnum => $cnt ) {
+            if ( $min_driver === null || $cnt < $min_count ) { $min_driver = $dnum; $min_count = $cnt; }
+        }
+        $drivers[ $min_driver ][] = $mr;
+        $driver_counts[ $min_driver ] += $count_here;
+    }
+
+    // If no orders were found or no manifest rows after filtering, redirect back with a notice
+    if ( empty( $rows ) ) {
+        $msg = rawurlencode( 'No orders found for ' . $delivery_date );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+    if ( empty( $manifest_rows ) ) {
+        $msg = rawurlencode( 'No valid product orders found for ' . $delivery_date . '. Check products configuration and order data.' );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+
+    // Stream CSV: single CSV with Driver column and per-product columns
+    $filename = 'delivery_manifest_' . ( $delivery_date ? $delivery_date : 'all' ) . '_' . date('Ymd_His') . '.csv';
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    $out = fopen( 'php://output', 'w' );
+    // header row: Driver, Address, <product columns...>, Customer, Phone, Seller
+    $headers = array( 'Driver', 'Address' );
+    foreach ( $configured_products as $pcol ) { $headers[] = $pcol['name']; }
+    $headers = array_merge( $headers, array( 'Customer Name', 'Phone', 'Seller' ) );
+    fputcsv( $out, $headers );
+
+    foreach ( $drivers as $dnum => $drows ) {
+        foreach ( $drows as $r ) {
+            $row = array();
+            $row[] = $dnum;
+            $row[] = $r['address_raw'];
+            // product columns
+            foreach ( $configured_products as $pcol ) {
+                $pid = $pcol['id'];
+                $row[] = isset( $r['products_map'][ $pid ] ) ? intval( $r['products_map'][ $pid ] ) : 0;
+            }
+            $row[] = $r['customer'];
+            $row[] = $r['phone'];
+            $row[] = $r['seller'];
+            fputcsv( $out, $row );
+        }
+    }
+    fclose( $out );
+    exit;
+}
+
 // Main dashboard page
 function order_sync_main_page() {
     // Check user capabilities
@@ -2278,6 +3296,169 @@ function order_sync_main_page() {
         </div>
     </div>
     <?php
+}
+
+// AJAX preview for delivery routes (admin only)
+add_action( 'wp_ajax_subsales_delivery_preview', 'order_sync_ajax_delivery_preview' );
+function order_sync_ajax_delivery_preview() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Insufficient permissions' );
+    }
+    check_ajax_referer( 'subsales_delivery_preview', '_ajax_nonce' );
+
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'order_sync_orders';
+    $driver_count = isset( $_POST['driver_count'] ) ? max(1, intval( $_POST['driver_count'] ) ) : 2;
+    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( wp_unslash( $_POST['start_address'] ) ) : '';
+
+    // allow optional delivery_date filter (YYYY-MM-DD)
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( wp_unslash( $_POST['delivery_date'] ) ) : '';
+    if ( $delivery_date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $delivery_date) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+    }
+    if ( ! $rows ) {
+        wp_send_json_error( 'No orders found' );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // group by normalized address
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) {
+                            if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                            $products_map[ $pid ] += $q;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue;
+
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue;
+
+        $team_name = '';
+        if ( ! empty( $r['team_id'] ) ) {
+            $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}order_sync_teams WHERE id = %d", intval( $r['team_id'] ) ) );
+            $team_name = $t ? $t->name : '';
+        }
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+
+        $entry = array(
+            'order_id' => $r['order_id'],
+            'team' => $team_name,
+            'seller' => $seller,
+            'address_raw' => $address_raw,
+            'address_norm' => $addr_norm,
+            'products_map' => $products_map,
+            'customer' => $customer,
+            'phone' => $phone,
+            'total_qty' => $total_qty,
+        );
+
+        if ( ! isset( $by_address[ $addr_norm ] ) ) {
+            $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'orders' => array() );
+        }
+        $by_address[ $addr_norm ]['orders'][] = $entry;
+    }
+
+    if ( empty( $by_address ) ) wp_send_json_error( 'No valid product orders found' );
+
+    // Build manifest rows aggregated per address
+    $manifest_rows = array();
+    foreach ( $by_address as $addr_norm => $group ) {
+        $combined_products = array();
+        foreach ( $configured_products as $p ) { $combined_products[ $p['id'] ] = 0; }
+        $order_ids = array();
+        $team = '';
+        $seller = '';
+        $customer = '';
+        $phone = '';
+        foreach ( $group['orders'] as $o ) {
+            $order_ids[] = $o['order_id'];
+            foreach ( $o['products_map'] as $pid => $q ) { if ( ! isset( $combined_products[ $pid ] ) ) $combined_products[ $pid ] = 0; $combined_products[ $pid ] += intval( $q ); }
+            if ( empty( $team ) && ! empty( $o['team'] ) ) $team = $o['team'];
+            if ( empty( $seller ) && ! empty( $o['seller'] ) ) $seller = $o['seller'];
+            if ( empty( $customer ) && ! empty( $o['customer'] ) ) $customer = $o['customer'];
+            if ( empty( $phone ) && ! empty( $o['phone'] ) ) $phone = $o['phone'];
+        }
+
+        $manifest_rows[] = array(
+            'address_raw' => $group['address_raw'],
+            'address_norm' => $addr_norm,
+            'products_map' => $combined_products,
+            'order_ids' => $order_ids,
+            'team' => $team,
+            'seller' => $seller,
+            'customer' => $customer,
+            'phone' => $phone,
+        );
+    }
+
+    // Assign to drivers using same greedy algorithm
+    $drivers = array(); $driver_counts = array();
+    for ( $i = 1; $i <= $driver_count; $i++ ) { $drivers[ $i ] = array(); $driver_counts[ $i ] = 0; }
+    usort( $manifest_rows, function( $a, $b ) {
+        $ca = isset( $a['order_ids'] ) ? count( $a['order_ids'] ) : 0;
+        $cb = isset( $b['order_ids'] ) ? count( $b['order_ids'] ) : 0;
+        return $cb - $ca;
+    } );
+    foreach ( $manifest_rows as $mr ) {
+        $count_here = isset( $mr['order_ids'] ) ? count( $mr['order_ids'] ) : 1;
+        $min_driver = null; $min_count = null;
+        foreach ( $driver_counts as $dnum => $cnt ) { if ( $min_driver === null || $cnt < $min_count ) { $min_driver = $dnum; $min_count = $cnt; } }
+        $drivers[ $min_driver ][] = $mr;
+        $driver_counts[ $min_driver ] += $count_here;
+    }
+
+    // Geocode addresses (use cache helper) and prepare payload
+    $payload_drivers = array();
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    foreach ( $drivers as $dnum => $rows_driver ) {
+        $payload_drivers[ $dnum ] = array();
+        foreach ( $rows_driver as $r ) {
+            $geo = order_sync_geocode_address( $r['address_raw'] );
+            $lat = $geo && isset( $geo['lat'] ) ? $geo['lat'] : null;
+            $lng = $geo && isset( $geo['lng'] ) ? $geo['lng'] : null;
+            $payload_drivers[ $dnum ][] = array_merge( $r, array( 'lat' => $lat, 'lng' => $lng ) );
+        }
+    }
+
+    $result = array( 'drivers' => $payload_drivers, 'api_key' => $api_key, 'products' => $configured_products, 'start_address' => $start_address );
+    wp_send_json_success( $result );
 }
 // Admin settings page
 // Enqueue admin styles for the plugin dashboard (register at global scope)
@@ -2808,6 +3989,34 @@ function order_sync_settings_page() {
             <tr>
                 <th scope="row">PHP Version</th>
                 <td><?php echo PHP_VERSION; ?></td>
+            </tr>
+            <tr>
+                <th scope="row">PhpSpreadsheet</th>
+                <td>
+                    <?php
+                    $ps_version = null;
+                    // Try Composer InstalledVersions first (if available)
+                    if ( class_exists( '\\Composer\\InstalledVersions' ) ) {
+                        try {
+                            if ( method_exists( '\\Composer\\InstalledVersions', 'getPrettyVersion' ) ) {
+                                $ps_version = \Composer\InstalledVersions::getPrettyVersion( 'phpoffice/phpspreadsheet' );
+                            }
+                        } catch ( Exception $e ) {
+                            $ps_version = null;
+                        }
+                    }
+                    // Fallback: detect presence of the main class
+                    if ( ! $ps_version && class_exists( 'PhpOffice\\PhpSpreadsheet\\Spreadsheet' ) ) {
+                        $ps_version = 'installed';
+                    }
+
+                    if ( $ps_version ) {
+                        echo esc_html( $ps_version );
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
             </tr>
             <tr>
                 <th scope="row">Database Tables</th>

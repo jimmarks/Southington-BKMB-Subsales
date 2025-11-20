@@ -50,15 +50,15 @@
               <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
             </div>
             <label>Donation amount (USD)</label>
-            <input id="donationAmount" type="number" min="0" step="0.01" placeholder="$0.00" />
+            <input id="donationAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0.00" />
             <div class="order-total"><strong>Order total: <span id="orderTotal">$0.00</span></strong></div>
             <div class="pay-options">
               <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
               <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
             </div>
-            <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" placeholder="Check number" /></div>
-            <label>Notes</label>
-            <textarea id="notes" placeholder="Notes (optional)"></textarea>
+            <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
+            <label>Delivery Instructions</label>
+            <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
             <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
           </div>
        </div>
