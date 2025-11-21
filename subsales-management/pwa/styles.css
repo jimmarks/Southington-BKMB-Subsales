@@ -1,0 +1,190 @@
+/* SM Subsales PWA centralized styles (renamed from BKMB->SM) */
+.sm-root{--sm-primary:#2d6cdf}
+.sm-btn{background:var(--sm-primary);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600;box-shadow:0 6px 18px rgba(45,108,223,0.18);transition:transform .08s ease,box-shadow .12s ease}
+.sm-btn:active{transform:translateY(1px)}
+.sm-btn.secondary{background:#f3f4f6;color:#111;box-shadow:none}
+#sm-pwa-ui{max-width:1100px;margin:0 auto}
+.sm-header-sample{padding:8px;border-radius:6px;color:#fff;text-align:center}
+.sm-header{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1100px;margin:0 auto;padding:6px 10px;position:relative;background:linear-gradient(180deg,#ffffff,#fbfdff);border-radius:8px;box-shadow:0 4px 12px rgba(16,24,40,0.06)}
+.sm-header-left{flex:1}
+.sm-header-center{flex:0 0 auto;display:flex;align-items:center;gap:12px;justify-content:center}
+.sm-brand-image{display:block;max-height:44px;margin-right:8px;width:auto;object-fit:contain}
+/* If theme defines a generic .hidden, ensure our brand image is visible and responsive */
+.sm-brand-image.hidden, #brandHeaderImage.hidden { display:block!important; visibility:visible!important; opacity:1!important; max-width:40% !important; height:auto !important }
+.sm-brand-name{margin:0;font-size:1.125rem;font-weight:700;color:#0f172a}
+.sm-header-right{flex:1;display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
+
+/* Modern status dot: position in upper-right of header */
+#headerStatus{position:absolute;top:8px;right:10px;width:12px;height:12px;border-radius:50%;background:orange;box-shadow:0 2px 6px rgba(2,6,23,0.12);display:block;transition:background-color .18s ease,transform .12s ease;z-index:99999;pointer-events:none}
+#headerStatus.status-online{background:#16a34a;transform:scale(1.06)}
+/* hide inner textual dots if present; the small circle is the visible indicator */
+#headerStatusText, #headerDot{display:none}
+.sm-main{padding:12px}
+.sm-login-section{max-width:480px;margin:12px 0}
+.sm-app-section{margin-top:12px}
+.sm-leftcol{flex:1;min-width:320px}
+.sm-aside{width:280px;min-width:220px}
+/* Form layout: labels above inputs, clean spacing and responsive two/three column rows */
+form, .sm-leftcol{box-sizing:border-box}
+label{display:block;margin:8px 0 6px;font-weight:600;color:#0f172a}
+input[type="text"], input[type="tel"], input[type="number"], input[type="email"], textarea, .sm-select, input, select{width:100%;padding:8px 10px;border:1px solid #e6e9ef;border-radius:8px;box-sizing:border-box;font-size:0.95rem}
+textarea{min-height:80px}
+.row{display:flex;gap:12px;align-items:flex-start}
+.sm-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.sm-row .sm-leftcol{flex:1;min-width:280px}
+.sm-row .sm-aside{width:280px;min-width:220px}
+.col-2{flex:1;min-width:80px}
+.col-3{flex:1;min-width:60px}
+/* specifically style the quantity row for visual grouping */
+.row-spaced .col-2 label, .row-spaced .col-3 label{margin-top:0}
+
+/* Quantity column sizing: keep turkey/ham/combo inputs compact and prevent them from
+	 forcing the row to grow too wide. Targets only direct children inside the spaced row. */
+.row-spaced > .col-2, .row-spaced > .col-3 {
+	flex: 1 1 0; /* allow shrinking/wrapping */
+	min-width: 64px; /* small but usable on narrow screens */
+	max-width: 160px; /* prevent very wide expansion */
+}
+.row-spaced > .col-2 input[type="number"], .row-spaced > .col-3 input[type="number"] {
+	width: 100%;
+	min-width: 0; /* allow flexbox to control width */
+	text-align: center; /* nicer for quantity */
+	padding: 6px 8px;
+}
+/* Remove default spinner visual on some browsers (keeps compact look) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+
+/* Donation and order total */
+.order-total{margin-top:8px;font-size:1.125rem;font-weight:700}
+/* Make order total visually distinct as a colored pill */
+.order-total span{background:var(--sm-primary);color:#fff;padding:6px 10px;border-radius:999px;display:inline-block}
+
+/* Ensure address autocomplete dropdown and any injected element use full width for best validation UX */
+.pac-container{width:100% !important;max-width:none !important;box-sizing:border-box}
+/* Google PlaceAutocompleteElement may inject its own element; make adjacent elements full width */
+#address, #address + * { width:100% !important; max-width:none !important; box-sizing:border-box }
+
+/* Phone input validation visuals */
+input[type="tel"]:invalid{border-color:#dc2626}
+input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,0.06)}
+
+/* Payment options layout */
+.pay-options{margin-top:8px;display:flex;gap:12px;align-items:center;flex-wrap:nowrap}
+.pay-options label{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
+.pay-options input[type="checkbox"]{margin-right:6px}
+.check-number-row{margin-top:8px}
+
+/* Button row spacing */
+.btn-row{margin-top:12px}
+
+/* Ensure generic hidden utility is available for plugin UI (kept important to override theme rules) */
+.hidden{display:none!important}
+
+@media (max-width:600px){
+	.row{flex-direction:column}
+	.sm-aside{width:100%;min-width:0;margin-top:12px}
+	.pay-options{flex-direction:column;align-items:flex-start}
+}
+.sm-select{display:block;margin-top:8px;padding:8px}
+.sm-modal{position:fixed;left:12px;right:12px;top:80px;bottom:12px;background:#fff;border:1px solid #ddd;padding:12px;z-index:10000;overflow:auto;box-shadow:0 12px 32px rgba(0,0,0,0.25)}
+.sm-modal .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.sm-modal .modal-body{display:flex;gap:12px;flex-wrap:wrap}
+.sm-modal .modal-col{flex:1;min-width:320px}
+.sm-variant-flat .sm-btn{box-shadow:none;border-radius:6px}
+.sm-variant-rounded .sm-btn{border-radius:24px}
+.sm-variant-dark body, .sm-variant-dark .sm-modal{background:#111;color:#eee}
+.sm-variant-dark .sm-btn{background:var(--sm-primary);color:#fff}
+.order { border:1px solid #ddd; padding:8px; margin-bottom:8px }
+.status-offline { color:orange }
+.status-online { color:green }
+
+/* Header layout used by injected PWA UI */
+.sm-header{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1100px;margin:0 auto;padding:6px 10px;flex-wrap:wrap}
+.sm-header-left{flex:1;min-width:44px}
+.sm-header-center{flex:0 1 auto;display:flex;align-items:center;gap:12px;justify-content:center}
+.sm-brand-image{max-height:44px;margin-right:8px;max-width:40%}
+.sm-brand-name{margin:0;font-size:1.125rem}
+.sm-header-right{flex:1;display:flex;align-items:center;justify-content:flex-end;gap:12px;min-width:120px;flex-wrap:wrap}
+
+/* Header buttons: allow compact wrapping and responsive growth on small screens */
+.sm-header-right .sm-btn{flex:0 0 auto;white-space:nowrap}
+@media (max-width:600px){
+	.sm-header-right .sm-btn{flex:1 1 auto;width:auto;min-width:0}
+}
+.sm-header-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:orange;margin-right:6px}
+.sm-header-dot.status-online{background:green}
+/* legacy BKMB header selectors removed */
+
+/* Main layout */
+.sm-main{padding:12px}
+.sm-login-section{max-width:480px;margin:12px 0}
+.sm-app-section{margin-top:12px}
+.sm-leftcol{flex:1;min-width:320px}
+.sm-aside{width:280px;min-width:220px}
+/* legacy BKMB login/app selectors removed */
+:root{--sm-primary:#2d6cdf}
+.sm-btn{background:var(--sm-primary);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600;box-shadow:0 6px 18px rgba(45,108,223,0.18);transition:transform .08s ease,box-shadow .12s ease}
+/* Inlay popup */
+.orders-inlay{position:fixed;right:12px;top:76px;width:420px;max-width:calc(100% - 24px);background:#fff;border:1px solid #eee;border-radius:10px;box-shadow:0 12px 36px rgba(2,6,23,0.12);z-index:9999;padding:12px;max-height:70vh;overflow:auto}
+
+@media (max-width:480px){
+	.orders-inlay{left:12px;right:12px;top:64px;width:auto;max-width:calc(100% - 24px);border-radius:8px;padding:10px}
+}
+.orders-inlay .inlay-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.orders-inlay table{width:100%;border-collapse:collapse}
+.orders-inlay th,.orders-inlay td{padding:6px;border-bottom:1px solid #f3f3f3;text-align:left}
+
+/* Small utilities */
+.sm-select{display:block;margin-top:8px;padding:8px}
+
+/* Modal for My Orders */
+.sm-modal{position:fixed;left:12px;right:12px;top:80px;bottom:12px;background:#fff;border:1px solid #ddd;padding:12px;z-index:10000;overflow:auto;box-shadow:0 12px 32px rgba(0,0,0,0.25)}
+.sm-modal .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.sm-modal .modal-body{display:flex;gap:12px;flex-wrap:wrap}
+.sm-modal .modal-col{flex:1;min-width:320px}
+.order{border:1px solid #eee;padding:8px;margin-bottom:6px}
+
+/* Variant tweaks (variants set on body via JS class) */
+.sm-variant-flat .sm-btn{box-shadow:none;border-radius:6px}
+.sm-variant-rounded .sm-btn{border-radius:24px}
+.sm-variant-dark body, .sm-variant-dark .sm-modal{background:#111;color:#eee}
+.sm-variant-dark .sm-btn{background:var(--sm-primary);color:#fff}
+
+/* Small spacing utilities used in the template */
+.row-spaced{margin-top:6px;margin-bottom:6px}
+.order-total{margin-top:6px}
+.pay-options{margin-top:8px;display:flex;gap:12px}
+.check-number-row{margin-top:6px}
+.btn-row{margin-top:10px}
+.row-spaced{margin-top:6px;margin-bottom:6px}
+.order-total{margin-top:6px}
+.pay-options{margin-top:8px;display:flex;gap:12px}
+.check-number-row{margin-top:6px}
+.btn-row{margin-top:10px}
+
+/* Responsive header tweaks */
+@media (max-width:900px) {
+	.sm-header{flex-direction:row;align-items:center;padding:10px}
+	.sm-brand-name{font-size:1rem}
+	.sm-brand-image{max-height:44px}
+}
+
+@media (max-width:600px) {
+	.sm-header{flex-direction:column;align-items:stretch;padding:10px}
+	.sm-header-center{order:1;margin:6px 0;justify-content:flex-start}
+	.sm-header-right{order:2;justify-content:flex-end;width:100%;gap:8px}
+	.sm-brand-image{max-height:36px}
+	#headerStatus{top:8px;right:10px;width:10px;height:10px}
+}
+
+/* Snackbar / Toast */
+.sm-snackbar{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:20000;background:rgba(20,20,20,0.95);color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 8px 24px rgba(2,6,23,0.3);display:flex;align-items:center;gap:12px;max-width:92%;min-width:220px}
+.sm-snackbar.hidden{display:none}
+.sm-snackbar.show{display:flex}
+.sm-snackbar .sm-snackbar-action{background:transparent;border:1px solid rgba(255,255,255,0.12);padding:6px 10px;border-radius:6px;color:#fff}
+
+/* Small pending badge used in My Orders */
+.sm-badge{display:inline-block;background:#f59e0b;color:#fff;padding:2px 8px;border-radius:999px;font-size:12px;margin-left:8px}
+

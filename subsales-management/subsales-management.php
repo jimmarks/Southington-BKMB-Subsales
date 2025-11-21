@@ -3230,7 +3230,7 @@ function order_sync_main_page() {
             cursor: pointer;
             top: 0;
             left: 38px;
-            right: 60px;
+            right: 70px;
             bottom: 0;
             background-color: #ddd;
             transition: .3s;
