@@ -14,6 +14,19 @@
  * Text Domain: subsales-management
  * Domain Path: /languages
  * Network: false
+ * 
+ * ============================================================
+ * DEVELOPMENT STATE - Last Updated: 2025-11-24
+ * ============================================================
+ * Current Phase: Phase 6 (Settings Toggle)
+ * See: DEVELOPMENT-STATE.md in repo root for full context
+ * 
+ * LOCKED ARCHITECTURE (DO NOT CHANGE):
+ * - Phone: REQUIRED (NOT NULL, UNIQUE, 10 digits normalized)
+ * - Email: OPTIONAL (can be empty string)
+ * - Login: Name search + Phone entry (user-based mode)
+ * - Multi-team: user_teams junction table for many-to-many
+ * ============================================================
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -609,16 +622,30 @@ function order_sync_create_table() {
     
     $team_members_sql = "CREATE TABLE $team_members_table_name (
         id mediumint(9) NOT NULL AUTO_INCREMENT,
-        team_id mediumint(9) NOT NULL,
+        team_id mediumint(9) NOT NULL DEFAULT 0,
         name varchar(255) NOT NULL,
-        email varchar(255) NOT NULL,
+        email varchar(255) DEFAULT '',
+        phone varchar(50) NOT NULL,
         role varchar(50) NOT NULL DEFAULT 'member',
         status varchar(50) NOT NULL DEFAULT 'active',
         last_login datetime,
         created_at datetime DEFAULT CURRENT_TIMESTAMP,
         updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
-        UNIQUE KEY email (email),
+        UNIQUE KEY phone (phone),
+        KEY team_id (team_id)
+    ) $charset_collate;";
+    
+    // Junction table for many-to-many user-team relationships
+    $user_teams_table_name = $wpdb->prefix . 'order_sync_user_teams';
+    $user_teams_sql = "CREATE TABLE $user_teams_table_name (
+        id mediumint(9) NOT NULL AUTO_INCREMENT,
+        user_id mediumint(9) NOT NULL,
+        team_id mediumint(9) NOT NULL,
+        assigned_at datetime DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        UNIQUE KEY user_team (user_id, team_id),
+        KEY user_id (user_id),
         KEY team_id (team_id)
     ) $charset_collate;";
     
@@ -626,6 +653,83 @@ function order_sync_create_table() {
     dbDelta( $sql );
     dbDelta( $teams_sql );
     dbDelta( $team_members_sql );
+    dbDelta( $user_teams_sql );
+    
+    // Schema migration: Fix phone column and constraints for existing tables
+    // dbDelta doesn't handle constraint changes well, so we do it manually
+    $phone_column_exists = $wpdb->get_var( 
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+         WHERE TABLE_SCHEMA = DATABASE() 
+         AND TABLE_NAME = '{$team_members_table_name}' 
+         AND COLUMN_NAME = 'phone'"
+    );
+    
+    if ( $phone_column_exists ) {
+        // Check if phone column allows NULL or has DEFAULT ''
+        $phone_column_info = $wpdb->get_row(
+            "SELECT COLUMN_DEFAULT, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$team_members_table_name}' 
+             AND COLUMN_NAME = 'phone'",
+            ARRAY_A
+        );
+        
+        // If phone is nullable or has empty default, update it
+        if ( $phone_column_info && ( $phone_column_info['IS_NULLABLE'] === 'YES' || $phone_column_info['COLUMN_DEFAULT'] === '' ) ) {
+            // First, set default phone for any users with NULL/empty phone
+            $wpdb->query(
+                "UPDATE {$team_members_table_name} 
+                 SET phone = CONCAT('000000', LPAD(id, 4, '0')) 
+                 WHERE phone IS NULL OR phone = ''"
+            );
+            
+            // Now alter the column to NOT NULL
+            $wpdb->query(
+                "ALTER TABLE {$team_members_table_name} 
+                 MODIFY COLUMN phone varchar(50) NOT NULL"
+            );
+        }
+        
+        // Check if UNIQUE constraint exists on phone
+        $phone_index = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$team_members_table_name}' 
+             AND COLUMN_NAME = 'phone' 
+             AND NON_UNIQUE = 0"
+        );
+        
+        if ( ! $phone_index ) {
+            // Add UNIQUE constraint on phone
+            $wpdb->query( "ALTER TABLE {$team_members_table_name} ADD UNIQUE KEY phone (phone)" );
+        }
+        
+        // Check if email UNIQUE constraint exists (should be removed)
+        $email_index = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$team_members_table_name}' 
+             AND COLUMN_NAME = 'email' 
+             AND NON_UNIQUE = 0"
+        );
+        
+        if ( $email_index ) {
+            // Remove UNIQUE constraint from email
+            $wpdb->query( "ALTER TABLE {$team_members_table_name} DROP INDEX {$email_index}" );
+        }
+    }
+    
+    // Migrate existing team_id assignments to junction table
+    $existing_assignments = $wpdb->get_results( "SELECT id, team_id FROM {$team_members_table_name} WHERE team_id > 0", ARRAY_A );
+    if ( ! empty( $existing_assignments ) ) {
+        foreach ( $existing_assignments as $assignment ) {
+            $wpdb->query( $wpdb->prepare(
+                "INSERT IGNORE INTO {$user_teams_table_name} (user_id, team_id) VALUES (%d, %d)",
+                $assignment['id'],
+                $assignment['team_id']
+            ));
+        }
+    }
 }
 
 function order_sync_add_team( $name, $access_code, $description = '' ) {
@@ -831,6 +935,68 @@ add_action( 'rest_api_init', function () {
     register_rest_route( 'order-manager/v1', '/teams/members', array(
         'methods' => 'GET',
         'callback' => 'order_sync_get_team_members_endpoint',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    // User Management API (Phase 2)
+    register_rest_route( 'order-manager/v1', '/users', array(
+        'methods' => 'POST',
+        'callback' => 'order_sync_create_user',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/users', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_get_users',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_get_user_by_id',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
+        'methods' => 'PUT',
+        'callback' => 'order_sync_update_user',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
+        'methods' => 'DELETE',
+        'callback' => 'order_sync_delete_user',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/users/search', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_search_users',
+        'permission_callback' => '__return_true', // Public for PWA login
+    ));
+    
+    // Team Assignment API (Phase 3)
+    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_get_user_teams',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/assign', array(
+        'methods' => 'POST',
+        'callback' => 'order_sync_assign_user_to_team',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users/(?P<userId>\d+)', array(
+        'methods' => 'DELETE',
+        'callback' => 'order_sync_remove_user_from_team',
+        'permission_callback' => 'order_sync_check_permissions',
+    ));
+    
+    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users', array(
+        'methods' => 'GET',
+        'callback' => 'order_sync_get_team_users',
         'permission_callback' => 'order_sync_check_permissions',
     ));
 });
@@ -1776,6 +1942,8 @@ function order_sync_test_maps_key_ajax() {
 }
 // Permission callback
 function order_sync_check_permissions( WP_REST_Request $request ) {
+    global $wpdb;
+    
     if ( strpos( $request->get_route(), '/config' ) !== false ) {
         $team_name = $request->get_header( 'X-Team-Name' );
         $access_code = $request->get_header( 'X-Access-Code' );
@@ -1788,6 +1956,7 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
     }
     
+    // Legacy auth: X-Team-Name + X-Access-Code
     $team_name = $request->get_header( 'X-Team-Name' );
     $access_code = $request->get_header( 'X-Access-Code' );
     
@@ -1801,6 +1970,42 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         return false;
     }
     
+    // User-based auth: X-User-ID + X-Team-ID (Phase 4)
+    $user_id = $request->get_header( 'X-User-ID' );
+    $team_id = $request->get_header( 'X-Team-ID' );
+    
+    if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
+        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+        
+        // Verify user exists
+        $user = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$members_table} WHERE id = %d",
+            intval( $user_id )
+        ), ARRAY_A );
+        
+        if ( ! $user ) {
+            error_log( 'Subsales: perm_check invalid user_id=' . $user_id );
+            return false;
+        }
+        
+        // Verify user belongs to the team
+        $assignment = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            intval( $user_id ),
+            intval( $team_id )
+        ));
+        
+        if ( $assignment ) {
+            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
+            return true;
+        }
+        
+        error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
+        return false;
+    }
+    
+    // Legacy: X-Team-Email + X-Team-ID
     $team_email = $request->get_header( 'X-Team-Email' );
     $team_id = $request->get_header( 'X-Team-ID' );
     
@@ -2017,33 +2222,149 @@ function delete_order( WP_REST_Request $request ) {
 
 // Team authentication API endpoints
 function team_member_login( WP_REST_Request $request ) {
+    global $wpdb;
     $data = $request->get_json_params();
     
-    if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
-        return new WP_REST_Response( 'Missing team name or access code', 400 );
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
+    
+    // Legacy mode: Team + Access Code
+    if ( $login_mode === 'legacy' ) {
+        if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Missing team name or access code'
+            ), 400 );
+        }
+        
+        $team_name = sanitize_text_field( $data['team_name'] );
+        $access_code = sanitize_text_field( $data['access_code'] );
+        
+        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+        
+        if ( $team ) {
+            return new WP_REST_Response( array(
+                'success' => true,
+                'mode' => 'legacy',
+                'team' => array(
+                    'id' => $team['id'],
+                    'name' => $team['name'],
+                    'access_code' => $team['access_code']
+                ),
+                'message' => 'Team login successful'
+            ), 200 );
+        }
+        
+        return new WP_REST_Response( array(
+            'success' => false,
+            'message' => 'Invalid team name or access code'
+        ), 401 );
     }
     
-    $team_name = sanitize_text_field( $data['team_name'] );
-    $access_code = sanitize_text_field( $data['access_code'] );
-    
-    $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-    
-    if ( $team ) {
+    // User-based mode: Name + Phone + optional Team ID
+    if ( $login_mode === 'user' ) {
+        if ( ! isset( $data['name'] ) || ! isset( $data['phone'] ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Missing name or phone number'
+            ), 400 );
+        }
+        
+        $name = sanitize_text_field( $data['name'] );
+        $phone = preg_replace( '/[^0-9]/', '', sanitize_text_field( $data['phone'] ) );
+        $team_id = isset( $data['team_id'] ) ? intval( $data['team_id'] ) : 0;
+        
+        if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Phone number must be 10 digits'
+            ), 400 );
+        }
+        
+        // Find user by phone
+        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$members_table} WHERE phone = %s",
+            $phone
+        ), ARRAY_A );
+        
+        if ( ! $user ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Invalid phone number'
+            ), 401 );
+        }
+        
+        // Verify name matches (case-insensitive partial match)
+        if ( stripos( $user['name'], $name ) === false && stripos( $name, $user['name'] ) === false ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Name does not match'
+            ), 401 );
+        }
+        
+        // Get user's teams
+        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+        $teams_table = $wpdb->prefix . 'order_sync_teams';
+        
+        $team_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+            $user['id']
+        ));
+        
+        if ( empty( $team_ids ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'User is not assigned to any teams'
+            ), 403 );
+        }
+        
+        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
+        $teams = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
+                $team_ids
+            ),
+            ARRAY_A
+        );
+        
+        // If team_id provided, verify user belongs to it
+        $selected_team = null;
+        if ( $team_id > 0 ) {
+            foreach ( $teams as $team ) {
+                if ( $team['id'] == $team_id ) {
+                    $selected_team = $team;
+                    break;
+                }
+            }
+            
+            if ( ! $selected_team ) {
+                return new WP_REST_Response( array(
+                    'success' => false,
+                    'message' => 'User does not belong to the selected team'
+                ), 403 );
+            }
+        }
+        
         return new WP_REST_Response( array(
             'success' => true,
-            'team' => array(
-                'id' => $team['id'],
-                'name' => $team['name'],
-                'access_code' => $team['access_code']
+            'mode' => 'user',
+            'user' => array(
+                'id' => $user['id'],
+                'name' => $user['name'],
+                'email' => $user['email'],
+                'phone' => $user['phone'],
+                'role' => $user['role']
             ),
-            'message' => 'Team login successful'
+            'teams' => $teams,
+            'selected_team' => $selected_team,
+            'message' => 'User login successful'
         ), 200 );
     }
     
     return new WP_REST_Response( array(
         'success' => false,
-        'message' => 'Invalid team name or access code'
-    ), 401 );
+        'message' => 'Invalid login mode configuration'
+    ), 500 );
 }
 
 function verify_team_access( WP_REST_Request $request ) {
@@ -2089,6 +2410,9 @@ function get_app_config( WP_REST_Request $request ) {
     $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
 
     $products = order_sync_get_products_config();
+    
+    // Get login mode (Phase 4)
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
 
     return new WP_REST_Response( array(
         'google_maps_api_key' => $google_maps_api_key,
@@ -2099,7 +2423,8 @@ function get_app_config( WP_REST_Request $request ) {
         'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
         'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
         'authenticated' => $is_authenticated,
-        'products' => $products
+        'products' => $products,
+        'loginMode' => $login_mode
     ), 200 );
 }
 
@@ -2117,6 +2442,617 @@ function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
     $members = order_sync_get_team_members_by_team( $team['id'] );
     if ( ! $members ) $members = array();
     return new WP_REST_Response( $members, 200 );
+}
+
+// ============================================================================
+// User Management REST API (Phase 2)
+// ============================================================================
+
+/**
+ * POST /wp-json/order-manager/v1/users
+ * Create a new user
+ */
+function order_sync_create_user( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $params = $request->get_json_params();
+    $name = sanitize_text_field( $params['name'] ?? '' );
+    $email = sanitize_email( $params['email'] ?? '' );
+    $phone = sanitize_text_field( $params['phone'] ?? '' );
+    $role = sanitize_text_field( $params['role'] ?? 'member' );
+    
+    // Validation
+    if ( empty( $name ) ) {
+        return new WP_REST_Response( array( 'error' => 'Name is required' ), 400 );
+    }
+    if ( empty( $phone ) ) {
+        return new WP_REST_Response( array( 'error' => 'Phone number is required' ), 400 );
+    }
+    
+    // Normalize phone to 10 digits
+    $phone = preg_replace( '/[^0-9]/', '', $phone );
+    if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
+        return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
+    }
+    
+    // Check if phone already exists
+    $existing = $wpdb->get_var( $wpdb->prepare(
+        "SELECT id FROM {$members_table} WHERE phone = %s",
+        $phone
+    ));
+    if ( $existing ) {
+        return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
+    }
+    
+    $email = $email ?: '';
+    
+    // Insert user
+    $result = $wpdb->insert(
+        $members_table,
+        array(
+            'team_id' => 0, // No team assignment initially
+            'name' => $name,
+            'email' => $email,
+            'phone' => $phone,
+            'role' => $role,
+            'status' => 'active'
+        ),
+        array( '%d', '%s', '%s', '%s', '%s', '%s' )
+    );
+    
+    if ( ! $result ) {
+        return new WP_REST_Response( array( 'error' => 'Failed to create user' ), 500 );
+    }
+    
+    $user_id = $wpdb->insert_id;
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    return new WP_REST_Response( $user, 201 );
+}
+
+/**
+ * GET /wp-json/order-manager/v1/users
+ * Get all users or filter by query params
+ */
+function order_sync_get_users( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $limit = intval( $request->get_param( 'limit' ) ?: 100 );
+    $offset = intval( $request->get_param( 'offset' ) ?: 0 );
+    $status = sanitize_text_field( $request->get_param( 'status' ) ?: '' );
+    
+    $where = array();
+    $params = array();
+    
+    if ( ! empty( $status ) ) {
+        $where[] = "status = %s";
+        $params[] = $status;
+    }
+    
+    $where_sql = ! empty( $where ) ? 'WHERE ' . implode( ' AND ', $where ) : '';
+    
+    if ( ! empty( $params ) ) {
+        $sql = $wpdb->prepare(
+            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
+            array_merge( $params, array( $limit, $offset ) )
+        );
+    } else {
+        $sql = $wpdb->prepare(
+            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
+            $limit,
+            $offset
+        );
+    }
+    
+    $users = $wpdb->get_results( $sql, ARRAY_A );
+    
+    // For each user, get their teams
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    
+    foreach ( $users as &$user ) {
+        $team_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+            $user['id']
+        ));
+        
+        $user['teams'] = array();
+        if ( ! empty( $team_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
+            $teams = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
+                    $team_ids
+                ),
+                ARRAY_A
+            );
+            $user['teams'] = $teams ?: array();
+        }
+    }
+    
+    return new WP_REST_Response( $users, 200 );
+}
+
+/**
+ * GET /wp-json/order-manager/v1/users/{id}
+ * Get a single user by ID
+ */
+function order_sync_get_user_by_id( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    
+    $user_id = intval( $request->get_param( 'id' ) );
+    
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    if ( ! $user ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    // Get user's teams
+    $team_ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+        $user_id
+    ));
+    
+    $user['teams'] = array();
+    if ( ! empty( $team_ids ) ) {
+        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
+        $teams = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
+                $team_ids
+            ),
+            ARRAY_A
+        );
+        $user['teams'] = $teams ?: array();
+    }
+    
+    return new WP_REST_Response( $user, 200 );
+}
+
+/**
+ * PUT /wp-json/order-manager/v1/users/{id}
+ * Update a user
+ */
+function order_sync_update_user( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $user_id = intval( $request->get_param( 'id' ) );
+    $params = $request->get_json_params();
+    
+    // Check if user exists
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    if ( ! $existing ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    $updates = array();
+    $formats = array();
+    
+    if ( isset( $params['name'] ) ) {
+        $name = sanitize_text_field( $params['name'] );
+        if ( empty( $name ) ) {
+            return new WP_REST_Response( array( 'error' => 'Name cannot be empty' ), 400 );
+        }
+        $updates['name'] = $name;
+        $formats[] = '%s';
+    }
+    
+    if ( isset( $params['email'] ) ) {
+        $updates['email'] = sanitize_email( $params['email'] ) ?: '';
+        $formats[] = '%s';
+    }
+    
+    if ( isset( $params['phone'] ) ) {
+        $phone = preg_replace( '/[^0-9]/', '', $params['phone'] );
+        if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
+            return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
+        }
+        
+        // Check if phone exists for another user
+        $conflict = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$members_table} WHERE phone = %s AND id != %d",
+            $phone,
+            $user_id
+        ));
+        if ( $conflict ) {
+            return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
+        }
+        
+        $updates['phone'] = $phone;
+        $formats[] = '%s';
+    }
+    
+    if ( isset( $params['role'] ) ) {
+        $updates['role'] = sanitize_text_field( $params['role'] );
+        $formats[] = '%s';
+    }
+    
+    if ( isset( $params['status'] ) ) {
+        $updates['status'] = sanitize_text_field( $params['status'] );
+        $formats[] = '%s';
+    }
+    
+    if ( empty( $updates ) ) {
+        return new WP_REST_Response( array( 'error' => 'No fields to update' ), 400 );
+    }
+    
+    $result = $wpdb->update(
+        $members_table,
+        $updates,
+        array( 'id' => $user_id ),
+        $formats,
+        array( '%d' )
+    );
+    
+    if ( $result === false ) {
+        return new WP_REST_Response( array( 'error' => 'Failed to update user' ), 500 );
+    }
+    
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    return new WP_REST_Response( $user, 200 );
+}
+
+/**
+ * DELETE /wp-json/order-manager/v1/users/{id}
+ * Delete a user
+ */
+function order_sync_delete_user( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    
+    $user_id = intval( $request->get_param( 'id' ) );
+    
+    // Check if user exists
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    if ( ! $existing ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    // Delete user-team associations first
+    $wpdb->delete( $user_teams_table, array( 'user_id' => $user_id ), array( '%d' ) );
+    
+    // Delete user
+    $result = $wpdb->delete( $members_table, array( 'id' => $user_id ), array( '%d' ) );
+    
+    if ( ! $result ) {
+        return new WP_REST_Response( array( 'error' => 'Failed to delete user' ), 500 );
+    }
+    
+    return new WP_REST_Response( array( 'success' => true, 'message' => 'User deleted' ), 200 );
+}
+
+/**
+ * GET /wp-json/order-manager/v1/users/search?q={query}
+ * Search users by name or phone
+ */
+function order_sync_search_users( WP_REST_Request $request ) {
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    
+    $query = sanitize_text_field( $request->get_param( 'q' ) ?: '' );
+    $limit = intval( $request->get_param( 'limit' ) ?: 20 );
+    
+    if ( empty( $query ) ) {
+        return new WP_REST_Response( array(), 200 );
+    }
+    
+    // Search by name or phone (partial match)
+    $search_term = '%' . $wpdb->esc_like( $query ) . '%';
+    $phone_search = preg_replace( '/[^0-9]/', '', $query );
+    
+    if ( ! empty( $phone_search ) ) {
+        // Search by both name and phone
+        $users = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$members_table} 
+             WHERE name LIKE %s OR phone LIKE %s 
+             ORDER BY name ASC LIMIT %d",
+            $search_term,
+            '%' . $wpdb->esc_like( $phone_search ) . '%',
+            $limit
+        ), ARRAY_A );
+    } else {
+        // Search by name only
+        $users = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$members_table} 
+             WHERE name LIKE %s 
+             ORDER BY name ASC LIMIT %d",
+            $search_term,
+            $limit
+        ), ARRAY_A );
+    }
+    
+    // Get teams for each user
+    foreach ( $users as &$user ) {
+        $team_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+            $user['id']
+        ));
+        
+        $user['teams'] = array();
+        if ( ! empty( $team_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
+            $teams = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
+                    $team_ids
+                ),
+                ARRAY_A
+            );
+            $user['teams'] = $teams ?: array();
+        }
+    }
+    
+    return new WP_REST_Response( $users, 200 );
+}
+
+// ============================================================================
+// Team Assignment REST API (Phase 3)
+// ============================================================================
+
+/**
+ * GET /wp-json/order-manager/v1/users/{id}/teams
+ * Get all teams for a specific user
+ */
+function order_sync_get_user_teams( WP_REST_Request $request ) {
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $user_id = intval( $request->get_param( 'id' ) );
+    
+    // Verify user exists
+    $user_exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
+        $user_id
+    ));
+    
+    if ( ! $user_exists ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    // Get team IDs for this user
+    $team_ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+        $user_id
+    ));
+    
+    $teams = array();
+    if ( ! empty( $team_ids ) ) {
+        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
+        $teams = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name, access_code, description FROM {$teams_table} WHERE id IN ({$placeholders})",
+                $team_ids
+            ),
+            ARRAY_A
+        );
+    }
+    
+    return new WP_REST_Response( $teams ?: array(), 200 );
+}
+
+/**
+ * POST /wp-json/order-manager/v1/teams/{id}/assign
+ * Assign a user to a team
+ * Body: { "user_id": 123 }
+ */
+function order_sync_assign_user_to_team( WP_REST_Request $request ) {
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $team_id = intval( $request->get_param( 'id' ) );
+    $params = $request->get_json_params();
+    $user_id = intval( $params['user_id'] ?? 0 );
+    
+    if ( ! $user_id ) {
+        return new WP_REST_Response( array( 'error' => 'user_id is required' ), 400 );
+    }
+    
+    // Verify team exists
+    $team = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$teams_table} WHERE id = %d",
+        $team_id
+    ), ARRAY_A );
+    
+    if ( ! $team ) {
+        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
+    }
+    
+    // Verify user exists
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$members_table} WHERE id = %d",
+        $user_id
+    ), ARRAY_A );
+    
+    if ( ! $user ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    // Check if already assigned
+    $exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+        $user_id,
+        $team_id
+    ));
+    
+    if ( $exists ) {
+        return new WP_REST_Response( array( 
+            'success' => true,
+            'message' => 'User already assigned to this team'
+        ), 200 );
+    }
+    
+    // Create assignment
+    $result = $wpdb->insert(
+        $user_teams_table,
+        array(
+            'user_id' => $user_id,
+            'team_id' => $team_id
+        ),
+        array( '%d', '%d' )
+    );
+    
+    if ( ! $result ) {
+        return new WP_REST_Response( array( 'error' => 'Failed to assign user to team' ), 500 );
+    }
+    
+    return new WP_REST_Response( array(
+        'success' => true,
+        'message' => 'User assigned to team successfully',
+        'assignment' => array(
+            'user_id' => $user_id,
+            'team_id' => $team_id,
+            'user_name' => $user['name'],
+            'team_name' => $team['name']
+        )
+    ), 201 );
+}
+
+/**
+ * DELETE /wp-json/order-manager/v1/teams/{id}/users/{userId}
+ * Remove a user from a team
+ */
+function order_sync_remove_user_from_team( WP_REST_Request $request ) {
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $team_id = intval( $request->get_param( 'id' ) );
+    $user_id = intval( $request->get_param( 'userId' ) );
+    
+    // Verify team exists
+    $team_exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$teams_table} WHERE id = %d",
+        $team_id
+    ));
+    
+    if ( ! $team_exists ) {
+        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
+    }
+    
+    // Verify user exists
+    $user_exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
+        $user_id
+    ));
+    
+    if ( ! $user_exists ) {
+        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
+    }
+    
+    // Check if assignment exists
+    $exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+        $user_id,
+        $team_id
+    ));
+    
+    if ( ! $exists ) {
+        return new WP_REST_Response( array( 
+            'error' => 'User is not assigned to this team'
+        ), 404 );
+    }
+    
+    // Remove assignment
+    $result = $wpdb->delete(
+        $user_teams_table,
+        array(
+            'user_id' => $user_id,
+            'team_id' => $team_id
+        ),
+        array( '%d', '%d' )
+    );
+    
+    if ( ! $result ) {
+        return new WP_REST_Response( array( 'error' => 'Failed to remove user from team' ), 500 );
+    }
+    
+    return new WP_REST_Response( array(
+        'success' => true,
+        'message' => 'User removed from team successfully'
+    ), 200 );
+}
+
+/**
+ * GET /wp-json/order-manager/v1/teams/{id}/users
+ * Get all users assigned to a specific team
+ */
+function order_sync_get_team_users( WP_REST_Request $request ) {
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+    
+    $team_id = intval( $request->get_param( 'id' ) );
+    
+    // Verify team exists
+    $team = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$teams_table} WHERE id = %d",
+        $team_id
+    ), ARRAY_A );
+    
+    if ( ! $team ) {
+        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
+    }
+    
+    // Get user IDs for this team
+    $user_ids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
+        $team_id
+    ));
+    
+    $users = array();
+    if ( ! empty( $user_ids ) ) {
+        $placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
+        $users = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, name, email, phone, role, status FROM {$members_table} WHERE id IN ({$placeholders})",
+                $user_ids
+            ),
+            ARRAY_A
+        );
+    }
+    
+    return new WP_REST_Response( array(
+        'team' => array(
+            'id' => $team['id'],
+            'name' => $team['name'],
+            'access_code' => $team['access_code']
+        ),
+        'users' => $users ?: array()
+    ), 200 );
 }
 
 /**
@@ -3827,12 +4763,14 @@ function order_sync_settings_page() {
         $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
         $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
         $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
+        $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
         update_option( 'order_sync_interval', $sync_interval );
         update_option( 'order_sync_portal_slug', $portal_slug );
         update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'order_sync_login_mode', $login_mode );
 
         if ( $portal_slug !== $old_slug ) {
             order_sync_ensure_pwa_page( $portal_slug );
@@ -3908,6 +4846,7 @@ function order_sync_settings_page() {
     $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
     $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
     $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
     ?>
     <div class="wrap">
         <h1>Subsales Settings</h1>
@@ -4033,6 +4972,31 @@ function order_sync_settings_page() {
                                 <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
                             </td>
                         </tr>
+                        <tr>
+                            <th scope="row">Login Mode</th>
+                            <td>
+                                <fieldset>
+                                    <label style="display: block; margin-bottom: 10px;">
+                                        <input type="radio" name="login_mode" value="legacy" <?php checked( $login_mode, 'legacy' ); ?> />
+                                        <strong>Legacy Login (Team + Code)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users enter a team name and access code to login. Original authentication method.
+                                        </p>
+                                    </label>
+                                    <label style="display: block; margin-top: 10px;">
+                                        <input type="radio" name="login_mode" value="user" <?php checked( $login_mode, 'user' ); ?> />
+                                        <strong>User-Based Login (Name + Phone)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users search by name and verify with phone number, then select their team. Requires users to be created in the Teams → Users tab.
+                                        </p>
+                                    </label>
+                                </fieldset>
+                                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px;">
+                                    <strong>⚠️ Important:</strong> Changing the login mode will affect how users authenticate in the PWA.
+                                    Make sure your users know which method to use after switching.
+                                </div>
+                            </td>
+                        </tr>
                     </table>
                     <p class="submit"><?php submit_button( 'Save Overall Settings', 'primary', 'save_overall', false ); ?></p>
                     </form>
@@ -4134,11 +5098,10 @@ function order_sync_settings_page() {
                     <input type="hidden" name="panel" value="products" />
                     <table class="form-table">
                         <tr>
-                            <th scope="row">Products</th>
                             <td>
                                 <div id="products_repeatable">
-                                    <table id="products_table" class="widefat" style="max-width:700px;margin-bottom:8px">
-                                <thead><tr><th style="width:40%">Name</th><th style="width:20%">Price (USD)</th><th style="width:10%">Visible</th><th style="width:10%">Actions</th></tr></thead>
+                                    <table id="products_table" class="widefat subsales-products-table">
+                                <thead><tr><th class="col-name">Name</th><th class="col-price">Price (USD)</th><th class="col-visible">Visible</th><th class="col-actions">Actions</th></tr></thead>
                                 <tbody>
                                 <?php if ( ! empty( $configured_products ) ) : ?>
                                     <?php foreach ( $configured_products as $idx => $p ) : ?>
@@ -4148,8 +5111,8 @@ function order_sync_settings_page() {
                                                 <input type="hidden" name="product_id[]" class="product-id" value="<?php echo esc_attr( $p['id'] ?? '' ); ?>" />
                                             </td>
                                             <td><input type="text" name="product_price[]" class="regular-text product-price" value="<?php echo esc_attr( $p['price'] ?? '0.00' ); ?>" /></td>
-                                            <td style="text-align:center"><input type="checkbox" name="product_visible[]" value="<?php echo esc_attr( $p['id'] ?? $idx ); ?>" <?php checked( 1, intval( $p['visible'] ?? 0 ) ); ?> /></td>
-                                            <td style="text-align:center"><button type="button" class="button button-link remove-product">Remove</button></td>
+                                            <td class="col-center"><input type="checkbox" name="product_visible[]" value="<?php echo esc_attr( $p['id'] ?? $idx ); ?>" <?php checked( 1, intval( $p['visible'] ?? 0 ) ); ?> /></td>
+                                            <td class="col-center"><button type="button" class="button button-link remove-product">Remove</button></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
@@ -4176,11 +5139,11 @@ function order_sync_settings_page() {
                                 var priceInput = document.createElement('input'); priceInput.type='text'; priceInput.name='product_price[]'; priceInput.className='regular-text product-price'; priceInput.value = price || '0.00';
                                 tdPrice.appendChild(priceInput);
 
-                                var tdVis = document.createElement('td'); tdVis.style.textAlign='center';
+                                var tdVis = document.createElement('td'); tdVis.className='col-center';
                                 var visInput = document.createElement('input'); visInput.type='checkbox'; visInput.name='product_visible[]'; visInput.checked = !!visible; visInput.value = id || '';
                                 tdVis.appendChild(visInput);
 
-                                var tdAct = document.createElement('td'); tdAct.style.textAlign='center';
+                                var tdAct = document.createElement('td'); tdAct.className='col-center';
                                 var remBtn = document.createElement('button'); remBtn.type='button'; remBtn.className='button button-link remove-product'; remBtn.textContent='Remove';
                                 tdAct.appendChild(remBtn);
 
@@ -4345,12 +5308,34 @@ function order_sync_settings_page() {
                     $tables = array(
                         $wpdb->prefix . 'order_sync_orders' => 'Orders',
                         $wpdb->prefix . 'order_sync_teams' => 'Teams',
-                        $wpdb->prefix . 'order_sync_team_members' => 'Team Members'
+                        $wpdb->prefix . 'order_sync_team_members' => 'Team Members',
+                        $wpdb->prefix . 'order_sync_user_teams' => 'User-Team Assignments'
                     );
                     
                     foreach ( $tables as $table => $name ) {
                         $exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table;
                         echo '<span style="color: ' . ( $exists ? 'green' : 'red' ) . ';">● ' . $name . '</span><br>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">Database Schema</th>
+                <td>
+                    <p>Run this to update database constraints and fix legacy user data:</p>
+                    <form method="post" action="">
+                        <?php wp_nonce_field( 'subsales_migrate_db' ); ?>
+                        <button type="submit" name="run_db_migration" class="button button-primary">Run Database Migration</button>
+                    </form>
+                    <p class="description">This will: 1) Set default phones for users with NULL/empty phones, 2) Add NOT NULL constraint to phone, 3) Add UNIQUE constraint to phone, 4) Remove UNIQUE constraint from email.</p>
+                    <?php
+                    if ( isset( $_POST['run_db_migration'] ) ) {
+                        check_admin_referer( 'subsales_migrate_db' );
+                        if ( current_user_can( 'manage_options' ) ) {
+                            // Run the table creation function which includes migration logic
+                            order_sync_create_table();
+                            echo '<div class="notice notice-success inline" style="margin-top: 10px;"><p>Database migration completed successfully!</p></div>';
+                        }
                     }
                     ?>
                 </td>
@@ -4361,12 +5346,100 @@ function order_sync_settings_page() {
     <?php
 }
 
-// Teams management admin page
+// Teams management admin page with tabbed interface
 function order_sync_teams_page() {
     if ( ! current_user_can( 'manage_options' ) ) return;
 
     global $wpdb;
-    $table = $wpdb->prefix . 'order_sync_teams';
+    $teams_table = $wpdb->prefix . 'order_sync_teams';
+    $members_table = $wpdb->prefix . 'order_sync_team_members';
+
+    // Determine active tab
+    $active_tab = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'users';
+
+    // Handle user/member creation
+    if ( isset( $_POST['add_user'] ) ) {
+        check_admin_referer( 'order_sync_add_user' );
+        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $email = sanitize_email( $_POST['user_email'] ?? '' );
+        $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
+        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
+        
+        if ( empty( $name ) ) {
+            echo '<div class="notice notice-error"><p>User name is required.</p></div>';
+        } elseif ( empty( $phone ) ) {
+            echo '<div class="notice notice-error"><p>Phone number is required.</p></div>';
+        } elseif ( ! preg_match( '/^[0-9]{10}$/', preg_replace( '/[^0-9]/', '', $phone ) ) ) {
+            echo '<div class="notice notice-error"><p>Phone number must be 10 digits.</p></div>';
+        } else {
+            // Normalize phone to 10 digits only
+            $phone = preg_replace( '/[^0-9]/', '', $phone );
+            $email = $email ?: '';
+            // Add user without team assignment initially
+            $result = $wpdb->insert(
+                $members_table,
+                array(
+                    'team_id' => 0,
+                    'name' => $name,
+                    'email' => $email,
+                    'phone' => $phone,
+                    'role' => $role,
+                    'status' => 'active'
+                ),
+                array( '%d', '%s', '%s', '%s', '%s', '%s' )
+            );
+            
+            if ( $result ) {
+                echo '<div class="notice notice-success"><p>User created successfully.</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to create user.</p></div>';
+            }
+        }
+    }
+
+    // Handle user update
+    if ( isset( $_POST['edit_user'] ) ) {
+        check_admin_referer( 'order_sync_edit_user' );
+        $user_id = intval( $_POST['user_id'] ?? 0 );
+        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $email = sanitize_email( $_POST['user_email'] ?? '' );
+        $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
+        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
+        
+        if ( empty( $name ) ) {
+            echo '<div class="notice notice-error"><p>User name is required.</p></div>';
+        } elseif ( empty( $phone ) ) {
+            echo '<div class="notice notice-error"><p>Phone number is required.</p></div>';
+        } elseif ( ! preg_match( '/^[0-9]{10}$/', preg_replace( '/[^0-9]/', '', $phone ) ) ) {
+            echo '<div class="notice notice-error"><p>Phone number must be 10 digits.</p></div>';
+        } elseif ( $user_id && ! empty( $name ) ) {
+            // Normalize phone to 10 digits only
+            $phone = preg_replace( '/[^0-9]/', '', $phone );
+            $updated = $wpdb->update(
+                $members_table,
+                array( 'name' => $name, 'email' => $email ?: '', 'phone' => $phone, 'role' => $role ),
+                array( 'id' => $user_id ),
+                array( '%s', '%s', '%s', '%s' ),
+                array( '%d' )
+            );
+            
+            if ( $updated !== false ) {
+                echo '<div class="notice notice-success"><p>User updated successfully.</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to update user.</p></div>';
+            }
+        }
+    }
+
+    // Handle user deletion
+    if ( isset( $_POST['delete_user'] ) ) {
+        check_admin_referer( 'order_sync_delete_user' );
+        $user_id = intval( $_POST['user_id'] ?? 0 );
+        if ( $user_id ) {
+            order_sync_remove_team_member( $user_id );
+            echo '<div class="notice notice-success"><p>User deleted successfully.</p></div>';
+        }
+    }
 
     // Handle team creation
     if ( isset( $_POST['add_team'] ) ) {
@@ -4391,7 +5464,7 @@ function order_sync_teams_page() {
         $code = sanitize_text_field( $_POST['team_code'] ?? '' );
         $desc = sanitize_textarea_field( $_POST['team_description'] ?? '' );
         if ( $tid && ( ! empty( $name ) && ! empty( $code ) ) ) {
-            $updated = $wpdb->update( $table, array( 'name' => $name, 'access_code' => $code, 'description' => $desc ), array( 'id' => $tid ), array( '%s', '%s', '%s' ), array( '%d' ) );
+            $updated = $wpdb->update( $teams_table, array( 'name' => $name, 'access_code' => $code, 'description' => $desc ), array( 'id' => $tid ), array( '%s', '%s', '%s' ), array( '%d' ) );
             if ( $updated !== false ) {
                 echo '<div class="notice notice-success"><p>Team updated.</p></div>';
             } else {
@@ -4400,138 +5473,175 @@ function order_sync_teams_page() {
         }
     }
 
-    // Handle deletion via GET action
-    if ( isset( $_GET['delete_team'] ) && isset( $_GET['_wpnonce'] ) ) {
-        if ( wp_verify_nonce( sanitize_text_field( $_GET['_wpnonce'] ), 'order_sync_delete_team' ) ) {
-            $tid = intval( $_GET['delete_team'] );
+    // Handle team deletion
+    if ( isset( $_POST['delete_team'] ) ) {
+        check_admin_referer( 'order_sync_delete_team' );
+        $tid = intval( $_POST['team_id'] ?? 0 );
+        if ( $tid ) {
             order_sync_remove_team( $tid );
             echo '<div class="notice notice-success"><p>Team removed.</p></div>';
         }
     }
 
-    // Handle add/remove team member via POST
-    if ( isset( $_POST['add_team_member'] ) ) {
-        check_admin_referer( 'order_sync_team_member_nonce' );
-        $member_team_id = intval( $_POST['member_team_id'] ?? 0 );
-        $member_name = sanitize_text_field( $_POST['member_name'] ?? '' );
-        $member_email = sanitize_email( $_POST['member_email'] ?? '' );
-        $member_role = sanitize_text_field( $_POST['member_role'] ?? 'member' );
-        // Allow adding a team member without an email address. Only name and team id are required.
-        if ( $member_team_id && ! empty( $member_name ) ) {
-            // Normalize empty emails to empty string (DB field accepts empty value)
-            $member_email = $member_email ?: '';
-            $ok = order_sync_add_team_member( $member_team_id, $member_name, $member_email, $member_role );
-            if ( $ok ) echo '<div class="notice notice-success"><p>Team member added.</p></div>';
-            else echo '<div class="notice notice-error"><p>Failed to add team member (possible duplicate email or DB error).</p></div>';
-        } else {
-            echo '<div class="notice notice-error"><p>Name is required to add a team member.</p></div>';
+    // Handle AJAX team assignment
+    if ( isset( $_POST['assign_user_to_team'] ) ) {
+        check_admin_referer( 'order_sync_team_assignment' );
+        $user_id = intval( $_POST['user_id'] ?? 0 );
+        $team_id = intval( $_POST['team_id'] ?? 0 );
+        
+        if ( $user_id ) {
+            $updated = $wpdb->update(
+                $members_table,
+                array( 'team_id' => $team_id ),
+                array( 'id' => $user_id ),
+                array( '%d' ),
+                array( '%d' )
+            );
+            
+            if ( $updated !== false ) {
+                wp_send_json_success( array( 'message' => 'User assigned to team successfully' ) );
+            } else {
+                wp_send_json_error( array( 'message' => 'Failed to assign user to team' ) );
+            }
         }
+        wp_send_json_error( array( 'message' => 'Invalid user ID' ) );
     }
 
-    if ( isset( $_POST['remove_team_member'] ) ) {
-        check_admin_referer( 'order_sync_team_member_nonce' );
-        $member_id = intval( $_POST['member_id'] ?? 0 );
-        if ( $member_id ) {
-            order_sync_remove_team_member( $member_id );
-            echo '<div class="notice notice-success"><p>Team member removed.</p></div>';
-        }
-    }
-
+    // Get all users and teams
+    $all_users = $wpdb->get_results( "SELECT * FROM {$members_table} ORDER BY name ASC", ARRAY_A );
     $teams = order_sync_get_teams();
-    // If editing, load the team for prefilling form
-    $editing = false;
+    
+    // Check if editing a user
+    $editing_user = false;
+    $edit_user = array( 'id' => 0, 'name' => '', 'email' => '', 'phone' => '', 'role' => 'member' );
+    if ( isset( $_GET['edit_user'] ) ) {
+        $uid = intval( $_GET['edit_user'] );
+        if ( $uid ) {
+            $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$members_table} WHERE id = %d", $uid ), ARRAY_A );
+            if ( $row ) {
+                $editing_user = true;
+                $edit_user = $row;
+            }
+        }
+    }
+    
+    // Check if editing a team
+    $editing_team = false;
     $edit_team = array( 'id' => 0, 'name' => '', 'access_code' => '', 'description' => '' );
     if ( isset( $_GET['edit_team'] ) ) {
         $tid = intval( $_GET['edit_team'] );
         if ( $tid ) {
-            $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}order_sync_teams WHERE id = %d", $tid ), ARRAY_A );
+            $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$teams_table} WHERE id = %d", $tid ), ARRAY_A );
             if ( $row ) {
-                $editing = true;
+                $editing_team = true;
                 $edit_team = $row;
             }
         }
     }
     ?>
     <div class="wrap">
-        <h1>Teams</h1>
-        <form method="post" action="">
-            <?php if ( $editing ): wp_nonce_field( 'order_sync_edit_team' ); else: wp_nonce_field( 'order_sync_add_team' ); endif; ?>
-            <input type="hidden" name="team_id" value="<?php echo esc_attr( $edit_team['id'] ); ?>" />
-            <table class="form-table">
-                <tr>
-                    <th><label for="team_name">Team name</label></th>
-                    <td><input id="team_name" name="team_name" class="regular-text" required value="<?php echo esc_attr( $edit_team['name'] ); ?>"></td>
-                </tr>
-                <tr>
-                    <th><label for="team_code">Access code</label></th>
-                    <td><input id="team_code" name="team_code" class="regular-text" required value="<?php echo esc_attr( $edit_team['access_code'] ); ?>"></td>
-                </tr>
-                <tr>
-                    <th><label for="team_description">Description</label></th>
-                    <td><textarea id="team_description" name="team_description" class="large-text" rows="3"><?php echo esc_textarea( $edit_team['description'] ); ?></textarea></td>
-                </tr>
-            </table>
-            <?php if ( $editing ): ?>
-                <p><button name="edit_team" class="button button-primary">Update Team</button> <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-teams' ) ); ?>" class="button">Cancel</a></p>
-            <?php else: ?>
-                <p><button name="add_team" class="button button-primary">Add Team</button></p>
-            <?php endif; ?>
-        </form>
+        <h1>User &amp; Team Management</h1>
+        
+        <h2 class="nav-tab-wrapper">
+            <a href="?page=subsales-teams&tab=users" class="nav-tab <?php echo $active_tab === 'users' ? 'nav-tab-active' : ''; ?>">Users</a>
+            <a href="?page=subsales-teams&tab=teams" class="nav-tab <?php echo $active_tab === 'teams' ? 'nav-tab-active' : ''; ?>">Teams</a>
+        </h2>
 
-        <!-- Teams List -->
-        <h2>Current Teams</h2>
-        <?php if ( ! empty( $teams ) ) : ?>
-        <?php foreach ( $teams as $team ) : ?>
-        <div class="postbox" style="margin-bottom: 20px;">
-            <div class="postbox-header">
-                <h2><?php echo esc_html( $team['name'] ); ?>
-                    <span style="font-weight: normal; color: #666; font-size: 14px;">
-                        (Code: <?php echo esc_html( $team['access_code'] ); ?>)
-                    </span>
-                </h2>
-            </div>
-            <div class="inside">
-                <?php if ( ! empty( $team['description'] ) ) : ?>
-                <p><strong>Description:</strong> <?php echo esc_html( $team['description'] ); ?></p>
-                <?php endif; ?>
-                
-                <p><strong>Created:</strong> <?php echo esc_html( date( 'M j, Y g:i A', strtotime( $team['created_at'] ) ) ); ?></p>
-                
-                <!-- Team Members -->
-                <h3>Team Members</h3>
-                <?php
-                $team_members = order_sync_get_team_members_by_team( $team['id'] );
-                if ( ! empty( $team_members ) ) :
-                ?>
-                <table class="wp-list-table widefat fixed striped" style="margin-bottom: 15px;">
+        <?php if ( $active_tab === 'users' ) : ?>
+            <!-- USERS TAB -->
+            <div class="subsales-tab-content" style="margin-top: 20px;">
+                <h2><?php echo $editing_user ? 'Edit User' : 'Add New User'; ?></h2>
+                <form method="post" action="?page=subsales-teams&tab=users">
+                    <?php if ( $editing_user ): wp_nonce_field( 'order_sync_edit_user' ); else: wp_nonce_field( 'order_sync_add_user' ); endif; ?>
+                    <input type="hidden" name="user_id" value="<?php echo esc_attr( $edit_user['id'] ); ?>" />
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="user_name">Name *</label></th>
+                            <td><input type="text" id="user_name" name="user_name" class="regular-text" required value="<?php echo esc_attr( $edit_user['name'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_phone">Phone *</label></th>
+                            <td>
+                                <input type="tel" id="user_phone" name="user_phone" class="regular-text" required value="<?php echo esc_attr( $edit_user['phone'] ?? '' ); ?>" pattern="[0-9]{3}[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}" placeholder="555-123-4567" />
+                                <p class="description">Required. 10-digit phone number (unique per user).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_email">Email</label></th>
+                            <td><input type="email" id="user_email" name="user_email" class="regular-text" value="<?php echo esc_attr( $edit_user['email'] ); ?>" placeholder="(optional)" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_role">Role</label></th>
+                            <td>
+                                <select id="user_role" name="user_role">
+                                    <option value="member" <?php selected( $edit_user['role'], 'member' ); ?>>Member</option>
+                                    <option value="manager" <?php selected( $edit_user['role'], 'manager' ); ?>>Manager</option>
+                                    <option value="admin" <?php selected( $edit_user['role'], 'admin' ); ?>>Admin</option>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+                    <?php if ( $editing_user ): ?>
+                        <p>
+                            <button name="edit_user" class="button button-primary">Update User</button>
+                            <a href="?page=subsales-teams&tab=users" class="button">Cancel</a>
+                        </p>
+                    <?php else: ?>
+                        <p><button name="add_user" class="button button-primary">Add User</button></p>
+                    <?php endif; ?>
+                </form>
+
+                <h2 style="margin-top: 30px;">All Users</h2>
+                <?php if ( ! empty( $all_users ) ) : ?>
+                <input type="text" id="allUsersSearchBox" placeholder="Search users by name, phone, or email..." style="width: 100%; max-width: 400px; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                <table class="wp-list-table widefat fixed striped" id="allUsersTable">
                     <thead>
                         <tr>
-                            <th>Name</th>
-                            <th>Email</th>
-                            <th>Role</th>
-                            <th>Status</th>
-                            <th>Last Login</th>
-                            <th>Actions</th>
+                            <th style="width: 25%;">Name - Phone</th>
+                            <th style="width: 20%;">Email</th>
+                            <th style="width: 30%;">Team(s)</th>
+                            <th style="width: 10%;">Role</th>
+                            <th style="width: 15%;">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ( $team_members as $member ) : ?>
+                        <?php foreach ( $all_users as $user ) : ?>
+                        <?php
+                            // Get all teams for this user from junction table
+                            $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+                            $user_team_ids = $wpdb->get_col( $wpdb->prepare(
+                                "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
+                                $user['id']
+                            ));
+                            
+                            $team_names = array();
+                            if ( ! empty( $user_team_ids ) ) {
+                                $team_names = $wpdb->get_col(
+                                    "SELECT name FROM {$teams_table} WHERE id IN (" . implode( ',', array_map( 'intval', $user_team_ids ) ) . ")"
+                                );
+                            }
+                        ?>
                         <tr>
-                            <td><?php echo esc_html( $member['name'] ); ?></td>
-                            <td><?php echo esc_html( $member['email'] ); ?></td>
-                            <td><?php echo esc_html( ucfirst( $member['role'] ) ); ?></td>
                             <td>
-                                <span class="status-<?php echo esc_attr( $member['status'] ); ?>">
-                                    <?php echo esc_html( ucfirst( $member['status'] ) ); ?>
-                                </span>
+                                <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                <span style="color: #666; font-size: 13px;">📞 <?php echo esc_html( $user['phone'] ?? 'No phone' ); ?></span>
                             </td>
-                            <td><?php echo $member['last_login'] ? esc_html( date( 'M j, Y g:i A', strtotime( $member['last_login'] ) ) ) : 'Never'; ?></td>
+                            <td><?php echo esc_html( $user['email'] ?: '—' ); ?></td>
                             <td>
-                                <form method="post" action="" style="display: inline;">
-                                    <?php wp_nonce_field( 'order_sync_team_member_nonce' ); ?>
-                                    <input type="hidden" name="member_id" value="<?php echo esc_attr( $member['id'] ); ?>" />
-                                    <input type="submit" name="remove_team_member" value="Remove" class="button button-small button-link-delete" 
-                                           onclick="return confirm('Are you sure you want to remove this team member?')" />
+                                <?php if ( ! empty( $team_names ) ) : ?>
+                                    <?php echo esc_html( implode( ', ', $team_names ) ); ?>
+                                <?php else : ?>
+                                    <em style="color: #999;">No teams</em>
+                                <?php endif; ?>
+                            </td>
+                            <td><?php echo esc_html( ucfirst( $user['role'] ) ); ?></td>
+                            <td>
+                                <a href="?page=subsales-teams&tab=users&edit_user=<?php echo intval( $user['id'] ); ?>" class="button button-small">Edit</a>
+                                <form method="post" action="?page=subsales-teams&tab=users" style="display: inline;">
+                                    <?php wp_nonce_field( 'order_sync_delete_user' ); ?>
+                                    <input type="hidden" name="user_id" value="<?php echo esc_attr( $user['id'] ); ?>" />
+                                    <input type="submit" name="delete_user" value="Delete" class="button button-small button-link-delete" 
+                                           onclick="return confirm('Are you sure you want to delete this user?')" />
                                 </form>
                             </td>
                         </tr>
@@ -4539,62 +5649,467 @@ function order_sync_teams_page() {
                     </tbody>
                 </table>
                 <?php else : ?>
-                <p>No team members yet.</p>
+                <p>No users yet. Add your first user above.</p>
                 <?php endif; ?>
-                
-                <!-- Add Team Member Form -->
-                <details>
-                    <summary style="cursor: pointer; font-weight: bold;">Add Team Member</summary>
-                    <form method="post" action="" style="margin-top: 15px;">
-                        <?php wp_nonce_field( 'order_sync_team_member_nonce' ); ?>
-                        <input type="hidden" name="member_team_id" value="<?php echo esc_attr( $team['id'] ); ?>" />
-                        <table class="form-table">
-                            <tr>
-                                <th scope="row" style="width: 100px;">Name</th>
-                                <td><input type="text" name="member_name" class="regular-text" required /></td>
-                            </tr>
-                            <tr>
-                                <th scope="row">Email</th>
-                                <td><input type="email" name="member_email" class="regular-text" placeholder="(optional)" /></td>
-                            </tr>
-                            <tr>
-                                <th scope="row">Role</th>
-                                <td>
-                                    <select name="member_role">
-                                        <option value="member">Member</option>
-                                        <option value="manager">Manager</option>
-                                        <option value="admin">Admin</option>
-                                    </select>
-                                </td>
-                            </tr>
-                        </table>
-                        <?php submit_button( 'Add Member', 'secondary', 'add_team_member' ); ?>
-                    </form>
-                </details>
-                
-                <!-- Remove Team -->
-                <div style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 15px;">
-                    <form method="post" action="" style="display: inline;">
-                        <?php wp_nonce_field( 'order_sync_delete_team' ); ?>
-                        <input type="hidden" name="team_id" value="<?php echo esc_attr( $team['id'] ); ?>" />
-                        <input type="submit" name="remove_team" value="Delete Team" class="button button-link-delete" 
-                               onclick="return confirm('Are you sure you want to delete this team and all its members? This action cannot be undone.')" />
-                    </form>
-                </div>
             </div>
-        </div>
-        <?php endforeach; ?>
+
         <?php else : ?>
-        <p>No teams created yet. Add your first team above.</p>
+            <!-- TEAMS TAB -->
+            <div class="subsales-tab-content" style="margin-top: 20px;">
+                <h2><?php echo $editing_team ? 'Edit Team' : 'Add New Team'; ?></h2>
+                <form method="post" action="?page=subsales-teams&tab=teams">
+                    <?php if ( $editing_team ): wp_nonce_field( 'order_sync_edit_team' ); else: wp_nonce_field( 'order_sync_add_team' ); endif; ?>
+                    <input type="hidden" name="team_id" value="<?php echo esc_attr( $edit_team['id'] ); ?>" />
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="team_name">Team Name</label></th>
+                            <td><input type="text" id="team_name" name="team_name" class="regular-text" required value="<?php echo esc_attr( $edit_team['name'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="team_code">Access Code</label></th>
+                            <td><input type="text" id="team_code" name="team_code" class="regular-text" required value="<?php echo esc_attr( $edit_team['access_code'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="team_description">Description</label></th>
+                            <td><textarea id="team_description" name="team_description" class="large-text" rows="3"><?php echo esc_textarea( $edit_team['description'] ); ?></textarea></td>
+                        </tr>
+                    </table>
+                    <?php if ( $editing_team ): ?>
+                        <p>
+                            <button name="edit_team" class="button button-primary">Update Team</button>
+                            <a href="?page=subsales-teams&tab=teams" class="button">Cancel</a>
+                        </p>
+                    <?php else: ?>
+                        <p><button name="add_team" class="button button-primary">Add Team</button></p>
+                    <?php endif; ?>
+                </form>
+
+                <h2 style="margin-top: 30px;">Team Management</h2>
+                <p class="description">Drag users from the available users box into team boxes to assign them. Users can belong to multiple teams.</p>
+                
+                <style>
+                    .subsales-team-grid-wrapper {
+                        display: grid;
+                        gap: 20px;
+                        margin-top: 20px;
+                    }
+                    
+                    /* Large screens: 2 equal columns */
+                    @media (min-width: 900px) {
+                        .subsales-team-grid-wrapper {
+                            grid-template-columns: 1fr 1fr;
+                        }
+                    }
+                    
+                    /* Small screens: single column stacked */
+                    @media (max-width: 899px) {
+                        .subsales-team-grid-wrapper {
+                            grid-template-columns: 1fr;
+                        }
+                    }
+                    
+                    .available-users-column {
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        padding: 15px;
+                    }
+                    
+                    .available-teams-column {
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        padding: 15px;
+                    }
+                    
+                    .teams-list {
+                        display: grid;
+                        gap: 15px;
+                    }
+                    
+                    /* Large screens: 3 columns inside teams container */
+                    @media (min-width: 1600px) {
+                        .teams-list {
+                            grid-template-columns: repeat(3, 1fr);
+                        }
+                    }
+                    
+                    /* Medium-large screens: 2 columns inside teams container */
+                    @media (min-width: 1200px) and (max-width: 1599px) {
+                        .teams-list {
+                            grid-template-columns: repeat(2, 1fr);
+                        }
+                    }
+                    
+                    /* Medium and small screens: 1 column inside teams container */
+                    @media (max-width: 1199px) {
+                        .teams-list {
+                            grid-template-columns: 1fr;
+                        }
+                    }
+                    
+                    .team-box {
+                        height: fit-content;
+                        margin-bottom: 0 !important;
+                    }
+                </style>
+                
+                <div class="subsales-team-grid-wrapper">
+                    <!-- Available Users -->
+                    <div class="available-users-column">
+                        <h3 style="margin-top: 0;">Available Users</h3>
+                        <input type="text" id="userSearchBox" placeholder="Search by name or phone..." style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                        <div class="available-users-list" id="availableUsersList" style="min-height: 200px;">
+                            <?php
+                            // Show all users in the available list (they can be in multiple teams)
+                            if ( ! empty( $all_users ) ) :
+                                foreach ( $all_users as $user ) :
+                            ?>
+                                <div class="user-card draggable" draggable="true" data-user-id="<?php echo intval( $user['id'] ); ?>" 
+                                     style="background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; margin-bottom: 8px; cursor: move;">
+                                    <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                    <small style="color: #666;"><?php echo esc_html( $user['email'] ?: 'No email' ); ?></small>
+                                    <?php if ( ! empty( $user['phone'] ) ) : ?>
+                                        <br><small style="color: #666;">📞 <?php echo esc_html( $user['phone'] ); ?></small>
+                                    <?php endif; ?>
+                                </div>
+                            <?php
+                                endforeach;
+                            else :
+                            ?>
+                                <p style="color: #666; font-style: italic;">No users available. Create users in the Users tab.</p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Available Teams -->
+                    <div class="available-teams-column">
+                        <h3 style="margin-top: 0;">Available Teams</h3>
+                        <input type="text" id="teamSearchBox" placeholder="Search teams by name, code, or member..." 
+                               style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                        <div class="teams-list" id="teamsList" style="min-height: 200px;">
+                            <?php if ( ! empty( $teams ) ) : ?>
+                                <?php foreach ( $teams as $team ) : ?>
+                                    <div class="team-box postbox" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                         style="margin-bottom: 20px; border: 2px solid #ccc; border-radius: 6px;">
+                                        <div class="postbox-header" style="background: #f0f0f0; padding: 12px 15px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
+                                            <h3 style="margin: 0;">
+                                                <?php echo esc_html( $team['name'] ); ?>
+                                                <span style="font-weight: normal; color: #666; font-size: 14px;">
+                                                    (Code: <?php echo esc_html( $team['access_code'] ); ?>)
+                                                </span>
+                                            </h3>
+                                            <div>
+                                                <a href="?page=subsales-teams&tab=teams&edit_team=<?php echo intval( $team['id'] ); ?>" class="button button-small">Edit</a>
+                                                <form method="post" action="?page=subsales-teams&tab=teams" style="display: inline;">
+                                                    <?php wp_nonce_field( 'order_sync_delete_team' ); ?>
+                                                    <input type="hidden" name="team_id" value="<?php echo esc_attr( $team['id'] ); ?>" />
+                                                    <input type="submit" name="delete_team" value="Delete" class="button button-small button-link-delete" 
+                                                           onclick="return confirm('Are you sure you want to delete this team?')" />
+                                                </form>
+                                            </div>
+                                        </div>
+                                        <div class="inside team-dropzone" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                             style="padding: 15px; min-height: 100px; background: #fafafa;">
+                                            <?php if ( ! empty( $team['description'] ) ) : ?>
+                                                <p style="margin: 0 0 10px 0; font-style: italic; color: #666;"><?php echo esc_html( $team['description'] ); ?></p>
+                                            <?php endif; ?>
+                                            
+                                            <h4 style="margin: 10px 0;">Team Members</h4>
+                                            <div class="team-members-list">
+                                                <?php
+                                                // Get team members via junction table
+                                                $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+                                                $team_member_ids = $wpdb->get_col( $wpdb->prepare(
+                                                    "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
+                                                    $team['id']
+                                                ));
+                                                
+                                                $team_members_new = array();
+                                                if ( ! empty( $team_member_ids ) ) {
+                                                $team_members_new = $wpdb->get_results(
+                                                    "SELECT * FROM {$members_table} WHERE id IN (" . implode( ',', array_map( 'intval', $team_member_ids ) ) . ")",
+                                                    ARRAY_A
+                                                );
+                                            }
+                                            
+                                            if ( ! empty( $team_members_new ) ) : ?>
+                                                <?php foreach ( $team_members_new as $member ) : ?>
+                                                    <div class="user-card team-member-card" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                                         style="background: #fff; border: 1px solid #4CAF50; border-radius: 4px; padding: 10px; margin-bottom: 8px; position: relative;">
+                                                        <button type="button" class="remove-from-team" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                                                style="position: absolute; top: 5px; right: 5px; background: #dc3232; color: #fff; border: none; border-radius: 3px; cursor: pointer; padding: 2px 6px; font-size: 11px;"
+                                                                title="Remove from team">×</button>
+                                                        <strong><?php echo esc_html( $member['name'] ); ?></strong><br>
+                                                        <small style="color: #666;"><?php echo esc_html( $member['email'] ?: 'No email' ); ?></small>
+                                                        <?php if ( ! empty( $member['phone'] ) ) : ?>
+                                                            <br><small style="color: #666;">📞 <?php echo esc_html( $member['phone'] ); ?></small>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            <?php else : ?>
+                                                <p style="color: #999; font-style: italic;">No members assigned yet. Drag users here to assign.</p>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else : ?>
+                            <p style="color: #666; font-style: italic;">No teams created yet. Add your first team above.</p>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Drag and Drop JavaScript -->
+                <script>
+                (function($) {
+                    let draggedElement = null;
+
+                    // User search box - filters available users
+                    $('#userSearchBox').on('keyup', function() {
+                        const searchTerm = $(this).val().toLowerCase();
+                        $('#availableUsersList .user-card').each(function() {
+                            const text = $(this).text().toLowerCase();
+                            if (text.indexOf(searchTerm) > -1) {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+                    });
+                    
+                    // Team search box - filters team boxes
+                    $('#teamSearchBox').on('keyup', function() {
+                        const searchTerm = $(this).val().toLowerCase();
+                        $('.team-box').each(function() {
+                            const teamText = $(this).find('.postbox-header h3').text().toLowerCase();
+                            const membersText = $(this).find('.team-members-list').text().toLowerCase();
+                            const combinedText = teamText + ' ' + membersText;
+                            
+                            if (combinedText.indexOf(searchTerm) > -1) {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+                    });
+
+                    // Make user cards draggable
+                    $(document).on('dragstart', '.user-card', function(e) {
+                        draggedElement = this;
+                        $(this).css('opacity', '0.5');
+                        e.originalEvent.dataTransfer.effectAllowed = 'move';
+                        e.originalEvent.dataTransfer.setData('text/html', this.innerHTML);
+                    });
+
+                    $(document).on('dragend', '.user-card', function(e) {
+                        $(this).css('opacity', '1');
+                    });
+
+                    // Handle drag over team dropzones and available users list
+                    $(document).on('dragover', '.team-dropzone, #availableUsersList', function(e) {
+                        if (e.preventDefault) {
+                            e.preventDefault();
+                        }
+                        e.originalEvent.dataTransfer.dropEffect = 'move';
+                        $(this).css('background', '#e8f5e9');
+                        return false;
+                    });
+
+                    $(document).on('dragleave', '.team-dropzone, #availableUsersList', function(e) {
+                        $(this).css('background', '');
+                    });
+
+                    // Handle drop
+                    $(document).on('drop', '.team-dropzone', function(e) {
+                        if (e.stopPropagation) {
+                            e.stopPropagation();
+                        }
+                        $(this).css('background', '');
+
+                        if (draggedElement) {
+                            const userId = $(draggedElement).data('user-id');
+                            const teamId = $(this).data('team-id');
+                            
+                            // Add to team via AJAX (don't move visually from available list)
+                            $.post(ajaxurl, {
+                                action: 'subsales_add_user_to_team',
+                                user_id: userId,
+                                team_id: teamId,
+                                nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
+                            }, function(response) {
+                                if (response.success) {
+                                    // Reload to show updated team membership
+                                    location.reload();
+                                } else {
+                                    alert(response.data.message || 'Failed to assign user to team.');
+                                }
+                            });
+                        }
+                        
+                        return false;
+                    });
+
+                    // Handle remove button click
+                    $(document).on('click', '.remove-from-team', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const userId = $(this).data('user-id');
+                        const teamId = $(this).data('team-id');
+                        
+                        if (!confirm('Remove this user from the team?')) {
+                            return;
+                        }
+                        
+                        // Remove from team via AJAX
+                        $.post(ajaxurl, {
+                            action: 'subsales_remove_user_from_team',
+                            user_id: userId,
+                            team_id: teamId,
+                            nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
+                        }, function(response) {
+                            if (response.success) {
+                                location.reload();
+                            } else {
+                                alert('Failed to remove user from team.');
+                            }
+                        });
+                    });
+                })(jQuery);
+                </script>
+            </div>
         <?php endif; ?>
         
         <style>
+        .nav-tab-wrapper {
+            border-bottom: 1px solid #ccc;
+            margin: 20px 0 0 0;
+            padding: 0;
+        }
+        .nav-tab {
+            border: 1px solid #ccc;
+            border-bottom: none;
+            background: #f1f1f1;
+            color: #555;
+        }
+        .nav-tab-active {
+            background: #fff;
+            border-bottom: 1px solid #fff;
+            color: #000;
+            margin-bottom: -1px;
+        }
+        .user-card {
+            transition: all 0.2s ease;
+        }
+        .user-card:hover {
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transform: translateY(-1px);
+        }
+        .team-dropzone {
+            transition: background 0.2s ease;
+        }
         .status-active { color: #46b450; font-weight: bold; }
         .status-pending { color: #ffb900; font-weight: bold; }
         .status-inactive { color: #dc3232; font-weight: bold; }
         </style>
+        
+        <script>
+        (function($) {
+            $(document).ready(function() {
+                // Search functionality for All Users table
+                $('#allUsersSearchBox').on('keyup', function() {
+                    const searchTerm = $(this).val().toLowerCase();
+                    $('#allUsersTable tbody tr').each(function() {
+                        const text = $(this).text().toLowerCase();
+                        if (text.indexOf(searchTerm) > -1) {
+                            $(this).show();
+                        } else {
+                            $(this).hide();
+                        }
+                    });
+                });
+            });
+        })(jQuery);
+        </script>
     </div>
     <?php
+}
+
+// AJAX handler for adding user to team (many-to-many)
+add_action( 'wp_ajax_subsales_add_user_to_team', 'subsales_ajax_add_user_to_team' );
+function subsales_ajax_add_user_to_team() {
+    check_ajax_referer( 'subsales_team_assign', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    
+    $user_id = intval( $_POST['user_id'] ?? 0 );
+    $team_id = intval( $_POST['team_id'] ?? 0 );
+    
+    if ( $user_id && $team_id ) {
+        // Check if already assigned
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            $user_id,
+            $team_id
+        ));
+        
+        if ( $exists ) {
+            wp_send_json_error( array( 'message' => 'User is already assigned to this team' ) );
+        }
+        
+        $result = $wpdb->insert(
+            $user_teams_table,
+            array( 'user_id' => $user_id, 'team_id' => $team_id ),
+            array( '%d', '%d' )
+        );
+        
+        if ( $result ) {
+            wp_send_json_success( array( 'message' => 'User added to team successfully' ) );
+        } else {
+            wp_send_json_error( array( 'message' => 'Database insert failed' ) );
+        }
+    }
+    
+    wp_send_json_error( array( 'message' => 'Invalid user or team ID' ) );
+}
+
+// AJAX handler for removing user from team
+add_action( 'wp_ajax_subsales_remove_user_from_team', 'subsales_ajax_remove_user_from_team' );
+function subsales_ajax_remove_user_from_team() {
+    check_ajax_referer( 'subsales_team_assign', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+    
+    $user_id = intval( $_POST['user_id'] ?? 0 );
+    $team_id = intval( $_POST['team_id'] ?? 0 );
+    
+    if ( $user_id && $team_id ) {
+        $deleted = $wpdb->delete(
+            $user_teams_table,
+            array( 'user_id' => $user_id, 'team_id' => $team_id ),
+            array( '%d', '%d' )
+        );
+        
+        if ( $deleted ) {
+            wp_send_json_success( array( 'message' => 'User removed from team successfully' ) );
+        } else {
+            wp_send_json_error( array( 'message' => 'Database delete failed' ) );
+        }
+    }
+    
+    wp_send_json_error( array( 'message' => 'Invalid user or team ID' ) );
 }
 
 // Orders admin page

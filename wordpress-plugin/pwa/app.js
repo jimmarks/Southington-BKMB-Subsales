@@ -1034,7 +1034,6 @@
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
         try { localStorage.setItem('userPhone', phoneDigits); } catch(e){}
-        try { localStorage.setItem('salesMode', 'user'); } catch(e){}
         
         // Handle team selection
         if (data.teams && data.teams.length > 0) {
@@ -1242,17 +1241,17 @@
   // On boot, detect sales mode and show appropriate login form
   (async function initLoginMode() {
     try {
-      // Fetch config to determine sales mode
+      // Fetch config to determine login mode
       const url = apiBase ? (apiBase + '/config') : '/wp-json/order-manager/v1/config';
       const resp = await fetch(url).catch(() => null);
       const config = resp && resp.ok ? await resp.json().catch(() => null) : null;
       
-      const salesMode = (config && config.salesMode) || 'legacy';
+      const loginMode = (config && config.loginMode) || 'legacy';
       
       const legacyLogin = qs('#legacyLogin');
       const userLogin = qs('#userLogin');
       
-      if (salesMode === 'user' && userLogin && legacyLogin) {
+      if (loginMode === 'user' && userLogin && legacyLogin) {
         legacyLogin.classList.add('hidden');
         userLogin.classList.remove('hidden');
       } else if (legacyLogin && userLogin) {
@@ -1260,15 +1259,15 @@
         userLogin.classList.add('hidden');
       }
       
-      // Store sales mode
+      // Store login mode
       if (config) {
-        try { localStorage.setItem('detectedSalesMode', salesMode); } catch(e){}
+        try { localStorage.setItem('loginMode', loginMode); } catch(e){}
         if (config.sessionDuration) {
           try { localStorage.setItem('sessionDuration', config.sessionDuration); } catch(e){}
         }
       }
     } catch(e) {
-      console.warn('Failed to detect sales mode', e);
+      console.warn('Failed to detect login mode', e);
       // Default to legacy
       const legacyLogin = qs('#legacyLogin');
       const userLogin = qs('#userLogin');
@@ -1280,9 +1279,9 @@
   // On boot, auto-restore session if not expired
   (function restoreSession(){
     try{
-      const salesMode = localStorage.getItem('salesMode') || localStorage.getItem('detectedSalesMode') || 'legacy';
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
       
-      if (salesMode === 'user') {
+      if (loginMode === 'user') {
         // User mode session restore
         const userId = localStorage.getItem('userId');
         const userName = localStorage.getItem('userName');
@@ -1751,7 +1750,7 @@
     logoutBtn.addEventListener('click', ()=>{
       if (!confirm('Log out of the app?')) return;
       try {
-        // clear session-related keys
+        // Clear legacy session keys
         localStorage.removeItem('teamName');
         localStorage.removeItem('teamCode');
         localStorage.removeItem('sessionExpiry');
@@ -1759,6 +1758,13 @@
         localStorage.removeItem('teamMemberId');
         localStorage.removeItem('teamMemberName');
         localStorage.removeItem('teamId');
+        
+        // Clear user mode session keys
+        localStorage.removeItem('userId');
+        localStorage.removeItem('userName');
+        localStorage.removeItem('userPhone');
+        localStorage.removeItem('selectedTeamId');
+        localStorage.removeItem('selectedTeamName');
       } catch(e){}
   // show login
   if (loginSection) { loginSection.classList.remove('hidden'); try{ loginSection.style.display='block'; }catch(e){} }

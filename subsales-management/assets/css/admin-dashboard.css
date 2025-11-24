@@ -92,6 +92,21 @@
   #subsales-orders-table{ min-width:640px; }
 }
 
+  /* Products table styles */
+  .subsales-products-table{ max-width:700px; margin-bottom:12px; border-radius:6px; overflow:hidden; }
+  .subsales-products-table thead th{ padding:12px 14px; background:#f7f7f7; font-weight:600; color:#1d2327; border-bottom:2px solid #dcdcdc; }
+  .subsales-products-table tbody td{ padding:10px 14px; border-bottom:1px solid #efefef; vertical-align:middle; }
+  .subsales-products-table tbody tr:hover{ background:#fafafa; }
+  .subsales-products-table .col-name{ width:40%; }
+  .subsales-products-table .col-price{ width:20%; }
+  .subsales-products-table .col-visible{ width:10%; text-align:center; }
+  .subsales-products-table .col-actions{ width:10%; text-align:center; }
+  .subsales-products-table .col-center{ text-align:center; }
+  .subsales-products-table input[type="text"]{ margin:0; }
+  .subsales-products-table input[type="checkbox"]{ margin:0; }
+  .subsales-products-table .remove-product{ color:#b32d2e; }
+  .subsales-products-table .remove-product:hover{ color:#dc3232; text-decoration:underline; }
+
   /* Branding live-preview styles */
   .subsales-branding-button{ color:#fff; border:none; padding:8px 12px; }
   .subsales-branding-header{ color:#fff; padding:8px; text-align:center; }
