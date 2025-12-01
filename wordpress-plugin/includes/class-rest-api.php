@@ -29,52 +29,52 @@ class Subsales_REST_API {
         // Orders API
         register_rest_route( 'order-manager/v1', '/orders', array(
             'methods' => 'GET',
-            'callback' => 'get_orders',
+            'callback' => array( 'Subsales_Orders', 'get_orders' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
 
         register_rest_route( 'order-manager/v1', '/orders', array(
             'methods' => 'POST',
-            'callback' => 'create_order',
+            'callback' => array( 'Subsales_Orders', 'create_order' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'GET',
-            'callback' => 'get_order_by_id',
+            'callback' => array( 'Subsales_Orders', 'get_order_by_id' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'PUT',
-            'callback' => 'update_order',
+            'callback' => array( 'Subsales_Orders', 'update_order' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'DELETE',
-            'callback' => 'delete_order',
+            'callback' => array( 'Subsales_Orders', 'delete_order' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         // Order History API
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/history', array(
             'methods' => 'GET',
-            'callback' => 'get_order_history',
+            'callback' => array( 'Subsales_Orders', 'get_order_history' ),
             'permission_callback' => 'order_sync_check_admin_permissions',
         ));
         
         // Order Restore API
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/restore', array(
             'methods' => 'POST',
-            'callback' => 'restore_order',
+            'callback' => array( 'Subsales_Orders', 'restore_order' ),
             'permission_callback' => 'order_sync_check_admin_permissions',
         ));
         
         // Order Tally API
         register_rest_route( 'order-manager/v1', '/orders/tally', array(
             'methods' => 'POST',
-            'callback' => 'tally_orders',
+            'callback' => array( 'Subsales_Orders', 'tally_orders' ),
             'permission_callback' => 'order_sync_check_admin_permissions',
         ));
         
