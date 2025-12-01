@@ -52,12 +52,21 @@ if ( file_exists( $subsales_vendor_autoload ) ) {
 // Load modular classes
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
 
 // Initialize database
 Subsales_Database::init();
 
 // Initialize REST API
 Subsales_REST_API::init();
+
+// Initialize PWA
+Subsales_PWA::init();
+
+// Initialize Orders
+Subsales_Orders::init();
 
 
 // Activation hook
@@ -125,11 +134,7 @@ function order_sync_is_initialized() {
 
 // Helper to get products configuration as an array regardless of storage format (JSON string or array)
 function order_sync_get_products_config() {
-    $raw = get_option( 'order_sync_products', '[]' );
-    if ( is_array( $raw ) ) return $raw;
-    $decoded = json_decode( $raw, true );
-    if ( ! is_array( $decoded ) ) return array();
-    return $decoded;
+    return Subsales_PWA::get_products_config();
 }
 
 // Debug mode visual indicators
@@ -2913,118 +2918,41 @@ function order_sync_check_admin_permissions( WP_REST_Request $request ) {
 }
 
 // Orders REST callbacks (get_orders, get_order_by_id, create_order, update_order, delete_order)
-function get_orders( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    
-    $limit = $request->get_param( 'limit' ) ? intval( $request->get_param( 'limit' ) ) : 10;
-    $offset = $request->get_param( 'offset' ) ? intval( $request->get_param( 'offset' ) ) : 0;
-    
-    // Filter parameters
-    $user_id = $request->get_param( 'user_id' );
-    $team_id = $request->get_param( 'team_id' );
-    $date_from = $request->get_param( 'date_from' ); // YYYY-MM-DD
-    $date_to = $request->get_param( 'date_to' );     // YYYY-MM-DD
-    $today_only = $request->get_param( 'today_only' ); // boolean flag
-    $show_deleted = $request->get_param( 'show_deleted' ); // boolean flag - default false
-    
-    // Legacy parameter support
-    $entered_by_id = $request->get_param( 'entered_by_id' );
-    if ( ! empty( $entered_by_id ) && empty( $user_id ) ) {
-        $user_id = $entered_by_id;
-    }
-    
-    // Build WHERE clause
-    $where = array( '1=1' );
-    $values = array();
-    
-    // Exclude deleted orders by default
-    if ( $show_deleted !== 'true' && $show_deleted !== '1' && $show_deleted !== 1 && $show_deleted !== true ) {
-        $where[] = 'deleted = 0';
-    }
-    
-    if ( ! empty( $user_id ) ) {
-        $where[] = 'user_id = %s';
-        $values[] = $user_id;
-    }
-    
-    if ( ! empty( $team_id ) ) {
-        $where[] = 'team_id = %d';
-        $values[] = intval( $team_id );
-    }
-    
-    // Date filtering
-    if ( $today_only === 'true' || $today_only === '1' || $today_only === 1 || $today_only === true ) {
-        // Filter to today only (site timezone)
-        $today = date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
-        $where[] = 'DATE(created_at) = %s';
-        $values[] = $today;
-    } else {
-        // Custom date range
-        if ( ! empty( $date_from ) ) {
-            $where[] = 'DATE(created_at) >= %s';
-            $values[] = sanitize_text_field( $date_from );
-        }
-        
-        if ( ! empty( $date_to ) ) {
-            $where[] = 'DATE(created_at) <= %s';
-            $values[] = sanitize_text_field( $date_to );
-        }
-    }
-    
-    $where_sql = implode( ' AND ', $where );
-    
-    // Add limit and offset to values
-    $values[] = $limit;
-    $values[] = $offset;
-    
-    $query = "SELECT * FROM {$table_name} WHERE {$where_sql} ORDER BY created_at DESC LIMIT %d OFFSET %d";
-    
-    if ( ! empty( $values ) ) {
-        $orders = $wpdb->get_results( $wpdb->prepare( $query, $values ), ARRAY_A );
-    } else {
-        $orders = $wpdb->get_results( $query, ARRAY_A );
-    }
-    
-    foreach ( $orders as &$order ) {
-        $order['order_data'] = json_decode( $order['order_data'], true );
-        // Created_at coming from DB may be stored in GMT/UTC. Convert to site-local time for timestamp and "is_today" checks.
-        if ( isset( $order['created_at'] ) && $order['created_at'] ) {
-            $local = get_date_from_gmt( $order['created_at'] );
-            $ts = strtotime( $local );
-            $order['created_at_ts'] = $ts;
-            $order['created_at'] = $local;
-            $order['is_today'] = date_i18n( 'Y-m-d', $ts ) === date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
-        } else {
-            $order['created_at_ts'] = null;
-            $order['is_today'] = false;
-        }
-    }
-    
-    return new WP_REST_Response( $orders, 200 );
+/**
+ * Order REST API Handler Functions (Backward Compatibility Wrappers)
+ * All order functionality now handled by Subsales_Orders class
+ */
+
+function get_orders( $request ) {
+    return Subsales_Orders::get_orders( $request );
 }
 
-function get_order_by_id( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    
-    $order_id = $request->get_param( 'id' );
-    
-    $order = $wpdb->get_row( 
-        $wpdb->prepare( 
-            "SELECT * FROM {$table_name} WHERE order_id = %s", 
-            $order_id 
-        ),
-        ARRAY_A
-    );
-    
-    if ( ! $order ) {
-        return new WP_REST_Response( 'Order not found', 404 );
-    }
-    
-    $order['order_data'] = json_decode( $order['order_data'], true );
-    
-    return new WP_REST_Response( $order, 200 );
+function get_order_by_id( $request ) {
+    return Subsales_Orders::get_order_by_id( $request );
+}
+
+function create_order( $request ) {
+    return Subsales_Orders::create_order( $request );
+}
+
+function update_order( $request ) {
+    return Subsales_Orders::update_order( $request );
+}
+
+function delete_order( $request ) {
+    return Subsales_Orders::delete_order( $request );
+}
+
+function get_order_history( $request ) {
+    return Subsales_Orders::get_order_history( $request );
+}
+
+function restore_order( $request ) {
+    return Subsales_Orders::restore_order( $request );
+}
+
+function tally_orders( $request ) {
+    return Subsales_Orders::tally_orders( $request );
 }
 
 // Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
@@ -3035,469 +2963,65 @@ function order_manager_get_server_time( WP_REST_Request $request ) {
     return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
 }
 
-function create_order( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
+/**
+ * Teams & User Management Functions (Backward Compatibility Wrappers)
+ * All team/user functionality now handled by Subsales_Teams class
+ */
 
-    $data = $request->get_json_params();
-
-    if ( ! isset( $data['order_id'] ) || ! isset( $data['user_id'] ) ) {
-        return new WP_REST_Response( 'Missing required fields: order_id, user_id', 400 );
-    }
-
-    $order_id = sanitize_text_field( $data['order_id'] );
-    $user_id = sanitize_text_field( $data['user_id'] );
-    
-    // Check if order already exists (avoid duplicate key error)
-    $existing_order = $wpdb->get_row( $wpdb->prepare(
-        "SELECT id FROM $table_name WHERE order_id = %s",
-        $order_id
-    ) );
-    
-    if ( $existing_order ) {
-        // Order already exists - return success (idempotent)
-        return new WP_REST_Response( array(
-            'message' => 'Order already exists',
-            'order_id' => $order_id,
-            'status' => 'exists'
-        ), 200 );
-    }
-
-    // Resolve team id: prefer explicit payload value, otherwise fall back to team headers
-    $team_id = null;
-    if ( isset( $data['team_id'] ) ) {
-        $team_id = intval( $data['team_id'] );
-    } else {
-        // Attempt to derive team from headers if provided
-        try {
-            $team_name = $request->get_header( 'X-Team-Name' );
-            $access_code = $request->get_header( 'X-Access-Code' );
-            if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-                $team = order_sync_get_team_by_credentials( sanitize_text_field( $team_name ), sanitize_text_field( $access_code ) );
-                if ( $team && isset( $team['id'] ) ) $team_id = intval( $team['id'] );
-            }
-        } catch ( Exception $e ) {
-            // ignore and continue without team
-            $team_id = null;
-        }
-    }
-
-    $order_data = wp_json_encode( $data );
-
-    $insert_row = array(
-        'order_id' => $order_id,
-        'user_id' => $user_id,
-        'order_data' => $order_data,
-        'sync_status' => 'synced'
-    );
-    $formats = array( '%s', '%s', '%s', '%s' );
-    if ( $team_id !== null ) {
-        $insert_row['team_id'] = $team_id;
-        $formats[] = '%d';
-    }
-
-    // Ensure created_at uses the WordPress site-local time (respects timezone settings)
-    // so stored timestamps align with the site's timezone (avoid DB server UTC mismatch).
-    $insert_row['created_at'] = current_time( 'mysql' );
-    $formats[] = '%s';
-
-    $result = $wpdb->insert( $table_name, $insert_row, $formats );
-
-    if ( $result === false ) {
-        // Log order creation failure
-        subsales_log( 'ERROR', 'orders', 'Failed to create order', array(
-            'order_id' => $order_id,
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'db_error' => $wpdb->last_error
-        ), 'api', null, $user_id );
-        
-        return new WP_REST_Response( 'Failed to create order', 500 );
-    }
-    
-    // Get the newly created order's DB ID for history logging
-    $new_order_db_id = $wpdb->insert_id;
-    
-    // Log successful order creation
-    subsales_log_order( 'created', $order_id, null, $user_id, array(
-        'team_id' => $team_id,
-        'db_id' => $new_order_db_id
-    ), 'pwa' );
-    
-    // Log order creation in history table
-    if ( $new_order_db_id && function_exists( 'subsales_log_order_change' ) ) {
-        $order_data_array = json_decode( $order_data, true );
-        if ( ! is_array( $order_data_array ) ) {
-            $order_data_array = array();
-        }
-        
-        // Determine who created the order
-        $creator_name = isset( $order_data_array['entered_by_name'] ) ? $order_data_array['entered_by_name'] : '';
-        if ( empty( $creator_name ) && ! empty( $user_id ) ) {
-            // Try to look up user name from team_members table
-            $user_row = $wpdb->get_row( $wpdb->prepare( 
-                "SELECT name FROM {$wpdb->prefix}order_sync_team_members WHERE id = %d", 
-                intval( $user_id ) 
-            ) );
-            if ( $user_row ) {
-                $creator_name = $user_row->name;
-            }
-        }
-        if ( empty( $creator_name ) ) {
-            $creator_name = 'Mobile User ' . $user_id;
-        }
-        
-        // Log as 'create' action with empty before data
-        subsales_log_order_change(
-            $new_order_db_id,
-            $order_id,
-            array(), // before_data is empty for new orders
-            $order_data_array, // after_data is the new order
-            'create',
-            intval( $user_id ),
-            $creator_name,
-            'Order created via mobile app',
-            'pwa'
-        );
-    }
-
-    return new WP_REST_Response( array( 'message' => 'Order created successfully', 'id' => $new_order_db_id ), 201 );
-}
-
-function update_order( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    
-    $order_id = $request->get_param( 'id' );
-    $data = $request->get_json_params();
-    
-    // Get current user info (must be WordPress admin)
-    $current_user = wp_get_current_user();
-    if ( ! $current_user || ! $current_user->ID ) {
-        return new WP_REST_Response( 'Unauthorized', 401 );
-    }
-    
-    // Fetch existing order for history tracking
-    $existing_order = $wpdb->get_row(
-        $wpdb->prepare( "SELECT * FROM {$table_name} WHERE order_id = %s", $order_id ),
-        ARRAY_A
-    );
-    
-    if ( ! $existing_order ) {
-        return new WP_REST_Response( 'Order not found', 404 );
-    }
-    
-    // Parse before/after data for history
-    $before_data = json_decode( $existing_order['order_data'], true );
-    $after_data = $data;
-    
-    // Get edit reason from request
-    $edit_reason = isset( $data['_edit_reason'] ) ? sanitize_textarea_field( $data['_edit_reason'] ) : '';
-    unset( $data['_edit_reason'] ); // Remove from order data
-    
-    $order_data = wp_json_encode( $data );
-
-    $update_fields = array(
-        'order_data' => $order_data,
-        'sync_status' => 'updated'
-    );
-    $update_formats = array( '%s', '%s' );
-    if ( isset( $data['team_id'] ) ) {
-        $update_fields['team_id'] = intval( $data['team_id'] );
-        $update_formats[] = '%d';
-    }
-
-    $result = $wpdb->update(
-        $table_name,
-        $update_fields,
-        array( 'order_id' => $order_id ),
-        $update_formats,
-        array( '%s' )
-    );
-    
-    if ( $result === false ) {
-        subsales_log( 'ERROR', 'orders', 'Failed to update order', array(
-            'order_id' => $order_id,
-            'db_error' => $wpdb->last_error
-        ), 'admin', $current_user->ID, $current_user->display_name );
-        return new WP_REST_Response( 'Failed to update order', 500 );
-    }
-    
-    // Log change to history (even if no rows changed, user may have submitted same data)
-    subsales_log_order_change(
-        $existing_order['id'], // DB id
-        $order_id, // Order ID from data
-        $before_data,
-        $after_data,
-        'update',
-        $current_user->ID,
-        $current_user->display_name,
-        $edit_reason,
-        'admin'
-    );
-    
-    return new WP_REST_Response( array(
-        'message' => 'Order updated successfully',
-        'changes_logged' => true
-    ), 200 );
-}
-
-function delete_order( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    
-    $order_id = $request->get_param( 'id' );
-    $data = $request->get_json_params();
-    
-    // Get current user info (must be WordPress admin)
-    $current_user = wp_get_current_user();
-    if ( ! $current_user || ! $current_user->ID ) {
-        return new WP_REST_Response( 'Unauthorized', 401 );
-    }
-    
-    // Require delete reason
-    if ( ! isset( $data['delete_reason'] ) || empty( trim( $data['delete_reason'] ) ) ) {
-        return new WP_REST_Response( 'Delete reason is required', 400 );
-    }
-    
-    $delete_reason = sanitize_textarea_field( $data['delete_reason'] );
-    
-    // Fetch existing order for history tracking
-    $existing_order = $wpdb->get_row(
-        $wpdb->prepare( "SELECT * FROM {$table_name} WHERE order_id = %s AND deleted = 0", $order_id ),
-        ARRAY_A
-    );
-    
-    if ( ! $existing_order ) {
-        return new WP_REST_Response( 'Order not found or already deleted', 404 );
-    }
-    
-    // Soft delete: mark as deleted
-    $result = $wpdb->update(
-        $table_name,
-        array(
-            'deleted' => 1,
-            'deleted_at' => current_time( 'mysql' ),
-            'deleted_by_user_id' => $current_user->ID,
-            'delete_reason' => $delete_reason
-        ),
-        array( 'order_id' => $order_id ),
-        array( '%d', '%s', '%d', '%s' ),
-        array( '%s' )
-    );
-    
-    if ( $result === false ) {
-        subsales_log( 'ERROR', 'orders', 'Failed to delete order', array(
-            'order_id' => $order_id,
-            'db_error' => $wpdb->last_error
-        ), 'admin', $current_user->ID, $current_user->display_name );
-        return new WP_REST_Response( 'Failed to delete order', 500 );
-    }
-    
-    // Parse order data for history
-    $order_data = json_decode( $existing_order['order_data'], true );
-    
-    // Log deletion to history
-    subsales_log_order_change(
-        $existing_order['id'], // DB id
-        $order_id, // Order ID from data
-        $order_data, // before
-        $order_data, // after (same, just marked deleted)
-        'delete',
-        $current_user->ID,
-        $current_user->display_name,
-        $delete_reason,
-        'admin'
-    );
-    
-    return new WP_REST_Response( array(
-        'message' => 'Order deleted successfully',
-        'soft_delete' => true
-    ), 200 );
-}
-
-// Get edit history for an order
-function get_order_history( WP_REST_Request $request ) {
-    global $wpdb;
-    $history_table = $wpdb->prefix . 'order_edit_history';
-    $orders_table = $wpdb->prefix . 'order_sync_orders';
-    
-    $order_db_id = intval( $request->get_param( 'id' ) );
-    
-    // Verify order exists
-    $order = $wpdb->get_row(
-        $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE id = %d", $order_db_id ),
-        ARRAY_A
-    );
-    
-    if ( ! $order ) {
-        return new WP_REST_Response( 'Order not found', 404 );
-    }
-    
-    // Fetch history records
-    $history = $wpdb->get_results(
-        $wpdb->prepare(
-            "SELECT * FROM {$history_table} WHERE order_id = %d ORDER BY edited_at DESC",
-            $order_db_id
-        ),
-        ARRAY_A
-    );
-    
-    // Parse changes_detail JSON for each record
-    foreach ( $history as &$record ) {
-        if ( ! empty( $record['changes_detail'] ) ) {
-            $record['changes_detail'] = json_decode( $record['changes_detail'], true );
-        }
-    }
-    
-    return new WP_REST_Response( array(
-        'order_id' => $order_db_id,
-        'order_reference' => $order['order_id'],
-        'history' => $history,
-        'total_edits' => count( $history )
-    ), 200 );
-}
-
-// Restore a soft-deleted order
-function restore_order( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    
-    $order_db_id = intval( $request->get_param( 'id' ) );
-    
-    // Get current user info (must be WordPress admin)
-    $current_user = wp_get_current_user();
-    if ( ! $current_user || ! $current_user->ID ) {
-        return new WP_REST_Response( 'Unauthorized', 401 );
-    }
-    
-    // Fetch existing order to verify it's deleted
-    $existing_order = $wpdb->get_row(
-        $wpdb->prepare( "SELECT * FROM {$table_name} WHERE id = %d AND deleted = 1", $order_db_id ),
-        ARRAY_A
-    );
-    
-    if ( ! $existing_order ) {
-        return new WP_REST_Response( 'Order not found or not deleted', 404 );
-    }
-    
-    // Restore: clear deleted flags
-    $result = $wpdb->update(
-        $table_name,
-        array(
-            'deleted' => 0,
-            'deleted_at' => null,
-            'deleted_by_user_id' => null,
-            'delete_reason' => null
-        ),
-        array( 'id' => $order_db_id ),
-        array( '%d', '%s', '%s', '%s' ),
-        array( '%d' )
-    );
-    
-    if ( $result === false ) {
-        subsales_log( 'ERROR', 'orders', 'Failed to restore order', array(
-            'order_db_id' => $order_db_id,
-            'order_id' => $existing_order['order_id'],
-            'db_error' => $wpdb->last_error
-        ), 'admin', $current_user->ID, $current_user->display_name );
-        return new WP_REST_Response( 'Failed to restore order', 500 );
-    }
-    
-    // Parse order data for history
-    $order_data = json_decode( $existing_order['order_data'], true );
-    
-    // Log restoration to history
-    subsales_log_order_change(
-        $existing_order['id'], // DB id
-        $existing_order['order_id'], // Order ID from data
-        $order_data, // before
-        $order_data, // after (same, just restored)
-        'restore',
-        $current_user->ID,
-        $current_user->display_name,
-        'Order restored from deleted status',
-        'admin'
-    );
-    
-    return new WP_REST_Response( array(
-        'message' => 'Order restored successfully',
-        'order_id' => $existing_order['order_id']
-    ), 200 );
-}
-
-// Tally orders (mark as reconciled)
-function tally_orders( WP_REST_Request $request ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    $current_user = wp_get_current_user();
-    
-    $data = $request->get_json_params();
-    $order_ids = isset( $data['order_ids'] ) ? $data['order_ids'] : array();
-    
-    if ( empty( $order_ids ) || ! is_array( $order_ids ) ) {
-        return new WP_REST_Response( array( 'error' => 'No order IDs provided' ), 400 );
-    }
-    
-    $success_count = 0;
-    $errors = array();
-    
-    foreach ( $order_ids as $db_id ) {
-        // Get the existing order
-        $existing_order = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM $table_name WHERE id = %d",
-            $db_id
-        ), ARRAY_A );
-        
-        if ( ! $existing_order ) {
-            $errors[] = "Order ID $db_id not found";
-            continue;
-        }
-        
-        // Update tally status
-        $result = $wpdb->update(
-            $table_name,
-            array(
-                'tallied' => 1,
-                'tallied_at' => current_time( 'mysql' ),
-                'tallied_by_user_id' => $current_user->ID
-            ),
-            array( 'id' => $db_id ),
-            array( '%d', '%s', '%d' ),
-            array( '%d' )
-        );
-        
-        if ( $result !== false ) {
-            // Log to history
-            $order_data = json_decode( $existing_order['order_data'], true );
-            subsales_log_order_change(
-                $existing_order['id'],
-                $existing_order['order_id'],
-                $order_data,
-                $order_data,
-                'update',
-                $current_user->ID,
-                $current_user->display_name,
-                'Order marked as tallied',
-                'admin'
-            );
-            $success_count++;
-        } else {
-            $errors[] = "Failed to tally order ID $db_id";
-        }
-    }
-    
-    return new WP_REST_Response( array(
-        'message' => "$success_count order(s) tallied successfully",
-        'success_count' => $success_count,
-        'errors' => $errors
-    ), 200 );
-}
-
-// Team authentication API endpoints
 function team_member_login( WP_REST_Request $request ) {
-    global $wpdb;
-    $data = $request->get_json_params();
+    return Subsales_Teams::team_member_login( $request );
+}
+
+function verify_team_access( WP_REST_Request $request ) {
+    return Subsales_Teams::verify_team_access( $request );
+}
+
+function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_members_endpoint( $request );
+}
+
+function order_sync_create_user( WP_REST_Request $request ) {
+    return Subsales_Teams::create_user( $request );
+}
+
+function order_sync_get_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_users( $request );
+}
+
+function order_sync_get_user_by_id( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_by_id( $request );
+}
+
+function order_sync_update_user( WP_REST_Request $request ) {
+    return Subsales_Teams::update_user( $request );
+}
+
+function order_sync_delete_user( WP_REST_Request $request ) {
+    return Subsales_Teams::delete_user( $request );
+}
+
+function order_sync_search_users( WP_REST_Request $request ) {
+    return Subsales_Teams::search_users( $request );
+}
+
+function order_sync_get_user_teams( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_teams( $request );
+}
+
+function order_sync_assign_user_to_team( WP_REST_Request $request ) {
+    return Subsales_Teams::assign_user_to_team( $request );
+}
+
+function order_sync_remove_user_from_team( WP_REST_Request $request ) {
+    return Subsales_Teams::remove_user_from_team( $request );
+}
+
+function order_sync_get_team_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_users( $request );
+}
+
+/**
+ * PWA Functions (Backward Compatibility Wrappers)
     
     $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
     
@@ -3687,859 +3211,34 @@ function team_member_login( WP_REST_Request $request ) {
     ), 500 );
 }
 
-function verify_team_access( WP_REST_Request $request ) {
-    $data = $request->get_json_params();
-    
-    if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
-        return new WP_REST_Response( 'Missing team name or access code', 400 );
-    }
-    
-    $team_name = sanitize_text_field( $data['team_name'] );
-    $access_code = sanitize_text_field( $data['access_code'] );
-    
-    $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-    if ( $team ) {
-        return new WP_REST_Response( array( 
-            'valid' => true,
-            'team' => array(
-                'id' => $team['id'],
-                'name' => $team['name']
-            )
-        ), 200 );
-    }
-
-    return new WP_REST_Response( array(
-        'valid' => false,
-        'message' => 'Invalid team name or access code'
-    ), 401 );
-}
-
-function get_app_config( WP_REST_Request $request ) {
-    // Only expose sensitive values (like Google Maps key) when the request includes valid team headers
-    $is_authenticated = false;
-    try{
-        $is_authenticated = order_sync_check_permissions( $request ) === true;
-    }catch(Exception $e){ $is_authenticated = false; }
-
-    $google_maps_api_key = $is_authenticated ? get_option( 'order_sync_google_maps_api_key', '' ) : '';
-    $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
-    $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
-
-    $branding = get_option( 'subsales_branding', 'Subsales' );
-    $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
-    $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
-
-    $products = order_sync_get_products_config();
-    
-    // Get login mode (Phase 4)
-    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
-    
-    // Get sales mode (Team vs Individual)
-    $sales_mode = get_option( 'subsales_sales_mode', 'legacy' );
-    
-    // Get debug logging status (only expose when authenticated)
-    $debug_logging_enabled = $is_authenticated ? get_option( 'subsales_debug_logging_enabled', false ) : false;
-
-    return new WP_REST_Response( array(
-        'google_maps_api_key' => $google_maps_api_key,
-        'app_version' => SUBSALES_VERSION,
-        'portal_url' => $portal_url,
-        'brandName' => $branding,
-        'brandingImage' => $header_image_url,
-        'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
-        'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
-        'sessionDuration' => intval( get_option( 'order_sync_session_duration', 86400000 ) ),
-        'authenticated' => $is_authenticated,
-        'products' => $products,
-        'loginMode' => $login_mode,
-        'salesMode' => $sales_mode,
-        'debugLoggingEnabled' => $debug_logging_enabled
-    ), 200 );
-}
-
-// REST callback to return team members for the authenticated team
-function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
-    $team_name = $request->get_header( 'X-Team-Name' );
-    $access_code = $request->get_header( 'X-Access-Code' );
-    if ( empty( $team_name ) || empty( $access_code ) ) {
-        return new WP_REST_Response( array( 'error' => 'Missing team headers' ), 400 );
-    }
-    $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-    if ( ! $team ) {
-        return new WP_REST_Response( array( 'error' => 'Invalid credentials' ), 401 );
-    }
-    $members = order_sync_get_team_members_by_team( $team['id'] );
-    if ( ! $members ) $members = array();
-    return new WP_REST_Response( $members, 200 );
-}
-
-// ============================================================================
-// User Management REST API (Phase 2)
-// ============================================================================
-
 /**
- * POST /wp-json/order-manager/v1/users
- * Create a new user
+ * PWA Functions (Backward Compatibility Wrappers)
+ * All PWA functionality now handled by Subsales_PWA class
  */
-function order_sync_create_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $params = $request->get_json_params();
-    $name = sanitize_text_field( $params['name'] ?? '' );
-    $email = sanitize_email( $params['email'] ?? '' );
-    $phone = sanitize_text_field( $params['phone'] ?? '' );
-    $role = sanitize_text_field( $params['role'] ?? 'member' );
-    
-    // Validation
-    if ( empty( $name ) ) {
-        return new WP_REST_Response( array( 'error' => 'Name is required' ), 400 );
-    }
-    if ( empty( $phone ) ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number is required' ), 400 );
-    }
-    
-    // Normalize phone to 10 digits
-    $phone = preg_replace( '/[^0-9]/', '', $phone );
-    if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
-    }
-    
-    // Check if phone already exists
-    $existing = $wpdb->get_var( $wpdb->prepare(
-        "SELECT id FROM {$members_table} WHERE phone = %s",
-        $phone
-    ));
-    if ( $existing ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
-    }
-    
-    $email = $email ?: '';
-    
-    // Insert user
-    $result = $wpdb->insert(
-        $members_table,
-        array(
-            'team_id' => 0, // No team assignment initially
-            'name' => $name,
-            'email' => $email,
-            'phone' => $phone,
-            'role' => $role,
-            'status' => 'active'
-        ),
-        array( '%d', '%s', '%s', '%s', '%s', '%s' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to create user' ), 500 );
-    }
-    
-    $user_id = $wpdb->insert_id;
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    return new WP_REST_Response( $user, 201 );
-}
 
-/**
- * GET /wp-json/order-manager/v1/users
- * Get all users or filter by query params
- */
-function order_sync_get_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $limit = intval( $request->get_param( 'limit' ) ?: 100 );
-    $offset = intval( $request->get_param( 'offset' ) ?: 0 );
-    $status = sanitize_text_field( $request->get_param( 'status' ) ?: '' );
-    
-    $where = array();
-    $params = array();
-    
-    if ( ! empty( $status ) ) {
-        $where[] = "status = %s";
-        $params[] = $status;
-    }
-    
-    $where_sql = ! empty( $where ) ? 'WHERE ' . implode( ' AND ', $where ) : '';
-    
-    if ( ! empty( $params ) ) {
-        $sql = $wpdb->prepare(
-            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
-            array_merge( $params, array( $limit, $offset ) )
-        );
-    } else {
-        $sql = $wpdb->prepare(
-            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
-            $limit,
-            $offset
-        );
-    }
-    
-    $users = $wpdb->get_results( $sql, ARRAY_A );
-    
-    // For each user, get their teams
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    foreach ( $users as &$user ) {
-        $team_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-            $user['id']
-        ));
-        
-        $user['teams'] = array();
-        if ( ! empty( $team_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-            $teams = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                    $team_ids
-                ),
-                ARRAY_A
-            );
-            $user['teams'] = $teams ?: array();
-        }
-    }
-    
-    return new WP_REST_Response( $users, 200 );
-}
+// Wrapper functions maintained for backward compatibility
+// These are intentionally left empty as the PWA class registers hooks directly
+// during Subsales_PWA::init() which is called early in plugin bootstrap.
+// The add_action and add_shortcode calls below are also removed since they're
+// now handled by the class.
 
-/**
- * GET /wp-json/order-manager/v1/users/{id}
- * Get a single user by ID
- */
-function order_sync_get_user_by_id( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $user ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Get user's teams
-    $team_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-        $user_id
-    ));
-    
-    $user['teams'] = array();
-    if ( ! empty( $team_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-        $teams = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                $team_ids
-            ),
-            ARRAY_A
-        );
-        $user['teams'] = $teams ?: array();
-    }
-    
-    return new WP_REST_Response( $user, 200 );
-}
-
-/**
- * PUT /wp-json/order-manager/v1/users/{id}
- * Update a user
- */
-function order_sync_update_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    $params = $request->get_json_params();
-    
-    // Check if user exists
-    $existing = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $existing ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    $updates = array();
-    $formats = array();
-    
-    if ( isset( $params['name'] ) ) {
-        $name = sanitize_text_field( $params['name'] );
-        if ( empty( $name ) ) {
-            return new WP_REST_Response( array( 'error' => 'Name cannot be empty' ), 400 );
-        }
-        $updates['name'] = $name;
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['email'] ) ) {
-        $updates['email'] = sanitize_email( $params['email'] ) ?: '';
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['phone'] ) ) {
-        $phone = preg_replace( '/[^0-9]/', '', $params['phone'] );
-        if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
-            return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
-        }
-        
-        // Check if phone exists for another user
-        $conflict = $wpdb->get_var( $wpdb->prepare(
-            "SELECT id FROM {$members_table} WHERE phone = %s AND id != %d",
-            $phone,
-            $user_id
-        ));
-        if ( $conflict ) {
-            return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
-        }
-        
-        $updates['phone'] = $phone;
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['role'] ) ) {
-        $updates['role'] = sanitize_text_field( $params['role'] );
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['status'] ) ) {
-        $updates['status'] = sanitize_text_field( $params['status'] );
-        $formats[] = '%s';
-    }
-    
-    if ( empty( $updates ) ) {
-        return new WP_REST_Response( array( 'error' => 'No fields to update' ), 400 );
-    }
-    
-    $result = $wpdb->update(
-        $members_table,
-        $updates,
-        array( 'id' => $user_id ),
-        $formats,
-        array( '%d' )
-    );
-    
-    if ( $result === false ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to update user' ), 500 );
-    }
-    
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    return new WP_REST_Response( $user, 200 );
-}
-
-/**
- * DELETE /wp-json/order-manager/v1/users/{id}
- * Delete a user
- */
-function order_sync_delete_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    // Check if user exists
-    $existing = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $existing ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Delete user-team associations first
-    $wpdb->delete( $user_teams_table, array( 'user_id' => $user_id ), array( '%d' ) );
-    
-    // Delete user
-    $result = $wpdb->delete( $members_table, array( 'id' => $user_id ), array( '%d' ) );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to delete user' ), 500 );
-    }
-    
-    return new WP_REST_Response( array( 'success' => true, 'message' => 'User deleted' ), 200 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/users/search?q={query}
- * Search users by name or phone
- */
-function order_sync_search_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    $query = sanitize_text_field( $request->get_param( 'q' ) ?: '' );
-    $limit = intval( $request->get_param( 'limit' ) ?: 20 );
-    
-    if ( empty( $query ) ) {
-        return new WP_REST_Response( array(), 200 );
-    }
-    
-    // Search by name or phone (partial match)
-    $search_term = '%' . $wpdb->esc_like( $query ) . '%';
-    $phone_search = preg_replace( '/[^0-9]/', '', $query );
-    
-    if ( ! empty( $phone_search ) ) {
-        // Search by both name and phone
-        $users = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$members_table} 
-             WHERE name LIKE %s OR phone LIKE %s 
-             ORDER BY name ASC LIMIT %d",
-            $search_term,
-            '%' . $wpdb->esc_like( $phone_search ) . '%',
-            $limit
-        ), ARRAY_A );
-    } else {
-        // Search by name only
-        $users = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$members_table} 
-             WHERE name LIKE %s 
-             ORDER BY name ASC LIMIT %d",
-            $search_term,
-            $limit
-        ), ARRAY_A );
-    }
-    
-    // Get teams for each user
-    foreach ( $users as &$user ) {
-        $team_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-            $user['id']
-        ));
-        
-        $user['teams'] = array();
-        if ( ! empty( $team_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-            $teams = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                    $team_ids
-                ),
-                ARRAY_A
-            );
-            $user['teams'] = $teams ?: array();
-        }
-    }
-    
-    return new WP_REST_Response( $users, 200 );
-}
-
-// ============================================================================
-// Team Assignment REST API (Phase 3)
-// ============================================================================
-
-/**
- * GET /wp-json/order-manager/v1/users/{id}/teams
- * Get all teams for a specific user
- */
-function order_sync_get_user_teams( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    // Verify user exists
-    $user_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
-        $user_id
-    ));
-    
-    if ( ! $user_exists ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Get team IDs for this user
-    $team_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-        $user_id
-    ));
-    
-    $teams = array();
-    if ( ! empty( $team_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-        $teams = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, access_code, description FROM {$teams_table} WHERE id IN ({$placeholders})",
-                $team_ids
-            ),
-            ARRAY_A
-        );
-    }
-    
-    return new WP_REST_Response( $teams ?: array(), 200 );
-}
-
-/**
- * POST /wp-json/order-manager/v1/teams/{id}/assign
- * Assign a user to a team
- * Body: { "user_id": 123 }
- */
-function order_sync_assign_user_to_team( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    $params = $request->get_json_params();
-    $user_id = intval( $params['user_id'] ?? 0 );
-    
-    if ( ! $user_id ) {
-        return new WP_REST_Response( array( 'error' => 'user_id is required' ), 400 );
-    }
-    
-    // Verify team exists
-    $team = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ), ARRAY_A );
-    
-    if ( ! $team ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Verify user exists
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $user ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Check if already assigned
-    $exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-        $user_id,
-        $team_id
-    ));
-    
-    if ( $exists ) {
-        return new WP_REST_Response( array( 
-            'success' => true,
-            'message' => 'User already assigned to this team'
-        ), 200 );
-    }
-    
-    // Create assignment
-    $result = $wpdb->insert(
-        $user_teams_table,
-        array(
-            'user_id' => $user_id,
-            'team_id' => $team_id
-        ),
-        array( '%d', '%d' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to assign user to team' ), 500 );
-    }
-    
-    return new WP_REST_Response( array(
-        'success' => true,
-        'message' => 'User assigned to team successfully',
-        'assignment' => array(
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'user_name' => $user['name'],
-            'team_name' => $team['name']
-        )
-    ), 201 );
-}
-
-/**
- * DELETE /wp-json/order-manager/v1/teams/{id}/users/{userId}
- * Remove a user from a team
- */
-function order_sync_remove_user_from_team( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    $user_id = intval( $request->get_param( 'userId' ) );
-    
-    // Verify team exists
-    $team_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ));
-    
-    if ( ! $team_exists ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Verify user exists
-    $user_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
-        $user_id
-    ));
-    
-    if ( ! $user_exists ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Check if assignment exists
-    $exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-        $user_id,
-        $team_id
-    ));
-    
-    if ( ! $exists ) {
-        return new WP_REST_Response( array( 
-            'error' => 'User is not assigned to this team'
-        ), 404 );
-    }
-    
-    // Remove assignment
-    $result = $wpdb->delete(
-        $user_teams_table,
-        array(
-            'user_id' => $user_id,
-            'team_id' => $team_id
-        ),
-        array( '%d', '%d' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to remove user from team' ), 500 );
-    }
-    
-    return new WP_REST_Response( array(
-        'success' => true,
-        'message' => 'User removed from team successfully'
-    ), 200 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/teams/{id}/users
- * Get all users assigned to a specific team
- */
-function order_sync_get_team_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    
-    // Verify team exists
-    $team = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ), ARRAY_A );
-    
-    if ( ! $team ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Get user IDs for this team
-    $user_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
-        $team_id
-    ));
-    
-    $users = array();
-    if ( ! empty( $user_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
-        $users = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, email, phone, role, status FROM {$members_table} WHERE id IN ({$placeholders})",
-                $user_ids
-            ),
-            ARRAY_A
-        );
-    }
-    
-    return new WP_REST_Response( array(
-        'team' => array(
-            'id' => $team['id'],
-            'name' => $team['name'],
-            'access_code' => $team['access_code']
-        ),
-        'users' => $users ?: array()
-    ), 200 );
-}
-
-/**
- * PWA shortcode and script registration (canonical names)
- */
 function subsales_register_pwa_scripts() {
-    wp_register_script( 'subsales-pwa-app', SUBSALES_PLUGIN_URL . 'pwa/app.js', array(), SUBSALES_VERSION, true );
-    wp_register_style( 'subsales-pwa-style', SUBSALES_PLUGIN_URL . 'pwa/styles.css', array(), SUBSALES_VERSION );
-    $portal_base = esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) );
-    $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
-    $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
-
-    $settings = array(
-        'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
-        'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-        'portalBase' => $portal_base,
-        'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
-        'sessionDuration' => intval( get_option( 'order_sync_session_duration', 86400000 ) ),
-        'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
-        'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
-        'brandName' => get_option( 'subsales_branding', 'Subsales' ),
-        'brandingImage' => $header_image_url
-    );
-    // Include configured products (global, not per-team). Stored as option 'order_sync_products'.
-    $settings['products'] = order_sync_get_products_config();
-
-    wp_localize_script( 'subsales-pwa-app', 'SUBSALES_PWA_CONFIG', $settings );
-    // Enqueue style for PWA UI (also useful for shortcode pages)
-    wp_enqueue_style( 'subsales-pwa-style' );
+    // Deprecated: Now handled by Subsales_PWA::register_pwa_scripts() via class init hook
+    // This wrapper kept for backward compatibility in case external code calls it directly
+    Subsales_PWA::register_pwa_scripts();
 }
-add_action( 'wp_enqueue_scripts', 'subsales_register_pwa_scripts' );
+// Note: add_action() removed - now handled by Subsales_PWA::init()
 
 function subsales_pwa_shortcode( $atts = array() ) {
-    wp_enqueue_script( 'subsales-pwa-app' );
-
-    add_action( 'wp_head', function() {
-        $portal_slug = get_option( 'order_sync_portal_slug', '' );
-        if ( $portal_slug ) {
-            echo '<link rel="manifest" href="' . esc_url( home_url( '/' . $portal_slug . '/manifest.json' ) ) . '">';
-        } else {
-            echo '<link rel="manifest" href="' . esc_url( SUBSALES_PLUGIN_URL . 'pwa/manifest.json' ) . '">';
-        }
-        echo '<meta name="theme-color" content="#2d6cdf">';
-    } );
-
-        ob_start();
-        ?>
-    <?php $subsales_primary = esc_attr( get_option( 'order_sync_primary_color', '#2d6cdf' ) ); $subsales_variant = esc_attr( get_option( 'order_sync_style_variant', 'default' ) ); ?>
-    <div id="subsales-pwa-root" class="sm-variant-<?php echo $subsales_variant; ?>" style="--sm-primary: <?php echo $subsales_primary; ?>;">
-            <style>/* Ensure auth-only controls are hidden server-side until client reveals them */
-                .sm-auth-hidden{display:none!important;visibility:hidden!important}
-                /* Force branding image visible in case theme defines a generic .hidden */
-                .sm-brand-image.hidden, #brandHeaderImage.hidden { display:block!important; visibility:visible!important; opacity:1!important; max-width:40%!important; height:auto!important; }
-            </style>
-                .sm-auth-hidden{display:none!important;visibility:hidden!important}
-            </style>
-            <header class="sm-header" role="banner">
-                <div class="sm-header-left"></div>
-                <div class="sm-header-center">
-                    <?php $header_image_id = intval( get_option( 'subsales_header_image', 0 ) ); $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : ''; ?>
-                    <img id="brandHeaderImage" class="sm-brand-image" src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" />
-                    <h1 class="sm-brand-name"><?php echo esc_html( get_option( 'subsales_branding', 'Subsales' ) ); ?></h1>
-                </div>
-                <div class="sm-header-right">
-                    <div id="headerStatus" class="sm-auth-hidden" title="Network status" aria-live="polite" aria-label="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
-                    <button id="forceSyncBtn" class="sm-btn sm-auth-hidden" title="Force sync offline orders">Sync now</button>
-                    <button id="viewOnlineBtn" class="sm-btn sm-auth-hidden" style="margin-right:8px">View online orders</button>
-                    <span id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></span>
-                    <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
-                    <button id="eodBtn" class="sm-btn sm-auth-hidden">EOD Tally</button>
-                    <button id="logoutBtn" class="sm-btn sm-auth-hidden" title="Log out">Log out</button>
-                    <button id="openInlayBtn" class="sm-btn hidden sm-auth-hidden">Queued Orders</button>
-                </div>
-            </header>
-
-            <section id="loginSection" class="sm-login-section">
-                <!-- Legacy login (team+code) -->
-                <div id="legacyLogin" class="sm-login-mode">
-                    <h2>Team Login</h2>
-                    <p>Sign in with your team name and access code.</p>
-                    <div class="row" style="margin-bottom:8px">
-                        <img id="brandHeaderImage" class="sm-brand-image hidden" src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" />
-                        <div style="flex:1"></div>
-                    </div>
-                    <input id="teamName" placeholder="Team name" />
-                    <input id="teamCode" placeholder="Access code" />
-                    <div id="loginError" class="hidden" style="color:#c00;margin-top:8px"></div>
-                    <div class="btn-row"><button id="loginBtn" class="sm-btn">Login</button></div>
-                </div>
-                
-                <!-- User login (name+phone) -->
-                <div id="userLogin" class="sm-login-mode hidden">
-                    <h2>Login</h2>
-                    <p>Sign in with your name and phone number.</p>
-                    <div class="row" style="margin-bottom:8px">
-                        <img id="brandHeaderImageUser" class="sm-brand-image hidden" src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" />
-                        <div style="flex:1"></div>
-                    </div>
-                    <label>Full Name</label>
-                    <input id="userName" list="userSuggestions" placeholder="Start typing your name..." autocomplete="off" />
-                    <datalist id="userSuggestions"></datalist>
-                    <label>Phone Number</label>
-                    <input id="userPhone" type="tel" inputmode="tel" placeholder="10 digits" maxlength="10" pattern="[0-9]{10}" autocomplete="off" />
-                    <div id="teamSelectRow" class="sm-row hidden">
-                        <label>Select Team</label>
-                        <select id="userTeamSelect">
-                            <option value="">-- Select team --</option>
-                        </select>
-                    </div>
-                    <div id="individualSalesRow" class="sm-row hidden">
-                        <label><input type="checkbox" id="individualSales" /> Individual Sales (not for a team)</label>
-                    </div>
-                    <div id="loginError" class="hidden" style="color:#c00;margin-top:8px"></div>
-                    <div class="btn-row"><button id="userLoginBtn" class="sm-btn">Login</button></div>
-                </div>
-            </section>
-
-            <section id="appSection" class="hidden sm-app-section" style="display:none">
-                <div class="row">
-                    <div class="col-2">
-                        <h2>Create Order</h2>
-                        <label>Customer name</label>
-                        <input id="customerName" placeholder="Customer name" />
-                        <label>Address</label>
-                        <input id="address" placeholder="Address" />
-                        <label>Cell number</label>
-                        <input id="cellNumber" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Cell number" />
-                        <div class="row row-spaced">
-                            <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
-                        </div>
-                        <label>Donation amount (USD)</label>
-                        <input id="donationAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0.00" />
-                        <div class="order-total"><strong>Order total: $<span id="orderTotal">0.00</span></strong></div>
-                        <div class="pay-options">
-                            <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
-                            <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
-                        </div>
-                        <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
-                        <label>Delivery Instructions</label>
-                        <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
-                        <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
-                    </div>
-                </div>
-                <!-- Local orders removed from main view (displayed via My Orders modal/inlay) -->
-                <div style="margin-top:12px; border-top:1px solid #eee; padding-top:8px">
-                    <h3>Status</h3>
-                    <div id="networkStatus">Offline</div>
-                    <div id="syncStatus">Not synced</div>
-                </div>
-            </section>
-        </div>
-        <?php
-    // Add a small script to set the page title and show branding if available in the localized config
-    // Also add a robust inline fallback to hide the app section until the PWA client explicitly shows it
-    echo "<script>try{const cfg=window.SUBSALES_PWA_CONFIG||{}; if(cfg.brandName){document.title=cfg.brandName+' — PWA'; const h=document.querySelector('#subsales-pwa-root h1'); if(h) h.textContent=cfg.brandName;} if(cfg.brandingImage){const img=document.getElementById('brandHeaderImage'); if(img){img.src=cfg.brandingImage; img.classList.remove('hidden');}} // robust fallback: hide app section until client shows it\n    (function(){ try{ var app=document.getElementById('appSection'); if(app){ app.style.display='none'; app.dataset.smFallbackHidden='1'; } var login=document.getElementById('loginSection'); if(login){ login.style.display='block'; } }catch(e){} })(); }catch(e){};</script>";
-    return ob_get_clean();
+    // Deprecated: Now handled by Subsales_PWA::pwa_shortcode() via class init shortcode
+    // This wrapper kept for backward compatibility in case external code calls it directly
+    return Subsales_PWA::pwa_shortcode( $atts );
 }
-add_shortcode( 'subsales_pwa', 'subsales_pwa_shortcode' );
+// Note: add_shortcode() removed - now handled by Subsales_PWA::init()
+
+function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
+    return Subsales_PWA::ensure_pwa_page( $slug );
+}
 
 // Clear only orders/teams/members tables (preserves options)
 function order_sync_clear_orders() {
@@ -4609,33 +3308,6 @@ function subsales_uninstall() {
     delete_option( 'subsales_delete_on_uninstall' );
 }
 register_uninstall_hook( __FILE__, 'subsales_uninstall' );
-
-function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
-    $slug = sanitize_title( $slug );
-    $page_id = get_option( 'order_sync_pwa_page_id', 0 );
-    if ( $page_id ) {
-        $page = get_post( $page_id );
-        if ( $page && 'publish' === $page->post_status ) {
-            if ( $page->post_name !== $slug ) wp_update_post( array( 'ID' => $page_id, 'post_name' => $slug ) );
-            return $page_id;
-        }
-    }
-
-    $existing = get_page_by_path( $slug );
-    if ( $existing ) { update_option( 'order_sync_pwa_page_id', $existing->ID ); return $existing->ID; }
-
-    $postarr = array(
-        'post_title'   => 'Subsales Portal',
-        'post_name'    => $slug,
-        'post_content' => '[subsales_pwa]',
-        'post_status'  => 'publish',
-        'post_type'    => 'page',
-    );
-
-    $new_id = wp_insert_post( $postarr );
-    if ( $new_id && ! is_wp_error( $new_id ) ) { update_option( 'order_sync_pwa_page_id', $new_id ); return $new_id; }
-    return false;
-}
 
 /**
  * Get plugin version from plugin header (preferred) or fallback to SUBSALES_VERSION.
