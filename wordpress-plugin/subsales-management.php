@@ -54,6 +54,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
 
 // Initialize database
 Subsales_Database::init();
@@ -2962,10 +2963,65 @@ function order_manager_get_server_time( WP_REST_Request $request ) {
     return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
 }
 
-// Team authentication API endpoints
+/**
+ * Teams & User Management Functions (Backward Compatibility Wrappers)
+ * All team/user functionality now handled by Subsales_Teams class
+ */
+
 function team_member_login( WP_REST_Request $request ) {
-    global $wpdb;
-    $data = $request->get_json_params();
+    return Subsales_Teams::team_member_login( $request );
+}
+
+function verify_team_access( WP_REST_Request $request ) {
+    return Subsales_Teams::verify_team_access( $request );
+}
+
+function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_members_endpoint( $request );
+}
+
+function order_sync_create_user( WP_REST_Request $request ) {
+    return Subsales_Teams::create_user( $request );
+}
+
+function order_sync_get_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_users( $request );
+}
+
+function order_sync_get_user_by_id( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_by_id( $request );
+}
+
+function order_sync_update_user( WP_REST_Request $request ) {
+    return Subsales_Teams::update_user( $request );
+}
+
+function order_sync_delete_user( WP_REST_Request $request ) {
+    return Subsales_Teams::delete_user( $request );
+}
+
+function order_sync_search_users( WP_REST_Request $request ) {
+    return Subsales_Teams::search_users( $request );
+}
+
+function order_sync_get_user_teams( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_teams( $request );
+}
+
+function order_sync_assign_user_to_team( WP_REST_Request $request ) {
+    return Subsales_Teams::assign_user_to_team( $request );
+}
+
+function order_sync_remove_user_from_team( WP_REST_Request $request ) {
+    return Subsales_Teams::remove_user_from_team( $request );
+}
+
+function order_sync_get_team_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_users( $request );
+}
+
+/**
+ * PWA Functions (Backward Compatibility Wrappers)
     
     $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
     
@@ -3239,617 +3295,6 @@ function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
     $members = order_sync_get_team_members_by_team( $team['id'] );
     if ( ! $members ) $members = array();
     return new WP_REST_Response( $members, 200 );
-}
-
-// ============================================================================
-// User Management REST API (Phase 2)
-// ============================================================================
-
-/**
- * POST /wp-json/order-manager/v1/users
- * Create a new user
- */
-function order_sync_create_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $params = $request->get_json_params();
-    $name = sanitize_text_field( $params['name'] ?? '' );
-    $email = sanitize_email( $params['email'] ?? '' );
-    $phone = sanitize_text_field( $params['phone'] ?? '' );
-    $role = sanitize_text_field( $params['role'] ?? 'member' );
-    
-    // Validation
-    if ( empty( $name ) ) {
-        return new WP_REST_Response( array( 'error' => 'Name is required' ), 400 );
-    }
-    if ( empty( $phone ) ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number is required' ), 400 );
-    }
-    
-    // Normalize phone to 10 digits
-    $phone = preg_replace( '/[^0-9]/', '', $phone );
-    if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
-    }
-    
-    // Check if phone already exists
-    $existing = $wpdb->get_var( $wpdb->prepare(
-        "SELECT id FROM {$members_table} WHERE phone = %s",
-        $phone
-    ));
-    if ( $existing ) {
-        return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
-    }
-    
-    $email = $email ?: '';
-    
-    // Insert user
-    $result = $wpdb->insert(
-        $members_table,
-        array(
-            'team_id' => 0, // No team assignment initially
-            'name' => $name,
-            'email' => $email,
-            'phone' => $phone,
-            'role' => $role,
-            'status' => 'active'
-        ),
-        array( '%d', '%s', '%s', '%s', '%s', '%s' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to create user' ), 500 );
-    }
-    
-    $user_id = $wpdb->insert_id;
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    return new WP_REST_Response( $user, 201 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/users
- * Get all users or filter by query params
- */
-function order_sync_get_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $limit = intval( $request->get_param( 'limit' ) ?: 100 );
-    $offset = intval( $request->get_param( 'offset' ) ?: 0 );
-    $status = sanitize_text_field( $request->get_param( 'status' ) ?: '' );
-    
-    $where = array();
-    $params = array();
-    
-    if ( ! empty( $status ) ) {
-        $where[] = "status = %s";
-        $params[] = $status;
-    }
-    
-    $where_sql = ! empty( $where ) ? 'WHERE ' . implode( ' AND ', $where ) : '';
-    
-    if ( ! empty( $params ) ) {
-        $sql = $wpdb->prepare(
-            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
-            array_merge( $params, array( $limit, $offset ) )
-        );
-    } else {
-        $sql = $wpdb->prepare(
-            "SELECT * FROM {$members_table} {$where_sql} ORDER BY name ASC LIMIT %d OFFSET %d",
-            $limit,
-            $offset
-        );
-    }
-    
-    $users = $wpdb->get_results( $sql, ARRAY_A );
-    
-    // For each user, get their teams
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    foreach ( $users as &$user ) {
-        $team_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-            $user['id']
-        ));
-        
-        $user['teams'] = array();
-        if ( ! empty( $team_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-            $teams = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                    $team_ids
-                ),
-                ARRAY_A
-            );
-            $user['teams'] = $teams ?: array();
-        }
-    }
-    
-    return new WP_REST_Response( $users, 200 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/users/{id}
- * Get a single user by ID
- */
-function order_sync_get_user_by_id( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $user ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Get user's teams
-    $team_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-        $user_id
-    ));
-    
-    $user['teams'] = array();
-    if ( ! empty( $team_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-        $teams = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                $team_ids
-            ),
-            ARRAY_A
-        );
-        $user['teams'] = $teams ?: array();
-    }
-    
-    return new WP_REST_Response( $user, 200 );
-}
-
-/**
- * PUT /wp-json/order-manager/v1/users/{id}
- * Update a user
- */
-function order_sync_update_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    $params = $request->get_json_params();
-    
-    // Check if user exists
-    $existing = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $existing ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    $updates = array();
-    $formats = array();
-    
-    if ( isset( $params['name'] ) ) {
-        $name = sanitize_text_field( $params['name'] );
-        if ( empty( $name ) ) {
-            return new WP_REST_Response( array( 'error' => 'Name cannot be empty' ), 400 );
-        }
-        $updates['name'] = $name;
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['email'] ) ) {
-        $updates['email'] = sanitize_email( $params['email'] ) ?: '';
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['phone'] ) ) {
-        $phone = preg_replace( '/[^0-9]/', '', $params['phone'] );
-        if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
-            return new WP_REST_Response( array( 'error' => 'Phone number must be 10 digits' ), 400 );
-        }
-        
-        // Check if phone exists for another user
-        $conflict = $wpdb->get_var( $wpdb->prepare(
-            "SELECT id FROM {$members_table} WHERE phone = %s AND id != %d",
-            $phone,
-            $user_id
-        ));
-        if ( $conflict ) {
-            return new WP_REST_Response( array( 'error' => 'Phone number already exists' ), 409 );
-        }
-        
-        $updates['phone'] = $phone;
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['role'] ) ) {
-        $updates['role'] = sanitize_text_field( $params['role'] );
-        $formats[] = '%s';
-    }
-    
-    if ( isset( $params['status'] ) ) {
-        $updates['status'] = sanitize_text_field( $params['status'] );
-        $formats[] = '%s';
-    }
-    
-    if ( empty( $updates ) ) {
-        return new WP_REST_Response( array( 'error' => 'No fields to update' ), 400 );
-    }
-    
-    $result = $wpdb->update(
-        $members_table,
-        $updates,
-        array( 'id' => $user_id ),
-        $formats,
-        array( '%d' )
-    );
-    
-    if ( $result === false ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to update user' ), 500 );
-    }
-    
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    return new WP_REST_Response( $user, 200 );
-}
-
-/**
- * DELETE /wp-json/order-manager/v1/users/{id}
- * Delete a user
- */
-function order_sync_delete_user( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    // Check if user exists
-    $existing = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $existing ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Delete user-team associations first
-    $wpdb->delete( $user_teams_table, array( 'user_id' => $user_id ), array( '%d' ) );
-    
-    // Delete user
-    $result = $wpdb->delete( $members_table, array( 'id' => $user_id ), array( '%d' ) );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to delete user' ), 500 );
-    }
-    
-    return new WP_REST_Response( array( 'success' => true, 'message' => 'User deleted' ), 200 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/users/search?q={query}
- * Search users by name or phone
- */
-function order_sync_search_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    
-    $query = sanitize_text_field( $request->get_param( 'q' ) ?: '' );
-    $limit = intval( $request->get_param( 'limit' ) ?: 20 );
-    
-    if ( empty( $query ) ) {
-        return new WP_REST_Response( array(), 200 );
-    }
-    
-    // Search by name or phone (partial match)
-    $search_term = '%' . $wpdb->esc_like( $query ) . '%';
-    $phone_search = preg_replace( '/[^0-9]/', '', $query );
-    
-    if ( ! empty( $phone_search ) ) {
-        // Search by both name and phone
-        $users = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$members_table} 
-             WHERE name LIKE %s OR phone LIKE %s 
-             ORDER BY name ASC LIMIT %d",
-            $search_term,
-            '%' . $wpdb->esc_like( $phone_search ) . '%',
-            $limit
-        ), ARRAY_A );
-    } else {
-        // Search by name only
-        $users = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$members_table} 
-             WHERE name LIKE %s 
-             ORDER BY name ASC LIMIT %d",
-            $search_term,
-            $limit
-        ), ARRAY_A );
-    }
-    
-    // Get teams for each user
-    foreach ( $users as &$user ) {
-        $team_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-            $user['id']
-        ));
-        
-        $user['teams'] = array();
-        if ( ! empty( $team_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-            $teams = $wpdb->get_results(
-                $wpdb->prepare(
-                    "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                    $team_ids
-                ),
-                ARRAY_A
-            );
-            $user['teams'] = $teams ?: array();
-        }
-    }
-    
-    return new WP_REST_Response( $users, 200 );
-}
-
-// ============================================================================
-// Team Assignment REST API (Phase 3)
-// ============================================================================
-
-/**
- * GET /wp-json/order-manager/v1/users/{id}/teams
- * Get all teams for a specific user
- */
-function order_sync_get_user_teams( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $user_id = intval( $request->get_param( 'id' ) );
-    
-    // Verify user exists
-    $user_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
-        $user_id
-    ));
-    
-    if ( ! $user_exists ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Get team IDs for this user
-    $team_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-        $user_id
-    ));
-    
-    $teams = array();
-    if ( ! empty( $team_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-        $teams = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, access_code, description FROM {$teams_table} WHERE id IN ({$placeholders})",
-                $team_ids
-            ),
-            ARRAY_A
-        );
-    }
-    
-    return new WP_REST_Response( $teams ?: array(), 200 );
-}
-
-/**
- * POST /wp-json/order-manager/v1/teams/{id}/assign
- * Assign a user to a team
- * Body: { "user_id": 123 }
- */
-function order_sync_assign_user_to_team( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    $params = $request->get_json_params();
-    $user_id = intval( $params['user_id'] ?? 0 );
-    
-    if ( ! $user_id ) {
-        return new WP_REST_Response( array( 'error' => 'user_id is required' ), 400 );
-    }
-    
-    // Verify team exists
-    $team = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ), ARRAY_A );
-    
-    if ( ! $team ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Verify user exists
-    $user = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$members_table} WHERE id = %d",
-        $user_id
-    ), ARRAY_A );
-    
-    if ( ! $user ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Check if already assigned
-    $exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-        $user_id,
-        $team_id
-    ));
-    
-    if ( $exists ) {
-        return new WP_REST_Response( array( 
-            'success' => true,
-            'message' => 'User already assigned to this team'
-        ), 200 );
-    }
-    
-    // Create assignment
-    $result = $wpdb->insert(
-        $user_teams_table,
-        array(
-            'user_id' => $user_id,
-            'team_id' => $team_id
-        ),
-        array( '%d', '%d' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to assign user to team' ), 500 );
-    }
-    
-    return new WP_REST_Response( array(
-        'success' => true,
-        'message' => 'User assigned to team successfully',
-        'assignment' => array(
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'user_name' => $user['name'],
-            'team_name' => $team['name']
-        )
-    ), 201 );
-}
-
-/**
- * DELETE /wp-json/order-manager/v1/teams/{id}/users/{userId}
- * Remove a user from a team
- */
-function order_sync_remove_user_from_team( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    $user_id = intval( $request->get_param( 'userId' ) );
-    
-    // Verify team exists
-    $team_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ));
-    
-    if ( ! $team_exists ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Verify user exists
-    $user_exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$members_table} WHERE id = %d",
-        $user_id
-    ));
-    
-    if ( ! $user_exists ) {
-        return new WP_REST_Response( array( 'error' => 'User not found' ), 404 );
-    }
-    
-    // Check if assignment exists
-    $exists = $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-        $user_id,
-        $team_id
-    ));
-    
-    if ( ! $exists ) {
-        return new WP_REST_Response( array( 
-            'error' => 'User is not assigned to this team'
-        ), 404 );
-    }
-    
-    // Remove assignment
-    $result = $wpdb->delete(
-        $user_teams_table,
-        array(
-            'user_id' => $user_id,
-            'team_id' => $team_id
-        ),
-        array( '%d', '%d' )
-    );
-    
-    if ( ! $result ) {
-        return new WP_REST_Response( array( 'error' => 'Failed to remove user from team' ), 500 );
-    }
-    
-    return new WP_REST_Response( array(
-        'success' => true,
-        'message' => 'User removed from team successfully'
-    ), 200 );
-}
-
-/**
- * GET /wp-json/order-manager/v1/teams/{id}/users
- * Get all users assigned to a specific team
- */
-function order_sync_get_team_users( WP_REST_Request $request ) {
-    global $wpdb;
-    $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $team_id = intval( $request->get_param( 'id' ) );
-    
-    // Verify team exists
-    $team = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$teams_table} WHERE id = %d",
-        $team_id
-    ), ARRAY_A );
-    
-    if ( ! $team ) {
-        return new WP_REST_Response( array( 'error' => 'Team not found' ), 404 );
-    }
-    
-    // Get user IDs for this team
-    $user_ids = $wpdb->get_col( $wpdb->prepare(
-        "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
-        $team_id
-    ));
-    
-    $users = array();
-    if ( ! empty( $user_ids ) ) {
-        $placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
-        $users = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, email, phone, role, status FROM {$members_table} WHERE id IN ({$placeholders})",
-                $user_ids
-            ),
-            ARRAY_A
-        );
-    }
-    
-    return new WP_REST_Response( array(
-        'team' => array(
-            'id' => $team['id'],
-            'name' => $team['name'],
-            'access_code' => $team['access_code']
-        ),
-        'users' => $users ?: array()
-    ), 200 );
 }
 
 /**

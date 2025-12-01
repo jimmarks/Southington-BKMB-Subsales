@@ -81,13 +81,13 @@ class Subsales_REST_API {
         // Authentication API
         register_rest_route( 'order-manager/v1', '/auth/login', array(
             'methods' => 'POST',
-            'callback' => 'team_member_login',
+            'callback' => array( 'Subsales_Teams', 'team_member_login' ),
             'permission_callback' => '__return_true',
         ));
         
         register_rest_route( 'order-manager/v1', '/auth/verify', array(
             'methods' => 'POST',
-            'callback' => 'verify_team_access',
+            'callback' => array( 'Subsales_Teams', 'verify_team_access' ),
             'permission_callback' => '__return_true',
         ));
         
@@ -108,69 +108,69 @@ class Subsales_REST_API {
         // Teams API
         register_rest_route( 'order-manager/v1', '/teams/members', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_get_team_members_endpoint',
+            'callback' => array( 'Subsales_Teams', 'get_team_members_endpoint' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         // User Management API
         register_rest_route( 'order-manager/v1', '/users', array(
             'methods' => 'POST',
-            'callback' => 'order_sync_create_user',
+            'callback' => array( 'Subsales_Teams', 'create_user' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/users', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_get_users',
+            'callback' => array( 'Subsales_Teams', 'get_users' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_get_user_by_id',
+            'callback' => array( 'Subsales_Teams', 'get_user_by_id' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'PUT',
-            'callback' => 'order_sync_update_user',
+            'callback' => array( 'Subsales_Teams', 'update_user' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'DELETE',
-            'callback' => 'order_sync_delete_user',
+            'callback' => array( 'Subsales_Teams', 'delete_user' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/users/search', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_search_users',
+            'callback' => array( 'Subsales_Teams', 'search_users' ),
             'permission_callback' => '__return_true', // Public for PWA login
         ));
         
         // Team Assignment API
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_get_user_teams',
+            'callback' => array( 'Subsales_Teams', 'get_user_teams' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/assign', array(
             'methods' => 'POST',
-            'callback' => 'order_sync_assign_user_to_team',
+            'callback' => array( 'Subsales_Teams', 'assign_user_to_team' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users/(?P<userId>\d+)', array(
             'methods' => 'DELETE',
-            'callback' => 'order_sync_remove_user_from_team',
+            'callback' => array( 'Subsales_Teams', 'remove_user_from_team' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users', array(
             'methods' => 'GET',
-            'callback' => 'order_sync_get_team_users',
+            'callback' => array( 'Subsales_Teams', 'get_team_users' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
     }
