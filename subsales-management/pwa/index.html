@@ -2,7 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title id="pageTitle">Loading...</title>
     <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
@@ -18,6 +20,9 @@
       <div class="sm-header-center">
         <img id="brandHeaderImage" class="sm-brand-image hidden" />
         <h1 id="brandName" class="sm-brand-name">Loading...</h1>
+        <div id="currentTeamDisplay" class="sm-current-team hidden sm-auth-hidden">
+          <span id="currentTeamName">Team</span>
+        </div>
       </div>
       <div class="sm-header-right">
         <div id="headerStatus" title="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
@@ -35,8 +40,8 @@
         <div id="legacyLogin" class="sm-login-mode">
           <h2 id="legacyLoginTitle">Loading...</h2>
           <p id="legacyLoginDesc">Sign in with your team name and access code.</p>
-          <input id="teamName" placeholder="Team name" />
-          <input id="teamCode" placeholder="Access code" />
+          <input id="teamName" placeholder="Team name" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+          <input id="teamCode" placeholder="Access code" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
           <div class="btn-row"><button id="loginBtn" class="sm-btn">Login</button></div>
         </div>
         
@@ -44,31 +49,40 @@
         <div id="userLogin" class="sm-login-mode hidden">
           <h2 id="userLoginTitle">Loading...</h2>
           <p id="userLoginDesc">Sign in with your name and phone number.</p>
-          <label>Full Name</label>
-          <input id="userName" list="userSuggestions" placeholder="Start typing your name..." autocomplete="off" />
-          <datalist id="userSuggestions"></datalist>
-          <label>Phone Number</label>
-          <input id="userPhone" type="tel" inputmode="tel" placeholder="10 digits" maxlength="10" pattern="[0-9]{10}" autocomplete="off" />
+          <label for="userName">Full Name</label>
+          <div style="position:relative;">
+            <input id="userName" placeholder="Start typing your name..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <div id="userNameSuggestions" class="sm-suggestions hidden"></div>
+          </div>
+          <label for="userPhone">Phone Number</label>
+          <input id="userPhone" type="tel" inputmode="tel" placeholder="10 digits" maxlength="10" pattern="[0-9]{10}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
           <div id="teamSelectRow" class="sm-row hidden">
             <label>Select Team</label>
             <select id="userTeamSelect">
               <option value="">-- Select team --</option>
             </select>
           </div>
-          <div id="individualSalesRow" class="sm-row hidden">
-            <label><input type="checkbox" id="individualSales" /> Individual Sales (not for a team)</label>
+          <div id="individualSalesRow" class="sm-toggle-row hidden">
+            <label class="sm-toggle-label">
+              <span class="sm-toggle-text">Individual Sales</span>
+              <div class="sm-toggle-switch">
+                <input type="checkbox" id="individualSales" />
+                <span class="sm-toggle-slider"></span>
+              </div>
+            </label>
           </div>
           <div class="btn-row"><button id="userLoginBtn" class="sm-btn">Login</button></div>
         </div>
       </section>
 
-      <section id="appSection" class="hidden" style="display:none">
+      <section id="appSection" class="hidden sm-auth-hidden" style="display:none">
         <div class="row">
           <div class="col-2">
             <h2>Create Order</h2>
-            <input id="customerName" placeholder="Customer name" />
-            <input id="address" placeholder="Address" />
-            <input id="cellNumber" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="Cell number" />
+            <input id="customerName" placeholder="Customer name" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" class="sm-auth-hidden" />
+            <input id="address" placeholder="Address" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <input id="unitFloorApt" placeholder="Unit / Floor / Apt (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <input id="cellNumber" type="tel" inputmode="numeric" placeholder="Cell number (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <div class="row row-spaced">
               <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
             </div>

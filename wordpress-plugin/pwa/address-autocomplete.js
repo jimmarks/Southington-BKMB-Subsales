@@ -88,11 +88,13 @@
 
   // Load per-ZIP JSON from uploads directory and cache in memory / IndexedDB
   const ZIP_CACHE = {}; // in-memory cache: zip -> array of records
+  let ZIP_BASE_URL = '/wp-content/uploads/subsales-zipdata/'; // default, updated from zip-index.json
+  
   async function loadZipData(zip){
     zip = (''+zip).trim();
     if(!/^[0-9]{5}$/.test(zip)) throw new Error('invalid zip');
     if(ZIP_CACHE[zip]){ console.log('subsalesNearby: zip cache hit', zip); return ZIP_CACHE[zip]; }
-    const url = '/wp-content/uploads/subsales-zipdata/' + zip + '.json';
+    const url = ZIP_BASE_URL + zip + '.json';
     console.log('subsalesNearby: loading zip data', url);
     try{
       const resp = await fetch(url, { cache: 'no-store' });
@@ -134,9 +136,18 @@
     }
 
   // Prefetch a list of zips in the background and store them in IndexedDB + memory cache.
-  function prefetchAllZips(zipList){
+  function prefetchAllZips(indexData){
+    // Handle both formats: array of zips or object with {zips: [], baseUrl: ''}
+    let zipList = [];
+    if(Array.isArray(indexData)){
+      zipList = indexData;
+    } else if(indexData && typeof indexData === 'object'){
+      if(indexData.baseUrl) ZIP_BASE_URL = indexData.baseUrl;
+      zipList = indexData.zips || [];
+    }
+    
     if(!Array.isArray(zipList) || zipList.length === 0) return;
-    console.log('subsalesNearby: prefetching zips', zipList);
+    console.log('subsalesNearby: prefetching zips', zipList, 'from', ZIP_BASE_URL);
     const work = async ()=>{
       for(let i=0;i<zipList.length;i++){
         const z = (''+zipList[i]).trim();
@@ -305,10 +316,13 @@
       // unify selection logic so we can trigger it from pointer/touch/click
       const doSelect = ()=>{
         console.log('subsalesNearby: suggestion selected', it);
+        // Only update the input value if user hasn't continued typing
+        // This allows users to freely type their own address
+        const currentVal = (inputEl.value || '').trim();
         inputEl.value = normalizeAddress(it);
         try{ inputEl.dataset.subsalesSelected = JSON.stringify(it); }catch(e){}
         removeDropdown(inputEl);
-        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        // Don't trigger input event to avoid re-showing suggestions
         inputEl.focus();
       };
 
@@ -494,7 +508,10 @@
         btn.disabled = true; btn.innerText = 'Loading…';
         try{
           const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
-          if(resp && resp.ok){ const list = await resp.json(); if(Array.isArray(list) && list.length){ prefetchAllZips(list); } }
+          if(resp && resp.ok){ 
+            const indexData = await resp.json(); 
+            prefetchAllZips(indexData);
+          }
         }catch(e){ console.warn('subsalesNearby: trigger prefetch failed', e); }
         // allow button to be used again
         btn.disabled = false; btn.innerText = 'Load address data';
@@ -506,7 +523,17 @@
   // Expose on window for quick use
   window.subsalesNearby = {
     init: initNearbyAutocomplete,
-    fetchNearby: fetchNearby
+    fetchNearby: fetchNearby,
+    prefetch: function(){ // expose prefetch so app.js can call it on login
+      (async ()=>{
+        try{
+          const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
+          if(!resp.ok) return;
+          const indexData = await resp.json();
+          prefetchAllZips(indexData);
+        }catch(e){ console.warn('subsalesNearby: manual prefetch failed', e); }
+      })();
+    }
   };
 
   // Auto-init when DOM ready
@@ -518,8 +545,8 @@
       try{
         const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
         if(!resp.ok) return;
-        const list = await resp.json();
-        if(Array.isArray(list) && list.length) prefetchAllZips(list);
+        const indexData = await resp.json();
+        prefetchAllZips(indexData);
       }catch(e){ console.warn('subsalesNearby: zip-index prefetch failed', e); }
     };
     // delay prefetch slightly so it doesn't block initial paint

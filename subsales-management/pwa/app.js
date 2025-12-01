@@ -1,14 +1,27 @@
 // BKMB Subsales PWA client (plugin-hosted) — single-file clean implementation
 (function(){
   'use strict';
+  
+  // COMPREHENSIVE DEBUG LOGGING
+  console.log('===== SUBSALES PWA LOADED =====');
+  console.log('Timestamp:', new Date().toISOString());
+  console.log('User Agent:', navigator.userAgent);
+  console.log('Online Status:', navigator.onLine);
+  
   // Prefer plugin-localized settings (PHP uses SUBSALES_PWA_CONFIG), fall back to legacy BKMB_PWA_CONFIG
   const cfg = window.SUBSALES_PWA_CONFIG || window.BKMB_PWA_CONFIG || {};
+  console.log('Config loaded:', cfg);
+  
   const apiBase = (cfg.apiBase || cfg.api_base || localStorage.getItem('API_BASE_URL') || '').replace(/\/+$/, '');
   const pluginBase = cfg.pluginBase || cfg.plugin_url || '';
   const portalBase = cfg.portalBase || '';
   const googleMapsApiKey = cfg.googleMapsApiKey || cfg.google_maps_api_key || '';
   const brandName = cfg.brandName || cfg.brand_name || 'Subsales';
   const brandingImage = cfg.brandingImage || cfg.branding_image || '';
+  
+  console.log('API Base:', apiBase);
+  console.log('Plugin Base:', pluginBase);
+  console.log('Brand Name:', brandName);
 
   // Apply runtime style overrides from admin settings (primary color and variant)
   (function applyRuntimeStyles(){
@@ -108,10 +121,12 @@
             <!-- User login (name+phone) -->
             <div id="userLogin" class="sm-login-mode hidden">
               <h2>Login</h2>
-              <label>Full Name</label>
-              <input id="userName" list="userSuggestions" placeholder="Start typing your name..." autocomplete="off" />
-              <datalist id="userSuggestions"></datalist>
-              <label>Phone Number</label>
+              <label for="userName">Full Name</label>
+              <div style="position:relative;">
+                <input id="userName" placeholder="Start typing your name..." autocomplete="off" />
+                <div id="userNameSuggestions" class="sm-suggestions hidden"></div>
+              </div>
+              <label for="userPhone">Phone Number</label>
               <input id="userPhone" type="tel" inputmode="tel" placeholder="10 digits" maxlength="10" pattern="[0-9]{10}" autocomplete="off" />
               <div id="teamSelectRow" class="sm-row hidden">
                 <label>Select Team</label>
@@ -401,15 +416,39 @@
     ensureEodExists();
     const container = qs('#eodContent'); if (!container) return;
     container.innerHTML = '<p>Computing totals...</p>';
+    
+    // Get current user ID (supports both user mode and legacy mode)
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    let currentUserId, currentUserName;
+    
+    if (loginMode === 'user') {
+      // User mode: use userId from localStorage
+      currentUserId = localStorage.getItem('userId') || '';
+      currentUserName = localStorage.getItem('userName') || '';
+    } else {
+      // Legacy mode: use teamMemberId
+      currentUserId = localStorage.getItem('teamMemberId') || '';
+      currentUserName = localStorage.getItem('teamMemberName') || '';
+    }
+    
     // Gather local and remote orders
     let local = [];
     try{ local = await Storage.all() || []; }catch(e){ local = []; }
     let remote = [];
     try{
-      const teamName = localStorage.getItem('teamName') || '';
-      const teamCode = localStorage.getItem('teamCode') || '';
       const url = apiBase ? (apiBase + '/orders?limit=10000') : '/wp-json/order-manager/v1/orders?limit=10000';
-      const resp = await fetch(url, { headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
+      
+      // Use appropriate auth headers based on login mode
+      const headers = {};
+      if (loginMode === 'user') {
+        headers['X-User-ID'] = localStorage.getItem('userId') || '';
+        headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+      } else {
+        headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+        headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+      }
+      
+      const resp = await fetch(url, { headers: headers });
       if (resp && resp.ok) { remote = await resp.json(); }
     }catch(e){ remote = []; }
     // Fetch server date info so we align "today" with server time
@@ -461,6 +500,15 @@
     function extractOrderInfo(o){
       // order may be local-format (with createdAt) or remote row with order_data/created_at
       const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : (o.order_data && typeof o.order_data === 'string' ? (function(){ try{ return JSON.parse(o.order_data); }catch(e){ return {}; } })() : o);
+      
+      // Filter by current user
+      const isMyOrder = (currentUserId && od.entered_by_id && od.entered_by_id === currentUserId) || 
+                        (currentUserId && od.subsales_user_id && od.subsales_user_id === currentUserId) ||
+                        (currentUserName && od.entered_by_name && od.entered_by_name === currentUserName) ||
+                        (currentUserId && o.user_id && String(o.user_id) === String(currentUserId));
+      
+      if (!isMyOrder) return; // skip orders not from current user
+      
       // Determine created timestamp from several possible locations
       const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;
       if (!isSameDayForServer(o, created)) return; // skip orders not from today (per server)
@@ -489,6 +537,13 @@
       else if (payment === 'check') totalCheck += orderTotal;
     }
     all.forEach(o => { try{ extractOrderInfo(o); }catch(e){} });
+    
+    // Update header to show user filter
+    const headerEl = qs('#eodInlay .inlay-header strong');
+    if (headerEl) {
+      headerEl.textContent = `EOD Tally - Today Only (${currentUserName || currentUserId || 'You'})`;
+    }
+    
     // Render table
     let html = '<table class="widefat fixed" style="margin-bottom:12px"><thead><tr><th>Product</th><th style="text-align:right">Qty sold</th></tr></thead><tbody>';
     products.forEach(p => { const q = prodTotals[p.id] || 0; html += `<tr><td>${escapeHtml(p.name||p.id)}</td><td style="text-align:right">${q}</td></tr>`; });
@@ -534,7 +589,7 @@
 
   // Storage: IndexedDB with localStorage fallback
   const Storage = (function(){
-    const DB = 'bkmb-pwa-db';
+    const DB = 'subsales-pwa-db';
     const STORE = 'orders';
     function idbOpen(){
       return new Promise((resolve)=>{
@@ -803,8 +858,17 @@
         }catch(e){}
       };
 
-      const fields = ['#customerName','#address','#cellNumber','#notes','#donationAmount','#checkNumber'];
+      const fields = ['#customerName','#address','#unitFloorApt','#cellNumber','#notes','#donationAmount','#checkNumber'];
       fields.forEach(s=>{ const el = qs(s); if (!el) return; try{ if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') el.value = ''; }catch(e){} });
+      
+      // Clear phone field validation state to prevent red border on empty field
+      try {
+        const cellField = qs('#cellNumber');
+        if (cellField) {
+          cellField.classList.remove('invalid');
+          cellField.setCustomValidity('');
+        }
+      } catch(e) {}
       // Also clear common injected autocomplete inputs (keep canonical address cleared too)
       try{
         // selectors that may host the visible autocomplete input
@@ -947,6 +1011,10 @@
   if (appSection) { appSection.classList.remove('hidden'); try{ appSection.style.display='block'; }catch(e){} }
   // reveal any server-side auth-only controls
   revealAuthControls();
+  // Prefetch ZIP data for address autocomplete
+  if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+    window.subsalesNearby.prefetch();
+  }
   if (deferredPrompt) installBox && installBox.classList.remove('hidden');
       trySync();
     });
@@ -967,8 +1035,8 @@
   async function searchUsers(query) {
     if (!query || query.length < 2) return [];
     try {
-      const url = apiBase ? (apiBase + '/users') : '/wp-json/order-manager/v1/users';
-      const resp = await fetch(url + '?search=' + encodeURIComponent(query));
+      const url = apiBase ? (apiBase + '/users/search') : '/wp-json/order-manager/v1/users/search';
+      const resp = await fetch(url + '?q=' + encodeURIComponent(query));
       if (!resp.ok) return [];
       const users = await resp.json();
       return users || [];
@@ -978,43 +1046,100 @@
     }
   }
 
-  // Populate user suggestions datalist
-  async function populateUserSuggestions(query) {
-    const users = await searchUsers(query);
-    const datalist = qs('#userSuggestions');
-    if (!datalist) return;
-    datalist.innerHTML = users.map(u => `<option value="${u.name}" data-phone="${u.phone}"></option>`).join('');
-  }
+  // User name input - autocomplete with custom dropdown
 
-  // Handle user name input for autocomplete
   const userNameInput = qs('#userName');
-  if (userNameInput) {
-    userNameInput.addEventListener('input', debounceUserSearch(function() {
-      const val = userNameInput.value.trim();
-      if (val.length >= 2) {
-        populateUserSuggestions(val);
+  const userNameSuggestions = qs('#userNameSuggestions');
+  let searchTimeout;
+  
+  async function searchUsers(query) {
+    if (!query || query.length < 2) return [];
+    try {
+      const url = apiBase ? (apiBase + '/users/search?q=' + encodeURIComponent(query)) : '/wp-json/order-manager/v1/users/search?q=' + encodeURIComponent(query);
+      const resp = await fetch(url);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      return Array.isArray(data) ? data : [];
+    } catch(e) {
+      console.warn('User search error:', e);
+      return [];
+    }
+  }
+  
+  if (userNameInput && userNameSuggestions) {
+    userNameInput.addEventListener('input', async function() {
+      clearTimeout(searchTimeout);
+      const query = userNameInput.value.trim();
+      
+      if (query.length < 2) {
+        userNameSuggestions.innerHTML = '';
+        userNameSuggestions.classList.add('hidden');
+        return;
       }
-    }, 300));
+      
+      searchTimeout = setTimeout(async () => {
+        const users = await searchUsers(query);
+        if (users.length === 0) {
+          userNameSuggestions.innerHTML = '';
+          userNameSuggestions.classList.add('hidden');
+          return;
+        }
+        
+        userNameSuggestions.innerHTML = users.map(u => 
+          `<div class="sm-suggestion-item" data-name="${escapeHtml(u.name)}" data-phone="${escapeHtml(u.phone)}">${escapeHtml(u.name)}</div>`
+        ).join('');
+        userNameSuggestions.classList.remove('hidden');
+        
+        // Add click handlers to suggestions
+        userNameSuggestions.querySelectorAll('.sm-suggestion-item').forEach(item => {
+          item.addEventListener('click', function() {
+            const name = item.getAttribute('data-name');
+            userNameInput.value = name;
+            userNameSuggestions.innerHTML = '';
+            userNameSuggestions.classList.add('hidden');
+          });
+        });
+      }, 300);
+    });
+    
+    // Hide suggestions when clicking outside
+    document.addEventListener('click', function(e) {
+      if (!userNameInput.contains(e.target) && !userNameSuggestions.contains(e.target)) {
+        userNameSuggestions.classList.add('hidden');
+      }
+    });
+  }
+  
+  function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   // User login button handler
   const userLoginBtn = qs('#userLoginBtn');
   if (userLoginBtn) {
     userLoginBtn.addEventListener('click', async () => {
+      console.log('===== USER LOGIN BUTTON CLICKED =====');
       const name = (qs('#userName') && qs('#userName').value.trim()) || '';
       const phone = (qs('#userPhone') && qs('#userPhone').value.trim()) || '';
+      console.log('Name:', name, 'Phone:', phone ? phone.substring(0,3) + '***' : '(empty)');
       
       if (!name || !phone) {
+        console.warn('Name or phone missing');
         return alert('Name and phone number are required');
       }
       
       // Validate phone (10 digits)
       const phoneDigits = phone.replace(/\D/g, '');
       if (phoneDigits.length !== 10) {
+        console.warn('Invalid phone length:', phoneDigits.length);
         return alert('Phone number must be exactly 10 digits');
       }
       
       try {
+        console.log('Calling user auth API...');
         // Call server to validate user
         const url = apiBase ? (apiBase + '/auth/login') : '/wp-json/order-manager/v1/auth/login';
         const resp = await fetch(url, {
@@ -1023,53 +1148,88 @@
           body: JSON.stringify({ name, phone: phoneDigits })
         });
         
+        console.log('Auth response status:', resp.status);
+        
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
+          console.error('Login failed:', err);
           return alert(err.message || 'Login failed. Check your name and phone number.');
         }
         
         const data = await resp.json();
+        console.log('Login successful, user data:', data.user);
+        console.log('Teams:', data.teams);
         
         // Store user session data
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
         try { localStorage.setItem('userPhone', phoneDigits); } catch(e){}
         
-        // Handle team selection
+        // Store user teams for potential switching
         if (data.teams && data.teams.length > 0) {
-          // Show team selector
-          const teamSelect = qs('#userTeamSelect');
-          const teamSelectRow = qs('#teamSelectRow');
-          const individualRow = qs('#individualSalesRow');
-          
-          if (teamSelect && teamSelectRow) {
-            teamSelect.innerHTML = '<option value="">-- Select team --</option>' +
-              data.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
-            teamSelectRow.classList.remove('hidden');
-            
-            // Show individual sales option
-            if (individualRow) individualRow.classList.remove('hidden');
-            
-            // Wait for team selection
-            return;
-          }
+          try { localStorage.setItem('userTeams', JSON.stringify(data.teams)); } catch(e){}
         }
         
-        // No teams - proceed to app (individual sales only)
-        try { localStorage.setItem('selectedTeamId', '-1'); } catch(e){}
-        try { localStorage.setItem('selectedTeamName', 'Individual'); } catch(e){}
+        // Get salesMode to determine team vs individual behavior
+        const salesMode = localStorage.getItem('salesMode') || 'legacy';
+        
+        console.log('User login successful. Current mode is ' + salesMode);
+        console.log('User has teams:', data.teams);
+        
+        // Handle team selection based on salesMode
+        if (salesMode === 'legacy') {
+          // Team mode: Show team selector, NO individual option
+          if (data.teams && data.teams.length > 0) {
+            const teamSelect = qs('#userTeamSelect');
+            const teamSelectRow = qs('#teamSelectRow');
+            const individualRow = qs('#individualSalesRow');
+            
+            if (teamSelect && teamSelectRow) {
+              teamSelect.innerHTML = '<option value="">-- Select team --</option>' +
+                data.teams.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+              teamSelectRow.classList.remove('hidden');
+              
+              // IMPORTANT: Hide individual sales option in team mode
+              if (individualRow) individualRow.classList.add('hidden');
+              
+              // Wait for team selection
+              return;
+            }
+          }
+          
+          // No teams in team mode - shouldn't happen, but handle gracefully
+          alert('No teams found. Please contact administrator.');
+          return;
+          
+        } else {
+          // Individual mode: Auto-set to individual, no team selector
+          const individualCheckbox = qs('#individualSales');
+          if (individualCheckbox) {
+            individualCheckbox.checked = true;
+          }
+          
+          try { localStorage.setItem('selectedTeamId', '-1'); } catch(e){}
+          try { localStorage.setItem('selectedTeamName', 'Individual'); } catch(e){}
+        }
         
         // Session duration
         try {
           const sd = data.sessionDuration || cfg.sessionDuration || '86400000';
           const durMs = parseInt(sd, 10) || 86400000;
           const expiryMs = Date.now() + durMs;
-          localStorage.setItem('sessionExpiry', new Date(expiryMs).toISOString());
+          const expiryISO = new Date(expiryMs).toISOString();
+          localStorage.setItem('sessionExpiry', expiryISO);
           localStorage.setItem('sessionDuration', String(durMs));
         } catch(e){}
         
         // Fetch config
         await fetchAppConfigUserMode();
+        
+        // Prefetch ZIP data for address autocomplete
+        if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+          console.log('Triggering address ZIP prefetch after login');
+          window.subsalesNearby.prefetch();
+        }
         
         // Show app
         if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
@@ -1142,7 +1302,8 @@
       const sd = cfg.sessionDuration || localStorage.getItem('sessionDuration') || '86400000';
       const durMs = parseInt(sd, 10) || 86400000;
       const expiryMs = Date.now() + durMs;
-      localStorage.setItem('sessionExpiry', new Date(expiryMs).toISOString());
+      const expiryISO = new Date(expiryMs).toISOString();
+      localStorage.setItem('sessionExpiry', expiryISO);
       
       // Fetch config
       await fetchAppConfigUserMode();
@@ -1151,10 +1312,33 @@
       if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
       if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
       revealAuthControls();
+      updateCurrentTeamDisplay();
       if (deferredPrompt) installBox && installBox.classList.remove('hidden');
       trySync();
     } catch(e) {
       console.error('Failed to proceed to app', e);
+    }
+  }
+  
+  // Update current team display in header
+  function updateCurrentTeamDisplay() {
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    const currentTeamDisplay = qs('#currentTeamDisplay');
+    const currentTeamName = qs('#currentTeamName');
+    
+    if (!currentTeamDisplay || !currentTeamName) return;
+    
+    if (loginMode === 'user') {
+      const selectedTeamName = localStorage.getItem('selectedTeamName') || 'Team';
+      currentTeamName.textContent = selectedTeamName;
+      currentTeamDisplay.classList.remove('hidden');
+    } else {
+      // Legacy mode - show team name
+      const teamName = localStorage.getItem('teamName');
+      if (teamName) {
+        currentTeamName.textContent = teamName;
+        currentTeamDisplay.classList.remove('hidden');
+      }
     }
   }
 
@@ -1198,21 +1382,33 @@
   // ========== END USER LOGIN FUNCTIONS ==========
 
   loginBtn && loginBtn.addEventListener('click', async ()=>{
+    console.log('===== LEGACY LOGIN BUTTON CLICKED =====');
     const team = (qs('#teamName') && qs('#teamName').value.trim()) || '';
     const code = (qs('#teamCode') && qs('#teamCode').value.trim()) || '';
-    if (!team||!code) return alert('Team and code required');
+    console.log('Team:', team, 'Code:', code ? '***' : '(empty)');
+    
+    if (!team||!code) {
+      console.warn('Team or code missing');
+      return alert('Team and code required');
+    }
+    
     try{
+      console.log('Calling serverLogin...');
       // Call server to validate
       await serverLogin(team, code);
+      console.log('serverLogin successful');
+      
       localStorage.setItem('teamName', team);
       localStorage.setItem('teamCode', code);
+      console.log('Credentials saved to localStorage');
 
       // session duration handling: get the admin-configured value from localized config
       try{
         const sd = cfg.sessionDuration || cfg.session_duration || localStorage.getItem('sessionDuration') || '86400000';
         const durMs = parseInt(sd,10) || 86400000;
         const expiryMs = Date.now() + durMs;
-        try { localStorage.setItem('sessionExpiry', new Date(expiryMs).toISOString()); } catch(e){}
+        const expiryISO = new Date(expiryMs).toISOString();
+        try { localStorage.setItem('sessionExpiry', expiryISO); } catch(e){}
         try { localStorage.setItem('sessionDuration', String(durMs)); } catch(e){}
       }catch(e){}
 
@@ -1241,30 +1437,38 @@
   // On boot, detect sales mode and show appropriate login form
   (async function initLoginMode() {
     try {
-      // Fetch config to determine login mode
+      // Fetch config to determine login mode AND sales mode
       const url = apiBase ? (apiBase + '/config') : '/wp-json/order-manager/v1/config';
       const resp = await fetch(url).catch(() => null);
       const config = resp && resp.ok ? await resp.json().catch(() => null) : null;
       
       const loginMode = (config && config.loginMode) || 'legacy';
+      const salesMode = (config && config.salesMode) || 'legacy';
+      
+      console.log('Config loaded - loginMode:', loginMode, 'salesMode:', salesMode);
       
       const legacyLogin = qs('#legacyLogin');
       const userLogin = qs('#userLogin');
       
-      if (loginMode === 'user' && userLogin && legacyLogin) {
-        legacyLogin.classList.add('hidden');
-        userLogin.classList.remove('hidden');
-      } else if (legacyLogin && userLogin) {
-        legacyLogin.classList.remove('hidden');
-        userLogin.classList.add('hidden');
-      }
-      
-      // Store login mode
+      // Store both modes for use during order submission
       if (config) {
         try { localStorage.setItem('loginMode', loginMode); } catch(e){}
+        try { localStorage.setItem('salesMode', salesMode); } catch(e){}
         if (config.sessionDuration) {
           try { localStorage.setItem('sessionDuration', config.sessionDuration); } catch(e){}
         }
+      }
+      
+      // Determine which login UI to show based on loginMode
+      // salesMode will be used later during order submission
+      if (loginMode === 'user' && userLogin && legacyLogin) {
+        // User login mode (name + phone)
+        legacyLogin.classList.add('hidden');
+        userLogin.classList.remove('hidden');
+      } else if (legacyLogin && userLogin) {
+        // Legacy login mode (team + code)
+        legacyLogin.classList.remove('hidden');
+        userLogin.classList.add('hidden');
       }
     } catch(e) {
       console.warn('Failed to detect login mode', e);
@@ -1295,7 +1499,12 @@
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
             revealAuthControls();
+            updateCurrentTeamDisplay();
             fetchAppConfigUserMode().catch(()=>{});
+            // Prefetch ZIP data for address autocomplete
+            if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+              window.subsalesNearby.prefetch();
+            }
             trySync();
             return;
           } else {
@@ -1316,8 +1525,13 @@
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
             revealAuthControls();
+            updateCurrentTeamDisplay();
             fetchAppConfig().catch(()=>{});
             fetchTeamMembers().then(members=>{ if (members && members.length) populateTeamMemberSelect(members); }).catch(()=>{});
+            // Prefetch ZIP data for address autocomplete
+            if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+              window.subsalesNearby.prefetch();
+            }
             trySync();
             return;
           } else {
@@ -1331,7 +1545,61 @@
     }
   })();
 
-  
+  // Runtime session expiry monitor - check every 30 seconds
+  setInterval(() => {
+    try {
+      const expiry = localStorage.getItem('sessionExpiry');
+      if (!expiry) return; // No session to check
+      
+      const expTime = new Date(expiry).getTime();
+      if (expTime && expTime < Date.now()) {
+        // Session has expired - perform logout
+        
+        // Clear session data
+        const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
+                             'selectedTeamId', 'selectedTeamName', 'userTeams',
+                             'teamName', 'teamCode', 'loginMode', 'salesMode'];
+        keysToRemove.forEach(key => {
+          try { localStorage.removeItem(key); } catch(e) {}
+        });
+        
+        // Reload to show login screen
+        location.reload();
+      }
+    } catch(e) {
+      console.warn('Session check failed', e);
+    }
+  }, 30000); // Check every 30 seconds
+
+  // Helper function to check session validity before actions
+  // allowOrderEntry: if true, allows order entry to continue even if session expired (UX exception)
+  function checkSessionValid(allowOrderEntry = false) {
+    try {
+      const expiry = localStorage.getItem('sessionExpiry');
+      if (!expiry) return false; // No session
+      
+      const expTime = new Date(expiry).getTime();
+      if (expTime && expTime < Date.now()) {
+        // Session expired
+        if (allowOrderEntry) {
+          return true; // Allow order entry to continue (stores locally)
+        }
+        // For data viewing actions - clear and reload
+        const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
+                             'selectedTeamId', 'selectedTeamName', 'userTeams',
+                             'teamName', 'teamCode', 'loginMode', 'salesMode'];
+        keysToRemove.forEach(key => {
+          try { localStorage.removeItem(key); } catch(e) {}
+        });
+        location.reload();
+        return false;
+      }
+      return true; // Session valid
+    } catch(e) {
+      console.warn('Session check failed', e);
+      return true; // Don't block on error
+    }
+  }
 
   // helper to get current position as a Promise with timeout
   function getCurrentPositionPromise(timeout=5000){
@@ -1344,12 +1612,30 @@
   }
 
   saveOrderBtn && saveOrderBtn.addEventListener('click', async ()=>{
+    // Check session validity - allow order entry even if expired (stores locally for sync later)
+    const sessionValid = checkSessionValid(true);
+    
+    // Check if session actually expired but we're allowing continuation
+    const expiry = localStorage.getItem('sessionExpiry');
+    const sessionExpired = expiry && new Date(expiry).getTime() < Date.now();
+    
+    if (sessionExpired && sessionValid) {
+      // Inform user that order will be saved locally only
+      const proceed = confirm('Your session has expired. The order will be saved locally and synced when you log in again. Continue?');
+      if (!proceed) return;
+    }
+    
     // canonical customer/address values. Use a defensive getter for address because
     // autocomplete widgets sometimes inject alternate inputs that don't update the
     // original #address value reliably in all environments.
   const customer = qs('#customerName') && qs('#customerName').value.trim();
   let address = '';
   try{ address = (qs('#address') && qs('#address').value && qs('#address').value.trim()) || ''; }catch(e){ address = ''; }
+  // Append unit/floor/apt if provided
+  const unitFloorApt = qs('#unitFloorApt') && qs('#unitFloorApt').value.trim();
+  if (unitFloorApt) {
+    address = address + (address ? ' ' : '') + unitFloorApt;
+  }
   if (!customer || !address) return alert('Customer and address required');
     const notes = qs('#notes') && qs('#notes').value || '';
     const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
@@ -1427,7 +1713,8 @@
           // remote edit: if online, attempt PUT; if offline, queue op and save local copy
           const payload = {
             order_id: order.id,
-            user_id: order.entered_by_id || localStorage.getItem('teamName') || 'team',
+            user_id: order.subsales_user_id || order.entered_by_id || localStorage.getItem('userId') || localStorage.getItem('teamName') || 'team',
+            team_id: order.subsales_team_id || localStorage.getItem('selectedTeamId') || '',
             customer: order.customer,
             address: order.address,
             notes: order.notes,
@@ -1446,7 +1733,21 @@
           if (navigator.onLine) {
             try{
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(order.id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(order.id);
-              const resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type':'application/json', 'X-Team-Name': localStorage.getItem('teamName')||'', 'X-Access-Code': localStorage.getItem('teamCode')||'' }, body: JSON.stringify(payload) });
+              
+              // Build headers based on login mode
+              const headers = { 'Content-Type':'application/json' };
+              const loginMode = localStorage.getItem('loginMode') || 'legacy';
+              if (loginMode === 'user') {
+                // User mode: send X-User-ID and X-Team-ID headers
+                headers['X-User-ID'] = localStorage.getItem('userId') || '';
+                headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+              } else {
+                // Legacy mode: send X-Team-Name and X-Access-Code headers
+                headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+                headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+              }
+              
+              const resp = await fetch(url, { method: 'PUT', headers: headers, body: JSON.stringify(payload) });
               if (resp.ok) { alert('Order updated on server'); }
               else { alert('Update failed: ' + resp.status); }
             }catch(e){ await Storage.queueOperation({ type:'update', order_id: order.id, payload }); alert('Offline or error: update queued'); }
@@ -1480,17 +1781,28 @@
       if (ops && ops.length) {
         if (!navigator.onLine) { syncStatus && (syncStatus.textContent='Waiting for network'); return; }
         syncStatus && (syncStatus.textContent='Processing queued operations...');
-        const teamName = localStorage.getItem('teamName')||'';
-        const teamCode = localStorage.getItem('teamCode')||'';
+        
+        // Build headers based on login mode
+        const loginMode = localStorage.getItem('loginMode') || 'legacy';
+        const headers = {};
+        if (loginMode === 'user') {
+          headers['X-User-ID'] = localStorage.getItem('userId') || '';
+          headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+        } else {
+          headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+          headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+        }
+        
         for (const op of ops) {
           try{
             if (op.type === 'delete'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
-              const resp = await fetch(url, { method: 'DELETE', headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
+              const resp = await fetch(url, { method: 'DELETE', headers: headers });
               if (resp.ok) { await Storage.removeQueuedOp(op._id); }
             } else if (op.type === 'update'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
-              const resp = await fetch(url, { method: 'PUT', headers: { 'Content-Type':'application/json', 'X-Team-Name': teamName, 'X-Access-Code': teamCode }, body: JSON.stringify(op.payload) });
+              const updateHeaders = { ...headers, 'Content-Type':'application/json' };
+              const resp = await fetch(url, { method: 'PUT', headers: updateHeaders, body: JSON.stringify(op.payload) });
               if (resp.ok) { 
                 await Storage.removeQueuedOp(op._id); 
               } else {
@@ -1514,14 +1826,25 @@
       if (!list || !list.length) { syncStatus && (syncStatus.textContent='No queued orders'); return; }
       if (!navigator.onLine) { syncStatus && (syncStatus.textContent='Waiting for network'); return; }
       syncStatus && (syncStatus.textContent='Syncing...');
-      const teamName = localStorage.getItem('teamName');
-      const teamCode = localStorage.getItem('teamCode');
+      
+      // Build headers based on login mode
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
+      const headers = { 'Content-Type': 'application/json' };
+      if (loginMode === 'user') {
+        headers['X-User-ID'] = localStorage.getItem('userId') || '';
+        headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+      } else {
+        headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+        headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+      }
+      
       for (const order of list) {
         try {
           const url = apiBase ? (apiBase + '/orders') : '/wp-json/order-manager/v1/orders';
           const payload = {
             order_id: order.id,
-            user_id: order.entered_by_id || teamName || 'team',
+            user_id: order.subsales_user_id || order.entered_by_id || localStorage.getItem('userId') || localStorage.getItem('teamName') || 'team',
+            team_id: order.subsales_team_id || localStorage.getItem('selectedTeamId') || '',
             customer: order.customer,
             address: order.address,
             notes: order.notes,
@@ -1533,13 +1856,14 @@
             createdAt: order.createdAt,
             entered_by_id: order.entered_by_id || '',
             entered_by_name: order.entered_by_name || '',
-            team_name: order.teamName || teamName || localStorage.getItem('teamName') || '',
-            team_code: order.teamCode || teamCode || localStorage.getItem('teamCode') || '',
+            team_name: order.teamName || localStorage.getItem('teamName') || '',
+            team_code: order.teamCode || localStorage.getItem('teamCode') || '',
             geo: order.geo || null
           };
+          console.log('Syncing order:', order.id, 'payload:', payload, 'headers:', headers);
           const resp = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Team-Name': teamName || '', 'X-Access-Code': teamCode || '' },
+            headers: headers,
             body: JSON.stringify(payload)
           });
           if (resp.ok) {
@@ -1549,9 +1873,11 @@
             let errorDetail = '';
             try {
               const errText = await resp.text();
-              errorDetail = errText ? ': ' + errText.substring(0, 200) : '';
+              console.error('Server error response:', errText);
+              errorDetail = errText ? ': ' + errText.substring(0, 500) : '';
             } catch(e) {}
             const errorMsg = 'Sync failed for order ' + (order.customer || order.id) + ' - HTTP ' + resp.status + errorDetail;
+            console.error('Full error message:', errorMsg);
             syncStatus && (syncStatus.textContent = errorMsg);
             if (window.smShowSnackbar) {
               window.smShowSnackbar(errorMsg, { timeout: 10000 });
@@ -1643,35 +1969,103 @@
   async function fetchRemoteOrders(limit=1000){
     try{
       const url = apiBase ? (apiBase + '/orders?limit=' + encodeURIComponent(limit)) : '/wp-json/order-manager/v1/orders?limit=' + encodeURIComponent(limit);
-      const teamName = localStorage.getItem('teamName') || '';
-      const teamCode = localStorage.getItem('teamCode') || '';
-      const resp = await fetch(url, { headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } });
+      
+      // Use appropriate auth headers based on login mode
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
+      const headers = {};
+      if (loginMode === 'user') {
+        headers['X-User-ID'] = localStorage.getItem('userId') || '';
+        headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+      } else {
+        headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+        headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+      }
+      
+      const resp = await fetch(url, { headers: headers });
       if (!resp.ok) return [];
       const j = await resp.json().catch(()=>[]);
       return Array.isArray(j) ? j : [];
     }catch(e){ console.warn('fetchRemoteOrders failed', e); return []; }
   }
 
-  // Show 'My orders' — local queued and remote orders for current entered_by_id/name
+  // Show 'My orders' — local queued and remote orders for current user, today only
   async function showMyOrders(){
-    const memberId = localStorage.getItem('teamMemberId') || '';
-    const memberName = localStorage.getItem('teamMemberName') || '';
+    console.log('===== SHOW MY ORDERS FUNCTION CALLED =====');
+    
+    // Get current user ID (supports both user mode and legacy mode)
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    console.log('Login mode:', loginMode);
+    
+    let currentUserId, currentUserName;
+    
+    if (loginMode === 'user') {
+      // User mode: use userId from localStorage
+      currentUserId = localStorage.getItem('userId') || '';
+      currentUserName = localStorage.getItem('userName') || '';
+    } else {
+      // Legacy mode: use teamMemberId
+      currentUserId = localStorage.getItem('teamMemberId') || '';
+      currentUserName = localStorage.getItem('teamMemberName') || '';
+    }
+    
+    console.log('Current User ID:', currentUserId);
+    console.log('Current User Name:', currentUserName);
+    
+    // Helper function to check if order is from today
+    const isToday = (dateStr) => {
+      if (!dateStr) return false;
+      try {
+        const orderDate = new Date(dateStr);
+        const today = new Date();
+        return orderDate.getFullYear() === today.getFullYear() &&
+               orderDate.getMonth() === today.getMonth() &&
+               orderDate.getDate() === today.getDate();
+      } catch(e) {
+        return false;
+      }
+    };
+    
+    // Filter local orders: current user only (no date restriction since these are pending sync)
     const local = await Storage.all();
-    const localFiltered = local.filter(o => (memberId && o.entered_by_id && o.entered_by_id === memberId) || (memberName && o.entered_by_name && o.entered_by_name === memberName));
+    const localFiltered = local.filter(o => {
+      // Check if order belongs to current user
+      const isMyOrder = (currentUserId && o.entered_by_id && String(o.entered_by_id) === String(currentUserId)) || 
+                        (currentUserId && o.subsales_user_id && String(o.subsales_user_id) === String(currentUserId)) ||
+                        (currentUserName && o.entered_by_name && o.entered_by_name === currentUserName);
+      // Don't filter by date for local orders - show all pending orders
+      return isMyOrder;
+    });
+    
+    // Debug logging for troubleshooting
+    console.log('My Orders Debug:', {
+      currentUserId,
+      currentUserName,
+      totalLocalOrders: local.length,
+      filteredLocalOrders: localFiltered.length,
+      sampleLocalOrder: local[0],
+      loginMode
+    });
+    
+    // Fetch and filter remote orders: current user + today only
     const remote = await fetchRemoteOrders(1000);
     const remoteFiltered = (remote || []).filter(r => {
+      // Check if order is from today
+      if (!isToday(r.created_at || r.createdAt)) return false;
+      
+      // Check if order belongs to current user
       // r.order_data may be present as object (server decodes) or as json string
       const od = r.order_data || (r.order_data === undefined ? null : r.order_data);
       if (od) {
         try{
           // od should already be object, but be defensive
           const entered = typeof od === 'string' ? JSON.parse(od) : od;
-          if (memberId && entered.entered_by_id && entered.entered_by_id === memberId) return true;
-          if (memberName && entered.entered_by_name && entered.entered_by_name === memberName) return true;
+          if (currentUserId && entered.entered_by_id && entered.entered_by_id === currentUserId) return true;
+          if (currentUserId && entered.subsales_user_id && entered.subsales_user_id === currentUserId) return true;
+          if (currentUserName && entered.entered_by_name && entered.entered_by_name === currentUserName) return true;
         }catch(e){}
       }
       // fallback: check r.user_id
-      if (memberId && r.user_id && String(r.user_id) === String(memberId)) return true;
+      if (currentUserId && r.user_id && String(r.user_id) === String(currentUserId)) return true;
       return false;
     });
 
@@ -1700,7 +2094,7 @@
       return `<div class="order" data-remote-id="${r.order_id||r.order_id}"><strong>${cust} ${badge}</strong><div>${(od.address||r.address||'')}</div><div>${created}</div><div style="margin-top:6px"><button class="sm-btn edit-order-remote" data-remote-id="${r.order_id||r.order_id}">Edit</button> <button class="sm-btn delete-order-remote" data-remote-id="${r.order_id||r.order_id}" style="background:#dc2626;color:#fff">Delete</button></div></div>`;
     }).join('') : '<div>No remote orders</div>';
 
-    modal.innerHTML = `<div class="modal-header"><strong>My orders (${memberName||memberId||'You'})</strong><div><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div></div><div class="modal-body"><div class="modal-col"> <h4>Local (queued)</h4>${localHtml}</div><div class="modal-col"><h4>Remote (synced)</h4>${remoteHtml}</div></div>`;
+    modal.innerHTML = `<div class="modal-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><div><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div></div><div class="modal-body"><div class="modal-col"> <h4>Local (pending sync)</h4>${localHtml}</div><div class="modal-col"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
     const closeBtn = qs('#closeMyOrdersBtn'); if (closeBtn) closeBtn.addEventListener('click', ()=>{ modal.classList.add('hidden'); });
 
     // Attach delegated handlers for edit/delete
@@ -1713,9 +2107,20 @@
       if (remote){ const od = (remote.order_data && typeof remote.order_data === 'string') ? (function(){ try{ return JSON.parse(remote.order_data); }catch(e){ return {}; } })() : (remote.order_data || {}); const orderObj = Object.assign({}, od, { id: remote.order_id || remote.order_id }); enterEditMode(orderObj, { local:false, remoteRaw: remote }); modal.classList.add('hidden'); }
     }); });
     modal.querySelectorAll('.delete-order-remote').forEach(b=>{ b.addEventListener('click', async ()=>{ const id = b.getAttribute('data-remote-id'); if (!confirm('Delete this order from server?')) return; // attempt delete now or queue
-      const teamName = localStorage.getItem('teamName')||''; const teamCode = localStorage.getItem('teamCode')||'';
+      
+      // Build headers based on login mode
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
+      const headers = {};
+      if (loginMode === 'user') {
+        headers['X-User-ID'] = localStorage.getItem('userId') || '';
+        headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+      } else {
+        headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+        headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+      }
+      
       if (navigator.onLine) {
-        try{ const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(id); const resp = await fetch(url, { method: 'DELETE', headers: { 'X-Team-Name': teamName, 'X-Access-Code': teamCode } }); if (resp.ok) { alert('Order deleted'); } else { alert('Delete failed: ' + resp.status); } }catch(e){ alert('Delete failed: ' + e); }
+        try{ const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(id); const resp = await fetch(url, { method: 'DELETE', headers: headers }); if (resp.ok) { alert('Order deleted'); } else { alert('Delete failed: ' + resp.status); } }catch(e){ alert('Delete failed: ' + e); }
       } else {
         const opId = await Storage.queueOperation({ type:'delete', order_id: id });
   window.showUndoSnackbar('Delete queued (will run when online)', async ()=>{ try{ if (opId) await Storage.removeQueuedOp(opId); await renderOrders(); await renderInlay(); }catch(e){} });
@@ -1729,12 +2134,39 @@
   // manual helpers removed
   }
 
-  const myOrdersBtn = qs('#myOrdersBtn'); if (myOrdersBtn) myOrdersBtn.addEventListener('click', showMyOrders);
-  const eodBtn = qs('#eodBtn'); if (eodBtn) eodBtn.addEventListener('click', async ()=>{ try{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }catch(e){ console.warn('EOD open error', e); } });
+  const myOrdersBtn = qs('#myOrdersBtn'); 
+  if (myOrdersBtn) {
+    console.log('My Orders button found, attaching listener');
+    myOrdersBtn.addEventListener('click', ()=>{ 
+      console.log('===== MY ORDERS BUTTON CLICKED =====');
+      console.log('Session valid check...');
+      if(!checkSessionValid()) {
+        console.log('Session NOT valid - aborting');
+        return;
+      }
+      console.log('Session valid - calling showMyOrders()');
+      showMyOrders(); 
+    });
+  } else {
+    console.warn('My Orders button NOT found in DOM');
+  }
+  
+  const eodBtn = qs('#eodBtn'); 
+  if (eodBtn) {
+    console.log('EOD button found, attaching listener');
+    eodBtn.addEventListener('click', async ()=>{ 
+      console.log('===== EOD BUTTON CLICKED =====');
+      if(!checkSessionValid()) return; 
+      try{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }catch(e){ console.warn('EOD open error', e); } 
+    });
+  } else {
+    console.warn('EOD button NOT found in DOM');
+  }
   // Force Sync button
   const forceSyncBtn = qs('#forceSyncBtn');
   if (forceSyncBtn) {
     forceSyncBtn.addEventListener('click', async ()=>{
+      if(!checkSessionValid()) return;
       if (!navigator.onLine) { alert('No network connection. Sync will start when online.'); return; }
       try {
         syncStatus && (syncStatus.textContent = 'Manual sync...');
@@ -1765,6 +2197,7 @@
         localStorage.removeItem('userPhone');
         localStorage.removeItem('selectedTeamId');
         localStorage.removeItem('selectedTeamName');
+        localStorage.removeItem('userTeams');
       } catch(e){}
   // show login
   if (loginSection) { loginSection.classList.remove('hidden'); try{ loginSection.style.display='block'; }catch(e){} }
@@ -1775,6 +2208,49 @@
       renderOrders();
     });
   }
+
+  // Data compliance: Validate session on all form input focus to prevent data entry without login
+  // This ensures personal information cannot be entered or viewed without valid authentication
+  function addInputSessionValidation() {
+    const protectedInputs = [
+      '#customerName', '#address', '#unitFloorApt', '#cellNumber', '#notes',
+      '#donationAmount', 'input[data-product-id]'
+    ];
+    
+    protectedInputs.forEach(selector => {
+      const elements = document.querySelectorAll(selector);
+      elements.forEach(el => {
+        el.addEventListener('focus', (e) => {
+          // Check if session exists
+          const expiry = localStorage.getItem('sessionExpiry');
+          if (!expiry) {
+            e.target.blur(); // Remove focus
+            alert('Session expired. Please log in again.');
+            location.reload();
+            return;
+          }
+          
+          const expTime = new Date(expiry).getTime();
+          if (expTime && expTime < Date.now()) {
+            e.target.blur(); // Remove focus
+            alert('Session expired. Please log in again.');
+            const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
+                                 'selectedTeamId', 'selectedTeamName', 'userTeams',
+                                 'teamName', 'teamCode', 'loginMode', 'salesMode'];
+            keysToRemove.forEach(key => {
+              try { localStorage.removeItem(key); } catch(e) {}
+            });
+            location.reload();
+          }
+        });
+      });
+    });
+  }
+  
+  // Call after a short delay to ensure DOM is ready
+  setTimeout(() => {
+    addInputSessionValidation();
+  }, 500);
 
 })();
 // BKMB Subsales PWA client (plugin-hosted)
