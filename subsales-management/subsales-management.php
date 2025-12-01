@@ -49,6 +49,16 @@ if ( file_exists( $subsales_vendor_autoload ) ) {
     require_once $subsales_vendor_autoload;
 }
 
+// Load modular classes
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
+
+// Initialize database
+Subsales_Database::init();
+
+// Initialize REST API
+Subsales_REST_API::init();
+
 
 // Activation hook
 register_activation_hook( __FILE__, 'subsales_activate' );
@@ -61,8 +71,9 @@ function subsales_activate() {
         wp_die( 'Subsales Management requires WordPress 5.0 or higher.' );
     }
     
-    // Create database tables
-    order_sync_create_table();
+    // Create database tables using Database class
+    Subsales_Database::create_tables();
+    
     // Ensure PWA page exists with default slug
     $slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     order_sync_ensure_pwa_page( $slug );
@@ -1315,902 +1326,86 @@ function order_sync_admin_assets( $hook ) {
 // Implementation merged from legacy files; shortcode name is 'subsales_pwa'.
 
 // -- Teams management, orders page, DB creation and helpers --
+// ============================================================
+// DATABASE WRAPPER FUNCTIONS (for backward compatibility)
+// All database operations delegated to Subsales_Database class
+// ============================================================
+
 function order_sync_create_table() {
-    global $wpdb;
-    
-    $table_name = $wpdb->prefix . 'order_sync_orders';
-    $teams_table_name = $wpdb->prefix . 'order_sync_teams';
-    $team_members_table_name = $wpdb->prefix . 'order_sync_team_members';
-    
-    $charset_collate = $wpdb->get_charset_collate();
-    
-    $sql = "CREATE TABLE $table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        order_id varchar(255) NOT NULL,
-        user_id varchar(255) NOT NULL,
-        team_id mediumint(9),
-        order_data text NOT NULL,
-        sync_status varchar(50) DEFAULT 'pending',
-        deleted tinyint(1) DEFAULT 0,
-        deleted_at datetime DEFAULT NULL,
-        deleted_by_user_id bigint(20) unsigned DEFAULT NULL,
-        delete_reason text,
-        tallied tinyint(1) DEFAULT 0,
-        tallied_at datetime DEFAULT NULL,
-        tallied_by_user_id bigint(20) unsigned DEFAULT NULL,
-        created_at datetime DEFAULT CURRENT_TIMESTAMP,
-        updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY  (id),
-        UNIQUE KEY order_id (order_id),
-        KEY team_id (team_id),
-        KEY deleted (deleted),
-        KEY tallied (tallied)
-    ) $charset_collate;";
-    
-    $teams_sql = "CREATE TABLE $teams_table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        name varchar(255) NOT NULL,
-        access_code varchar(255) NOT NULL,
-        description text,
-        status varchar(50) NOT NULL DEFAULT 'active',
-        created_at datetime DEFAULT CURRENT_TIMESTAMP,
-        updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY  (id),
-        UNIQUE KEY name (name),
-        UNIQUE KEY access_code (access_code)
-    ) $charset_collate;";
-    
-    $team_members_sql = "CREATE TABLE $team_members_table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        team_id mediumint(9) NOT NULL DEFAULT 0,
-        name varchar(255) NOT NULL,
-        email varchar(255) DEFAULT '',
-        phone varchar(50) NOT NULL,
-        role varchar(50) NOT NULL DEFAULT 'member',
-        status varchar(50) NOT NULL DEFAULT 'active',
-        last_login datetime,
-        created_at datetime DEFAULT CURRENT_TIMESTAMP,
-        updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY  (id),
-        UNIQUE KEY phone (phone),
-        KEY team_id (team_id)
-    ) $charset_collate;";
-    
-    // Junction table for many-to-many user-team relationships
-    $user_teams_table_name = $wpdb->prefix . 'order_sync_user_teams';
-    $user_teams_sql = "CREATE TABLE $user_teams_table_name (
-        id mediumint(9) NOT NULL AUTO_INCREMENT,
-        user_id mediumint(9) NOT NULL,
-        team_id mediumint(9) NOT NULL,
-        assigned_at datetime DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY  (id),
-        UNIQUE KEY user_team (user_id, team_id),
-        KEY user_id (user_id),
-        KEY team_id (team_id)
-    ) $charset_collate;";
-    
-    // Edit history table for order auditing
-    $edit_history_table_name = $wpdb->prefix . 'order_edit_history';
-    $edit_history_sql = "CREATE TABLE $edit_history_table_name (
-        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        order_id bigint(20) unsigned NOT NULL,
-        edited_by_user_id bigint(20) unsigned NOT NULL,
-        edited_by_name varchar(255) DEFAULT '',
-        edit_type enum('create','update','delete','restore') NOT NULL,
-        edit_reason text,
-        changes_summary varchar(500) DEFAULT '',
-        changes_detail longtext,
-        source varchar(20) DEFAULT 'admin',
-        edited_at datetime NOT NULL,
-        PRIMARY KEY  (id),
-        KEY order_id (order_id),
-        KEY edited_at (edited_at),
-        KEY edited_by_user_id (edited_by_user_id)
-    ) $charset_collate;";
-    
-    // Logs table for system-wide logging with debug mode support
-    $logs_table_name = $wpdb->prefix . 'subsales_logs';
-    $logs_sql = "CREATE TABLE $logs_table_name (
-        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-        log_level enum('DEBUG','INFO','WARNING','ERROR','CRITICAL') NOT NULL DEFAULT 'INFO',
-        category varchar(50) NOT NULL DEFAULT 'system',
-        message text NOT NULL,
-        user_id bigint(20) unsigned DEFAULT NULL,
-        user_name varchar(255) DEFAULT '',
-        source varchar(20) DEFAULT 'admin',
-        context_json longtext,
-        created_at datetime NOT NULL,
-        is_debug tinyint(1) DEFAULT 0,
-        PRIMARY KEY  (id),
-        KEY log_level (log_level),
-        KEY category (category),
-        KEY created_at (created_at),
-        KEY is_debug (is_debug),
-        KEY user_id (user_id)
-    ) $charset_collate;";
-    
-    require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-    dbDelta( $sql );
-    dbDelta( $teams_sql );
-    dbDelta( $team_members_sql );
-    dbDelta( $user_teams_sql );
-    dbDelta( $edit_history_sql );
-    dbDelta( $logs_sql );
-    
-    // Schema migration: Fix phone column and constraints for existing tables
-    // dbDelta doesn't handle constraint changes well, so we do it manually
-    $phone_column_exists = $wpdb->get_var( 
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = '{$team_members_table_name}' 
-         AND COLUMN_NAME = 'phone'"
-    );
-    
-    if ( $phone_column_exists ) {
-        // Check if phone column allows NULL or has DEFAULT ''
-        $phone_column_info = $wpdb->get_row(
-            "SELECT COLUMN_DEFAULT, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS 
-             WHERE TABLE_SCHEMA = DATABASE() 
-             AND TABLE_NAME = '{$team_members_table_name}' 
-             AND COLUMN_NAME = 'phone'",
-            ARRAY_A
-        );
-        
-        // If phone is nullable or has empty default, update it
-        if ( $phone_column_info && ( $phone_column_info['IS_NULLABLE'] === 'YES' || $phone_column_info['COLUMN_DEFAULT'] === '' ) ) {
-            // First, set default phone for any users with NULL/empty phone
-            $wpdb->query(
-                "UPDATE {$team_members_table_name} 
-                 SET phone = CONCAT('000000', LPAD(id, 4, '0')) 
-                 WHERE phone IS NULL OR phone = ''"
-            );
-            
-            // Now alter the column to NOT NULL
-            $wpdb->query(
-                "ALTER TABLE {$team_members_table_name} 
-                 MODIFY COLUMN phone varchar(50) NOT NULL"
-            );
-        }
-        
-        // Check if UNIQUE constraint exists on phone
-        $phone_index = $wpdb->get_var(
-            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS 
-             WHERE TABLE_SCHEMA = DATABASE() 
-             AND TABLE_NAME = '{$team_members_table_name}' 
-             AND COLUMN_NAME = 'phone' 
-             AND NON_UNIQUE = 0"
-        );
-        
-        if ( ! $phone_index ) {
-            // Add UNIQUE constraint on phone
-            $wpdb->query( "ALTER TABLE {$team_members_table_name} ADD UNIQUE KEY phone (phone)" );
-        }
-        
-        // Check if email UNIQUE constraint exists (should be removed)
-        $email_index = $wpdb->get_var(
-            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS 
-             WHERE TABLE_SCHEMA = DATABASE() 
-             AND TABLE_NAME = '{$team_members_table_name}' 
-             AND COLUMN_NAME = 'email' 
-             AND NON_UNIQUE = 0"
-        );
-        
-        if ( $email_index ) {
-            // Remove UNIQUE constraint from email
-            $wpdb->query( "ALTER TABLE {$team_members_table_name} DROP INDEX {$email_index}" );
-        }
-    }
-    
-    // Schema migration: Add soft delete columns to orders table if they don't exist
-    $deleted_column_exists = $wpdb->get_var(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = '{$table_name}' 
-         AND COLUMN_NAME = 'deleted'"
-    );
-    
-    if ( ! $deleted_column_exists ) {
-        // Add deleted column
-        $wpdb->query(
-            "ALTER TABLE {$table_name} 
-             ADD COLUMN deleted tinyint(1) DEFAULT 0 AFTER sync_status,
-             ADD COLUMN deleted_at datetime DEFAULT NULL AFTER deleted,
-             ADD COLUMN deleted_by_user_id bigint(20) unsigned DEFAULT NULL AFTER deleted_at,
-             ADD COLUMN delete_reason text AFTER deleted_by_user_id,
-             ADD INDEX deleted (deleted)"
-        );
-    } else {
-        // Column exists, but ensure existing rows have deleted = 0
-        $wpdb->query(
-            "UPDATE {$table_name} 
-             SET deleted = 0 
-             WHERE deleted IS NULL"
-        );
-    }
-    
-    // Migrate existing team_id assignments to junction table
-    $existing_assignments = $wpdb->get_results( "SELECT id, team_id FROM {$team_members_table_name} WHERE team_id > 0", ARRAY_A );
-    if ( ! empty( $existing_assignments ) ) {
-        foreach ( $existing_assignments as $assignment ) {
-            $wpdb->query( $wpdb->prepare(
-                "INSERT IGNORE INTO {$user_teams_table_name} (user_id, team_id) VALUES (%d, %d)",
-                $assignment['id'],
-                $assignment['team_id']
-            ));
-        }
-    }
-    
-    // Add soft delete columns to orders table if they don't exist
-    $deleted_column_exists = $wpdb->get_var(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = '{$table_name}' 
-         AND COLUMN_NAME = 'deleted'"
-    );
-    
-    if ( ! $deleted_column_exists ) {
-        $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN deleted tinyint(1) DEFAULT 0" );
-        $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN deleted_at datetime DEFAULT NULL" );
-        $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN deleted_by_user_id bigint(20) unsigned DEFAULT NULL" );
-        $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN delete_reason text" );
-        $wpdb->query( "ALTER TABLE {$table_name} ADD KEY deleted (deleted)" );
-    }
-    
-    // Schema migration: Add tally columns if they don't exist
-    $tallied_column_exists = $wpdb->get_var(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = '{$table_name}' 
-         AND COLUMN_NAME = 'tallied'"
-    );
-    
-    if ( ! $tallied_column_exists ) {
-        $wpdb->query(
-            "ALTER TABLE {$table_name} 
-             ADD COLUMN tallied tinyint(1) DEFAULT 0 AFTER delete_reason,
-             ADD COLUMN tallied_at datetime DEFAULT NULL AFTER tallied,
-             ADD COLUMN tallied_by_user_id bigint(20) unsigned DEFAULT NULL AFTER tallied_at,
-             ADD INDEX tallied (tallied)"
-        );
-    }
-    
-    // Schema migration: Update edit_type enum to include 'create' if it doesn't already
-    $edit_type_column_info = $wpdb->get_row(
-        "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS 
-         WHERE TABLE_SCHEMA = DATABASE() 
-         AND TABLE_NAME = '{$edit_history_table_name}' 
-         AND COLUMN_NAME = 'edit_type'",
-        ARRAY_A
-    );
-    
-    if ( $edit_type_column_info && strpos( $edit_type_column_info['COLUMN_TYPE'], 'create' ) === false ) {
-        // Update enum to include 'create'
-        $wpdb->query(
-            "ALTER TABLE {$edit_history_table_name} 
-             MODIFY COLUMN edit_type enum('create','update','delete','restore') NOT NULL"
-        );
-    }
+    Subsales_Database::create_tables();
 }
 
 function order_sync_add_team( $name, $access_code, $description = '' ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_teams';
-    
-    $existing = $wpdb->get_row( 
-        $wpdb->prepare(
-            "SELECT id FROM {$table_name} WHERE name = %s OR access_code = %s",
-            $name,
-            $access_code
-        )
-    );
-    
-    if ( $existing ) {
-        error_log( 'Subsales: Team creation failed - name or access code already exists: ' . $name );
-        return false;
-    }
-    
-    $result = $wpdb->insert(
-        $table_name,
-        array(
-            'name' => $name,
-            'access_code' => $access_code,
-            'description' => $description,
-            'status' => 'active'
-        ),
-        array( '%s', '%s', '%s', '%s' )
-    );
-    
-    if ( $result === false ) {
-        error_log( 'Subsales: Database error creating team: ' . $wpdb->last_error );
-        return false;
-    }
-    
-    return true;
+    return Subsales_Database::add_team( $name, $access_code, $description );
 }
 
 function order_sync_remove_team( $team_id ) {
-    global $wpdb;
-    $teams_table = $wpdb->prefix . 'order_sync_teams';
-    $members_table = $wpdb->prefix . 'order_sync_team_members';
-    
-    $wpdb->delete( $members_table, array( 'team_id' => $team_id ), array( '%d' ) );
-    return $wpdb->delete( $teams_table, array( 'id' => $team_id ), array( '%d' ) );
+    return Subsales_Database::remove_team( $team_id );
 }
 
 function order_sync_get_teams() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_teams';
-    
-    return $wpdb->get_results( 
-        "SELECT * FROM {$table_name} WHERE status = 'active' ORDER BY created_at DESC", 
-        ARRAY_A 
-    );
+    return Subsales_Database::get_teams();
 }
 
 function order_sync_get_team_by_credentials( $team_name, $access_code ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_teams';
-    
-    return $wpdb->get_row( 
-        $wpdb->prepare( 
-            "SELECT * FROM {$table_name} WHERE name = %s AND access_code = %s AND status = 'active'", 
-            $team_name, 
-            $access_code 
-        ),
-        ARRAY_A
-    );
+    return Subsales_Database::get_team_by_credentials( $team_name, $access_code );
 }
 
-/**
- * Logging System Functions
- * Supports normal logging (7-day retention) and debug mode (24-hour retention)
- */
-
-/**
- * Main logging function - logs events to database
- * 
- * @param string $level One of: DEBUG, INFO, WARNING, ERROR, CRITICAL
- * @param string $category Category: auth, orders, sync, api, system, zip
- * @param string $message Log message
- * @param array $context Additional context data (will be JSON encoded)
- * @param string $source Source of log: admin, pwa, cron, api
- * @param int $user_id Optional user ID
- * @param string $user_name Optional user name
- */
 function subsales_log( $level, $category, $message, $context = array(), $source = 'admin', $user_id = null, $user_name = '' ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'subsales_logs';
-    
-    // Validate log level
-    $valid_levels = array( 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' );
-    if ( ! in_array( $level, $valid_levels ) ) {
-        $level = 'INFO';
-    }
-    
-    // Check if debug logging is enabled
-    $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
-    $is_debug = ( $level === 'DEBUG' || $debug_enabled ) ? 1 : 0;
-    
-    // Skip DEBUG logs if debug mode is not enabled
-    if ( $level === 'DEBUG' && ! $debug_enabled ) {
-        return;
-    }
-    
-    // Prepare context JSON
-    $context_json = ! empty( $context ) ? wp_json_encode( $context ) : null;
-    
-    // Insert log entry
-    $wpdb->insert(
-        $table_name,
-        array(
-            'log_level' => $level,
-            'category' => sanitize_text_field( $category ),
-            'message' => $message,
-            'user_id' => $user_id,
-            'user_name' => sanitize_text_field( $user_name ),
-            'source' => sanitize_text_field( $source ),
-            'context_json' => $context_json,
-            'created_at' => current_time( 'mysql' ),
-            'is_debug' => $is_debug
-        ),
-        array( '%s', '%s', '%s', '%d', '%s', '%s', '%s', '%s', '%d' )
-    );
+    Subsales_Database::log( $level, $category, $message, $context, $source, $user_id, $user_name );
 }
 
-/**
- * Log order-related events
- */
 function subsales_log_order( $action, $order_id, $user_id = null, $user_name = '', $context = array(), $source = 'admin' ) {
-    $messages = array(
-        'created' => 'Order created',
-        'updated' => 'Order updated',
-        'deleted' => 'Order deleted',
-        'restored' => 'Order restored'
-    );
-    
-    $message = isset( $messages[ $action ] ) ? $messages[ $action ] : 'Order action';
-    $context['order_id'] = $order_id;
-    $context['action'] = $action;
-    
-    subsales_log( 'INFO', 'orders', $message, $context, $source, $user_id, $user_name );
+    Subsales_Database::log_order( $action, $order_id, $user_id, $user_name, $context, $source );
 }
 
-/**
- * Log authentication events
- */
 function subsales_log_auth( $action, $user_id = null, $user_name = '', $context = array(), $source = 'pwa' ) {
-    $messages = array(
-        'login' => 'User logged in',
-        'logout' => 'User logged out',
-        'failed' => 'Authentication failed'
-    );
-    
-    $message = isset( $messages[ $action ] ) ? $messages[ $action ] : 'Auth action';
-    $level = ( $action === 'failed' ) ? 'WARNING' : 'INFO';
-    
-    subsales_log( $level, 'auth', $message, $context, $source, $user_id, $user_name );
+    Subsales_Database::log_auth( $action, $user_id, $user_name, $context, $source );
 }
 
-/**
- * Log API errors
- */
 function subsales_log_api_error( $endpoint, $error_message, $context = array(), $source = 'api' ) {
-    $context['endpoint'] = $endpoint;
-    subsales_log( 'ERROR', 'api', $error_message, $context, $source );
+    Subsales_Database::log_api_error( $endpoint, $error_message, $context, $source );
 }
 
-/**
- * Auto-cleanup old logs - called by cron
- */
 function subsales_cleanup_old_logs() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'subsales_logs';
-    
-    // Delete debug logs older than 24 hours
-    $wpdb->query(
-        "DELETE FROM {$table_name} 
-         WHERE is_debug = 1 
-         AND created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR)"
-    );
-    
-    // Delete normal logs older than 7 days
-    $wpdb->query(
-        "DELETE FROM {$table_name} 
-         WHERE is_debug = 0 
-         AND created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
-    );
+    Subsales_Database::cleanup_old_logs();
 }
 
-// Schedule log cleanup cron job
-if ( ! wp_next_scheduled( 'subsales_log_cleanup' ) ) {
-    wp_schedule_event( time(), 'hourly', 'subsales_log_cleanup' );
-}
-add_action( 'subsales_log_cleanup', 'subsales_cleanup_old_logs' );
-
-/**
- * Auto-disable debug mode after 24 hours
- */
 function subsales_check_debug_timeout() {
-    $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
-    if ( ! $debug_enabled ) {
-        return;
-    }
-    
-    $debug_started = get_option( 'subsales_debug_logging_started', 0 );
-    if ( $debug_started && ( time() - $debug_started ) > ( 24 * 3600 ) ) {
-        update_option( 'subsales_debug_logging_enabled', false );
-        delete_option( 'subsales_debug_logging_started' );
-        subsales_log( 'INFO', 'system', 'Debug logging automatically disabled after 24 hours' );
-    }
+    Subsales_Database::check_debug_timeout();
 }
-add_action( 'subsales_log_cleanup', 'subsales_check_debug_timeout' );
 
-/**
- * Log order changes to edit history table with field-by-field comparison
- * 
- * @param int $order_db_id Database ID of the order (from wp_order_sync_orders)
- * @param string $order_id Order ID (from order_data)
- * @param array $before_data Previous order_data (decoded array)
- * @param array $after_data New order_data (decoded array)
- * @param string $edit_type Type of edit: 'update', 'delete', 'restore'
- * @param int $user_id WordPress user ID who made the change
- * @param string $user_name Display name of user who made the change
- * @param string $edit_reason Optional reason provided by user
- * @param string $source Source of change: 'admin' or 'pwa'
- */
 function subsales_log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
-    global $wpdb;
-    $history_table = $wpdb->prefix . 'order_edit_history';
-    
-    // Build field-by-field comparison
-    $changes = array();
-    $summary_parts = array();
-    
-    // Define all possible order fields to compare
-    $fields_to_compare = array(
-        // Customer info
-        'customerName' => 'Customer Name',
-        'address' => 'Address',
-        'city' => 'City',
-        'state' => 'State',
-        'zip' => 'ZIP',
-        'phone' => 'Phone',
-        'email' => 'Email',
-        
-        // Order details
-        'deliveryDate' => 'Delivery Date',
-        'driver' => 'Driver',
-        'notes' => 'Notes',
-        'donationAmount' => 'Donation Amount',
-        'paymentMethod' => 'Payment Method',
-        
-        // Products (handled specially below)
-        'products' => 'Products',
-        
-        // Legacy product fields (if present)
-        'strawberryQty' => 'Strawberry Qty',
-        'blueberryQty' => 'Blueberry Qty',
-        'raspberryQty' => 'Raspberry Qty'
-    );
-    
-    // Compare simple fields
-    foreach ( $fields_to_compare as $field => $label ) {
-        if ( $field === 'products' ) continue; // Handle separately
-        
-        $before_val = isset( $before_data[ $field ] ) ? $before_data[ $field ] : '';
-        $after_val = isset( $after_data[ $field ] ) ? $after_data[ $field ] : '';
-        
-        // Normalize for comparison (treat null, empty string, and 0 as equivalent for some fields)
-        if ( $field === 'donationAmount' ) {
-            $before_val = floatval( $before_val );
-            $after_val = floatval( $after_val );
-        }
-        
-        if ( $before_val !== $after_val ) {
-            $changes[] = array(
-                'field' => $field,
-                'label' => $label,
-                'before' => $before_val,
-                'after' => $after_val
-            );
-            
-            // Build summary (limit to first 3 changes)
-            if ( count( $summary_parts ) < 3 ) {
-                if ( $field === 'donationAmount' ) {
-                    $summary_parts[] = sprintf( '%s: $%.2f → $%.2f', $label, $before_val, $after_val );
-                } else {
-                    $before_preview = strlen( $before_val ) > 30 ? substr( $before_val, 0, 30 ) . '...' : $before_val;
-                    $after_preview = strlen( $after_val ) > 30 ? substr( $after_val, 0, 30 ) . '...' : $after_val;
-                    $summary_parts[] = sprintf( '%s: "%s" → "%s"', $label, $before_preview, $after_preview );
-                }
-            }
-        }
-    }
-    
-    // Compare products array
-    $before_products = isset( $before_data['products'] ) && is_array( $before_data['products'] ) ? $before_data['products'] : array();
-    $after_products = isset( $after_data['products'] ) && is_array( $after_data['products'] ) ? $after_data['products'] : array();
-    
-    if ( $before_products !== $after_products ) {
-        // Build detailed product comparison
-        $product_changes = array(
-            'before' => $before_products,
-            'after' => $after_products
-        );
-        
-        $changes[] = array(
-            'field' => 'products',
-            'label' => 'Products',
-            'before' => $before_products,
-            'after' => $after_products
-        );
-        
-        // Add to summary
-        if ( count( $summary_parts ) < 3 ) {
-            $before_summary = array();
-            $after_summary = array();
-            
-            foreach ( $before_products as $p ) {
-                if ( isset( $p['name'] ) && isset( $p['qty'] ) && intval( $p['qty'] ) > 0 ) {
-                    $before_summary[] = $p['name'] . ' ×' . $p['qty'];
-                }
-            }
-            
-            foreach ( $after_products as $p ) {
-                if ( isset( $p['name'] ) && isset( $p['qty'] ) && intval( $p['qty'] ) > 0 ) {
-                    $after_summary[] = $p['name'] . ' ×' . $p['qty'];
-                }
-            }
-            
-            $summary_parts[] = sprintf( 
-                'Products: [%s] → [%s]', 
-                implode( ', ', $before_summary ),
-                implode( ', ', $after_summary )
-            );
-        }
-    }
-    
-    // Build changes summary
-    $changes_summary = '';
-    if ( $edit_type === 'delete' ) {
-        $changes_summary = 'Order marked as deleted';
-    } elseif ( $edit_type === 'restore' ) {
-        $changes_summary = 'Order restored from deleted status';
-    } else {
-        $change_count = count( $changes );
-        if ( $change_count === 0 ) {
-            $changes_summary = 'No changes detected';
-        } else {
-            $changes_summary = sprintf( '%d field%s changed', $change_count, $change_count === 1 ? '' : 's' );
-            if ( ! empty( $summary_parts ) ) {
-                $changes_summary .= ': ' . implode( '; ', $summary_parts );
-                if ( $change_count > 3 ) {
-                    $changes_summary .= sprintf( ' (+%d more)', $change_count - 3 );
-                }
-            }
-        }
-    }
-    
-    // Limit summary to 500 chars
-    if ( strlen( $changes_summary ) > 500 ) {
-        $changes_summary = substr( $changes_summary, 0, 497 ) . '...';
-    }
-    
-    // Insert history record
-    $result = $wpdb->insert(
-        $history_table,
-        array(
-            'order_id' => $order_db_id,
-            'edited_by_user_id' => $user_id,
-            'edited_by_name' => $user_name,
-            'edit_type' => $edit_type,
-            'edit_reason' => $edit_reason,
-            'changes_summary' => $changes_summary,
-            'changes_detail' => wp_json_encode( array(
-                'before' => $before_data,
-                'after' => $after_data,
-                'changes' => $changes
-            ) ),
-            'source' => $source,
-            'edited_at' => current_time( 'mysql' )
-        ),
-        array( '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-    );
-    
-    // Also log to main logging system
-    if ( $result !== false ) {
-        subsales_log( 'INFO', 'orders', sprintf( 'Order %s: %s', $edit_type, $changes_summary ), array(
-            'order_id' => $order_id,
-            'order_db_id' => $order_db_id,
-            'edit_type' => $edit_type,
-            'changes_count' => count( $changes ),
-            'reason' => $edit_reason
-        ), $source, $user_id, $user_name );
-    }
-    
-    return $result !== false;
+    return Subsales_Database::log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason, $source );
 }
 
 function order_sync_add_team_member( $team_id, $name, $email, $role = 'member' ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_team_members';
-    
-    $result = $wpdb->insert(
-        $table_name,
-        array(
-            'team_id' => $team_id,
-            'name' => $name,
-            'email' => $email,
-            'role' => $role,
-            'status' => 'active'
-        ),
-        array( '%d', '%s', '%s', '%s', '%s' )
-    );
-    
-    return $result !== false;
+    return Subsales_Database::add_team_member( $team_id, $name, $email, $role );
 }
 
 function order_sync_remove_team_member( $member_id ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_team_members';
-    
-    return $wpdb->delete(
-        $table_name,
-        array( 'id' => $member_id ),
-        array( '%d' )
-    );
+    return Subsales_Database::remove_team_member( $member_id );
 }
 
 function order_sync_get_team_members_by_team( $team_id ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_team_members';
-    
-    return $wpdb->get_results( 
-        $wpdb->prepare(
-            "SELECT * FROM {$table_name} WHERE team_id = %d ORDER BY created_at DESC", 
-            $team_id
-        ),
-        ARRAY_A 
-    );
+    return Subsales_Database::get_team_members_by_team( $team_id );
 }
 
 function order_sync_verify_team_member( $email, $team_id ) {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'order_sync_team_members';
-    
-    $member = $wpdb->get_row( 
-        $wpdb->prepare( 
-            "SELECT * FROM {$table_name} WHERE email = %s AND team_id = %d AND status = 'active'", 
-            $email, 
-            $team_id 
-        ),
-        ARRAY_A
-    );
-    
-    if ( $member ) {
-        $wpdb->update(
-            $table_name,
-            array( 'last_login' => current_time( 'mysql' ) ),
-            array( 'id' => $member['id'] ),
-            array( '%s' ),
-            array( '%d' )
-        );
-        
-        return $member;
-    }
-    
-    return false;
+    return Subsales_Database::verify_team_member( $email, $team_id );
 }
 
-// Register REST API routes
-add_action( 'rest_api_init', function () {
-    register_rest_route( 'order-manager/v1', '/orders', array(
-        'methods' => 'GET',
-        'callback' => 'get_orders',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
+// ============================================================
+// End of Database Wrapper Functions
+// ============================================================
 
-    register_rest_route( 'order-manager/v1', '/orders', array(
-        'methods' => 'POST',
-        'callback' => 'create_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
 
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'GET',
-        'callback' => 'get_order_by_id',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
+// ============================================================
+// REST API ROUTES
+// Routes now registered via Subsales_REST_API class
+// Handler functions remain below for compatibility
+// ============================================================
 
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'PUT',
-        'callback' => 'update_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'delete_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    // Order History API - get edit history for an order
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/history', array(
-        'methods' => 'GET',
-        'callback' => 'get_order_history',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    // Order Restore API - restore a soft-deleted order
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/restore', array(
-        'methods' => 'POST',
-        'callback' => 'restore_order',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    // Order Tally API - mark orders as tallied (single or bulk)
-    register_rest_route( 'order-manager/v1', '/orders/tally', array(
-        'methods' => 'POST',
-        'callback' => 'tally_orders',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/auth/login', array(
-        'methods' => 'POST',
-        'callback' => 'team_member_login',
-        'permission_callback' => '__return_true',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/auth/verify', array(
-        'methods' => 'POST',
-        'callback' => 'verify_team_access',
-        'permission_callback' => '__return_true',
-    ));
-    
-    // Expose config publicly so the PWA shell can fetch branding/variant without authentication.
-    // Sensitive items (like google_maps_api_key) will only be returned when valid team headers are present.
-    register_rest_route( 'order-manager/v1', '/config', array(
-        'methods' => 'GET',
-        'callback' => 'get_app_config',
-        'permission_callback' => '__return_true',
-    ));
-
-    // Expose a tiny server time endpoint so clients can align "today" with server time
-    register_rest_route( 'order-manager/v1', '/time', array(
-        'methods' => 'GET',
-        'callback' => 'order_manager_get_server_time',
-        'permission_callback' => '__return_true',
-    ));
-
-    // Return team members for authenticated team (reads X-Team-Name/X-Access-Code headers)
-    register_rest_route( 'order-manager/v1', '/teams/members', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_team_members_endpoint',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    // User Management API (Phase 2)
-    register_rest_route( 'order-manager/v1', '/users', array(
-        'methods' => 'POST',
-        'callback' => 'order_sync_create_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_users',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_user_by_id',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'PUT',
-        'callback' => 'order_sync_update_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'order_sync_delete_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/search', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_search_users',
-        'permission_callback' => '__return_true', // Public for PWA login
-    ));
-    
-    // Team Assignment API (Phase 3)
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_user_teams',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/assign', array(
-        'methods' => 'POST',
-        'callback' => 'order_sync_assign_user_to_team',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users/(?P<userId>\d+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'order_sync_remove_user_from_team',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_team_users',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-});
 
 // AJAX endpoint for admin orders filtering/pagination
 add_action( 'wp_ajax_subsales_fetch_orders', 'order_sync_fetch_orders_ajax' );
