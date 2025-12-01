@@ -51,9 +51,13 @@ if ( file_exists( $subsales_vendor_autoload ) ) {
 
 // Load modular classes
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
 
 // Initialize database
 Subsales_Database::init();
+
+// Initialize REST API
+Subsales_REST_API::init();
 
 
 // Activation hook
@@ -1396,155 +1400,12 @@ function order_sync_verify_team_member( $email, $team_id ) {
 // ============================================================
 
 
-// Register REST API routes
-add_action( 'rest_api_init', function () {
-    register_rest_route( 'order-manager/v1', '/orders', array(
-        'methods' => 'GET',
-        'callback' => 'get_orders',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
+// ============================================================
+// REST API ROUTES
+// Routes now registered via Subsales_REST_API class
+// Handler functions remain below for compatibility
+// ============================================================
 
-    register_rest_route( 'order-manager/v1', '/orders', array(
-        'methods' => 'POST',
-        'callback' => 'create_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'GET',
-        'callback' => 'get_order_by_id',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'PUT',
-        'callback' => 'update_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'delete_order',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    // Order History API - get edit history for an order
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/history', array(
-        'methods' => 'GET',
-        'callback' => 'get_order_history',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    // Order Restore API - restore a soft-deleted order
-    register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/restore', array(
-        'methods' => 'POST',
-        'callback' => 'restore_order',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    // Order Tally API - mark orders as tallied (single or bulk)
-    register_rest_route( 'order-manager/v1', '/orders/tally', array(
-        'methods' => 'POST',
-        'callback' => 'tally_orders',
-        'permission_callback' => 'order_sync_check_admin_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/auth/login', array(
-        'methods' => 'POST',
-        'callback' => 'team_member_login',
-        'permission_callback' => '__return_true',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/auth/verify', array(
-        'methods' => 'POST',
-        'callback' => 'verify_team_access',
-        'permission_callback' => '__return_true',
-    ));
-    
-    // Expose config publicly so the PWA shell can fetch branding/variant without authentication.
-    // Sensitive items (like google_maps_api_key) will only be returned when valid team headers are present.
-    register_rest_route( 'order-manager/v1', '/config', array(
-        'methods' => 'GET',
-        'callback' => 'get_app_config',
-        'permission_callback' => '__return_true',
-    ));
-
-    // Expose a tiny server time endpoint so clients can align "today" with server time
-    register_rest_route( 'order-manager/v1', '/time', array(
-        'methods' => 'GET',
-        'callback' => 'order_manager_get_server_time',
-        'permission_callback' => '__return_true',
-    ));
-
-    // Return team members for authenticated team (reads X-Team-Name/X-Access-Code headers)
-    register_rest_route( 'order-manager/v1', '/teams/members', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_team_members_endpoint',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    // User Management API (Phase 2)
-    register_rest_route( 'order-manager/v1', '/users', array(
-        'methods' => 'POST',
-        'callback' => 'order_sync_create_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_users',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_user_by_id',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'PUT',
-        'callback' => 'order_sync_update_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'order_sync_delete_user',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/users/search', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_search_users',
-        'permission_callback' => '__return_true', // Public for PWA login
-    ));
-    
-    // Team Assignment API (Phase 3)
-    register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_user_teams',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/assign', array(
-        'methods' => 'POST',
-        'callback' => 'order_sync_assign_user_to_team',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users/(?P<userId>\d+)', array(
-        'methods' => 'DELETE',
-        'callback' => 'order_sync_remove_user_from_team',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-    
-    register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users', array(
-        'methods' => 'GET',
-        'callback' => 'order_sync_get_team_users',
-        'permission_callback' => 'order_sync_check_permissions',
-    ));
-});
 
 // AJAX endpoint for admin orders filtering/pagination
 add_action( 'wp_ajax_subsales_fetch_orders', 'order_sync_fetch_orders_ajax' );
