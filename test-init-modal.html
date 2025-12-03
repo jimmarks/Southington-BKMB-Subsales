@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Test Initialization Modal</title>
+    <style>
+        #subsales-onboarding-overlay {
+            position: fixed;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        #subsales-onboarding-modal {
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 700px;
+            max-height: 90vh;
+            overflow-y: auto;
+            animation: subsalesSlideIn 0.3s ease-out;
+        }
+        @keyframes subsalesSlideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .subsales-onboarding-header {
+            background: linear-gradient(135deg, #2d6cdf 0%, #1a4d9f 100%);
+            color: #fff;
+            padding: 30px;
+            border-radius: 8px 8px 0 0;
+            text-align: center;
+        }
+        .subsales-onboarding-header h1 {
+            margin: 0 0 10px 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .subsales-test-content {
+            padding: 30px;
+            min-height: 200px;
+        }
+        .test-message {
+            background: #e7f3ff;
+            border-left: 4px solid #2d6cdf;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Standalone Test Page</h1>
+    <p>This page tests if the modal displays correctly outside WordPress</p>
+    
+    <div id="subsales-onboarding-overlay">
+        <div id="subsales-onboarding-modal">
+            <div class="subsales-onboarding-header">
+                <h1>🚀 Welcome to Subsales</h1>
+                <p>Let's get your system set up in just a few steps</p>
+            </div>
+            <div class="subsales-test-content">
+                <div class="test-message">
+                    <h3>Test Status</h3>
+                    <p><strong>If you can see this centered modal with a blue gradient header, the CSS is working correctly!</strong></p>
+                    <ul>
+                        <li>✅ Modal is centered on screen</li>
+                        <li>✅ Backdrop overlay is showing</li>
+                        <li>✅ Header has gradient blue background</li>
+                        <li>✅ Content is readable</li>
+                    </ul>
+                </div>
+                <p>The initialization wizard styling should work the same way in WordPress admin.</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

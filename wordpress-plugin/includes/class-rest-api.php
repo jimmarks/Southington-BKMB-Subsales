@@ -173,5 +173,214 @@ class Subsales_REST_API {
             'callback' => array( 'Subsales_Teams', 'get_team_users' ),
             'permission_callback' => 'order_sync_check_permissions',
         ));
+        
+        // PWA Session Tracking API
+        register_rest_route( 'order-manager/v1', '/pwa-session/start', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'start_pwa_session' ),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/pwa-session/heartbeat', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'update_pwa_heartbeat' ),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/pwa-session/end', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'end_pwa_session' ),
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/pwa-session/active', array(
+            'methods' => 'GET',
+            'callback' => array( __CLASS__, 'get_active_sessions' ),
+            'permission_callback' => 'order_sync_check_admin_permissions',
+        ));
+        
+        // PWA Logging API
+        register_rest_route( 'order-manager/v1', '/log', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'pwa_log' ),
+            'permission_callback' => '__return_true',
+        ));
+    }
+    
+    /**
+     * ====================================================================
+     * PWA SESSION ENDPOINTS
+     * ====================================================================
+     */
+    
+    /**
+     * Start PWA session endpoint
+     * 
+     * POST /wp-json/order-manager/v1/pwa-session/start
+     * Body: { sessionId, userId, userName, teamId, teamName, metadata }
+     */
+    public static function start_pwa_session( $request ) {
+        $params = $request->get_json_params();
+        
+        $session_id = isset( $params['sessionId'] ) ? sanitize_text_field( $params['sessionId'] ) : '';
+        $user_id = isset( $params['userId'] ) ? intval( $params['userId'] ) : null;
+        $user_name = isset( $params['userName'] ) ? sanitize_text_field( $params['userName'] ) : '';
+        $team_id = isset( $params['teamId'] ) ? intval( $params['teamId'] ) : null;
+        $team_name = isset( $params['teamName'] ) ? sanitize_text_field( $params['teamName'] ) : '';
+        $metadata = isset( $params['metadata'] ) && is_array( $params['metadata'] ) ? $params['metadata'] : array();
+        
+        // Debug log the incoming request
+        Subsales_Database::log( 'DEBUG', 'pwa', 'PWA session start API called', array(
+            'session_id' => $session_id,
+            'user_name' => $user_name,
+            'team_name' => $team_name,
+            'has_metadata' => ! empty( $metadata )
+        ), 'api', $user_id, $user_name );
+        
+        if ( empty( $session_id ) ) {
+            Subsales_Database::log( 'DEBUG', 'pwa', 'PWA session start failed - missing session ID', array(), 'api' );
+            return new WP_Error( 'missing_session_id', 'Session ID is required', array( 'status' => 400 ) );
+        }
+        
+        $result = Subsales_Database::start_pwa_session( $session_id, $user_id, $user_name, $team_id, $team_name, $metadata );
+        
+        if ( $result === false ) {
+            Subsales_Database::log( 'DEBUG', 'pwa', 'PWA session start failed - database error', array(
+                'session_id' => $session_id
+            ), 'api', $user_id, $user_name );
+            return new WP_Error( 'session_start_failed', 'Failed to start PWA session', array( 'status' => 500 ) );
+        }
+        
+        Subsales_Database::log( 'DEBUG', 'pwa', 'PWA session started successfully', array(
+            'session_id' => $session_id,
+            'db_id' => $result
+        ), 'api', $user_id, $user_name );
+        
+        return rest_ensure_response( array(
+            'success' => true,
+            'sessionId' => $session_id,
+            'message' => 'PWA session started successfully'
+        ) );
+    }
+    
+    /**
+     * Update PWA heartbeat endpoint
+     * 
+     * POST /wp-json/order-manager/v1/pwa-session/heartbeat
+     * Body: { sessionId, activity }
+     */
+    public static function update_pwa_heartbeat( $request ) {
+        $params = $request->get_json_params();
+        
+        $session_id = isset( $params['sessionId'] ) ? sanitize_text_field( $params['sessionId'] ) : '';
+        $activity = isset( $params['activity'] ) && is_array( $params['activity'] ) ? $params['activity'] : array();
+        
+        // Debug log heartbeat (only first time to avoid spam)
+        static $heartbeat_logged = array();
+        if ( ! isset( $heartbeat_logged[ $session_id ] ) ) {
+            Subsales_Database::log( 'DEBUG', 'pwa', 'PWA heartbeat received (first)', array(
+                'session_id' => $session_id,
+                'has_activity' => ! empty( $activity )
+            ), 'api' );
+            $heartbeat_logged[ $session_id ] = true;
+        }
+        
+        if ( empty( $session_id ) ) {
+            return new WP_Error( 'missing_session_id', 'Session ID is required', array( 'status' => 400 ) );
+        }
+        
+        $result = Subsales_Database::update_pwa_heartbeat( $session_id, $activity );
+        
+        if ( $result === false ) {
+            Subsales_Database::log( 'DEBUG', 'pwa', 'PWA heartbeat failed - session not found', array(
+                'session_id' => $session_id
+            ), 'api' );
+            return new WP_Error( 'heartbeat_failed', 'Failed to update heartbeat', array( 'status' => 500 ) );
+        }
+        
+        return rest_ensure_response( array(
+            'success' => true,
+            'message' => 'Heartbeat updated'
+        ) );
+    }
+    
+    /**
+     * End PWA session endpoint
+     * 
+     * POST /wp-json/order-manager/v1/pwa-session/end
+     * Body: { sessionId }
+     */
+    public static function end_pwa_session( $request ) {
+        $params = $request->get_json_params();
+        
+        $session_id = isset( $params['sessionId'] ) ? sanitize_text_field( $params['sessionId'] ) : '';
+        
+        if ( empty( $session_id ) ) {
+            return new WP_Error( 'missing_session_id', 'Session ID is required', array( 'status' => 400 ) );
+        }
+        
+        $result = Subsales_Database::end_pwa_session( $session_id );
+        
+        if ( $result === false ) {
+            return new WP_Error( 'session_end_failed', 'Failed to end session', array( 'status' => 500 ) );
+        }
+        
+        return rest_ensure_response( array(
+            'success' => true,
+            'message' => 'Session ended successfully'
+        ) );
+    }
+    
+    /**
+     * Get active PWA sessions endpoint
+     * 
+     * GET /wp-json/order-manager/v1/pwa-session/active
+     */
+    public static function get_active_sessions( $request ) {
+        $limit = $request->get_param( 'limit' ) ? intval( $request->get_param( 'limit' ) ) : 100;
+        
+        $sessions = Subsales_Database::get_active_pwa_sessions( $limit );
+        
+        return rest_ensure_response( array(
+            'success' => true,
+            'count' => count( $sessions ),
+            'sessions' => $sessions
+        ) );
+    }
+    
+    /**
+     * PWA logging endpoint
+     * 
+     * POST /wp-json/order-manager/v1/log
+     * Body: { level, category, message, context, user_name }
+     */
+    public static function pwa_log( $request ) {
+        $params = $request->get_json_params();
+        
+        $level = isset( $params['level'] ) ? strtoupper( sanitize_text_field( $params['level'] ) ) : 'INFO';
+        $category = isset( $params['category'] ) ? sanitize_text_field( $params['category'] ) : 'pwa';
+        $message = isset( $params['message'] ) ? sanitize_text_field( $params['message'] ) : '';
+        $context = isset( $params['context'] ) && is_array( $params['context'] ) ? $params['context'] : array();
+        $user_name = isset( $params['user_name'] ) ? sanitize_text_field( $params['user_name'] ) : '';
+        $source = isset( $params['source'] ) ? sanitize_text_field( $params['source'] ) : 'pwa-client';
+        
+        // Validate log level
+        $valid_levels = array( 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' );
+        if ( ! in_array( $level, $valid_levels ) ) {
+            $level = 'INFO';
+        }
+        
+        // Add source to context if not already present
+        if ( ! isset( $context['source'] ) ) {
+            $context['source'] = $source;
+        }
+        
+        // Log to database
+        Subsales_Database::log( $level, $category, $message, $context, $source, null, $user_name );
+        
+        return rest_ensure_response( array(
+            'success' => true,
+            'message' => 'Log recorded'
+        ) );
     }
 }

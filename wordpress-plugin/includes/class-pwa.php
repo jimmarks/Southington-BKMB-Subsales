@@ -29,7 +29,8 @@ class Subsales_PWA {
      * Enqueues PWA app.js and styles.css, localizes configuration
      */
     public static function register_pwa_scripts() {
-        wp_register_script( 'subsales-pwa-app', SUBSALES_PLUGIN_URL . 'pwa/app.js', array(), SUBSALES_VERSION, true );
+        wp_register_script( 'subsales-pwa-session-tracking', SUBSALES_PLUGIN_URL . 'pwa/session-tracking.js', array(), SUBSALES_VERSION, true );
+        wp_register_script( 'subsales-pwa-app', SUBSALES_PLUGIN_URL . 'pwa/app.js', array( 'subsales-pwa-session-tracking' ), SUBSALES_VERSION, true );
         wp_register_style( 'subsales-pwa-style', SUBSALES_PLUGIN_URL . 'pwa/styles.css', array(), SUBSALES_VERSION );
         $portal_base = esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) );
         $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );

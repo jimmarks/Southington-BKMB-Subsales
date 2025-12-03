@@ -36,6 +36,16 @@ class Subsales_Teams {
         
         $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
         
+        // DEBUG log: Login attempt started
+        Subsales_Database::log( 'DEBUG', 'auth', 'Login attempt started', array(
+            'mode' => $login_mode,
+            'has_team_name' => isset( $data['team_name'] ),
+            'has_access_code' => isset( $data['access_code'] ),
+            'has_name' => isset( $data['name'] ),
+            'has_phone' => isset( $data['phone'] ),
+            'has_team_id' => isset( $data['team_id'] )
+        ), 'pwa' );
+        
         // Legacy mode: Team + Access Code
         if ( $login_mode === 'legacy' ) {
             if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
@@ -102,7 +112,7 @@ class Subsales_Teams {
             }
             
             // Find user by phone
-            $members_table = $wpdb->prefix . 'order_sync_team_members';
+            $members_table = $wpdb->prefix . 'ss_team_members';
             $user = $wpdb->get_row( $wpdb->prepare(
                 "SELECT * FROM {$members_table} WHERE phone = %s",
                 $phone
@@ -122,6 +132,20 @@ class Subsales_Teams {
                 ), 401 );
             }
             
+            // Check if user is active
+            if ( ( $user['status'] ?? 'active' ) !== 'active' ) {
+                // Log failed user login - user inactive
+                Subsales_Database::log_auth( 'failed', $user['id'], $user['name'], array(
+                    'mode' => 'user',
+                    'reason' => 'user_inactive'
+                ), 'pwa' );
+                
+                return new WP_REST_Response( array(
+                    'success' => false,
+                    'message' => 'Your account has been deactivated. Please contact your administrator.'
+                ), 403 );
+            }
+            
             // Verify name matches (case-insensitive partial match)
             if ( stripos( $user['name'], $name ) === false && stripos( $name, $user['name'] ) === false ) {
                 // Log failed user login - name mismatch
@@ -138,8 +162,8 @@ class Subsales_Teams {
             }
             
             // Get user's teams
-            $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-            $teams_table = $wpdb->prefix . 'order_sync_teams';
+            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+            $teams_table = $wpdb->prefix . 'ss_teams';
             
             $team_ids = $wpdb->get_col( $wpdb->prepare(
                 "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
@@ -199,6 +223,14 @@ class Subsales_Teams {
                 'team_count' => count( $teams ),
                 'selected_team_id' => $selected_team ? $selected_team['id'] : null
             ), 'pwa' );
+            
+            // Debug log the full response being sent
+            Subsales_Database::log( 'DEBUG', 'auth', 'User login response prepared', array(
+                'user_id' => $user['id'],
+                'user_name' => $user['name'],
+                'team_count' => count( $teams ),
+                'has_selected_team' => $selected_team !== null
+            ), 'pwa', $user['id'], $user['name'] );
             
             return new WP_REST_Response( array(
                 'success' => true,
@@ -284,7 +316,7 @@ class Subsales_Teams {
      */
     public static function create_user( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $params = $request->get_json_params();
         $name = sanitize_text_field( $params['name'] ?? '' );
@@ -352,7 +384,7 @@ class Subsales_Teams {
      */
     public static function get_users( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $limit = intval( $request->get_param( 'limit' ) ?: 100 );
         $offset = intval( $request->get_param( 'offset' ) ?: 0 );
@@ -384,8 +416,8 @@ class Subsales_Teams {
         $users = $wpdb->get_results( $sql, ARRAY_A );
         
         // For each user, get their teams
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
         
         foreach ( $users as &$user ) {
             $team_ids = $wpdb->get_col( $wpdb->prepare(
@@ -418,9 +450,9 @@ class Subsales_Teams {
      */
     public static function get_user_by_id( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
         
         $user_id = intval( $request->get_param( 'id' ) );
         
@@ -463,7 +495,7 @@ class Subsales_Teams {
      */
     public static function update_user( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $user_id = intval( $request->get_param( 'id' ) );
         $params = $request->get_json_params();
@@ -557,8 +589,8 @@ class Subsales_Teams {
      */
     public static function delete_user( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
         
         $user_id = intval( $request->get_param( 'id' ) );
         
@@ -593,9 +625,9 @@ class Subsales_Teams {
      */
     public static function search_users( $request ) {
         global $wpdb;
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
         
         $query = sanitize_text_field( $request->get_param( 'q' ) ?: '' );
         $limit = intval( $request->get_param( 'limit' ) ?: 20 );
@@ -661,9 +693,9 @@ class Subsales_Teams {
      */
     public static function get_user_teams( $request ) {
         global $wpdb;
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $user_id = intval( $request->get_param( 'id' ) );
         
@@ -706,9 +738,9 @@ class Subsales_Teams {
      */
     public static function assign_user_to_team( $request ) {
         global $wpdb;
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $team_id = intval( $request->get_param( 'id' ) );
         $params = $request->get_json_params();
@@ -786,9 +818,9 @@ class Subsales_Teams {
      */
     public static function remove_user_from_team( $request ) {
         global $wpdb;
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $team_id = intval( $request->get_param( 'id' ) );
         $user_id = intval( $request->get_param( 'userId' ) );
@@ -854,9 +886,9 @@ class Subsales_Teams {
      */
     public static function get_team_users( $request ) {
         global $wpdb;
-        $user_teams_table = $wpdb->prefix . 'order_sync_user_teams';
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $team_id = intval( $request->get_param( 'id' ) );
         

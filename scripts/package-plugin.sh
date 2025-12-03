@@ -21,6 +21,9 @@ rm -rf "$ROOT_DIR/subsales-management/.git" || true
 # Create zip at repo root
 ( cd "$ROOT_DIR" && zip -r "$PKG_NAME" subsales-management )
 
+# Remove temporary folder
+rm -rf "$ROOT_DIR/subsales-management"
+
 # Summarize
 ls -lh "$PKG_PATH"
 sha256sum "$PKG_PATH"

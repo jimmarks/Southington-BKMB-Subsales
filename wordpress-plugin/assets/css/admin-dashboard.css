@@ -2,9 +2,9 @@
 .subsales-dashboard-grid{ margin-top:10px; display:flex; flex-direction:column; gap:12px }
 .subsales-top-row, .subsales-second-row{ display:grid; gap:12px }
 
-/* Top row: 3 columns large, 2 medium, 1 small */
+/* Top row: 4 columns large, 2 medium, 1 small */
 .subsales-top-row{ grid-template-columns: repeat(3, 1fr); }
-@media (max-width:1200px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
+@media (max-width:1400px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
 @media (max-width:700px){ .subsales-top-row{ grid-template-columns: 1fr; } }
 
 /* Second row: dynamic responsive grid, try to keep items on one line for very wide displays */
@@ -115,4 +115,115 @@
   .branding-variant-rounded.subsales-branding-button, .branding-variant-rounded .subsales-branding-button{ border-radius:20px; box-shadow:none; }
   .branding-variant-dark.subsales-branding-button, .branding-variant-dark .subsales-branding-button{ border-radius:6px; box-shadow:0 2px 6px rgba(0,0,0,0.2); }
   .branding-variant-dark.subsales-branding-header, .branding-variant-dark .subsales-branding-header{ color:#fff; }
+
+/* Dashboard row layouts - moved from inline styles */
+.subsales-financial-row{ margin-bottom:12px; display:grid; gap:20px; grid-template-columns: repeat(4, 1fr); }
+
+/* Address Data widget specific styles */
+.subsales-address-data-inside{ 
+  position: relative; 
+  padding: 12px; 
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.subsales-address-data-inside.has-age{ padding-bottom: 24px; }
+
+.subsales-address-data-warning{ margin: 0 0 8px 0; font-size: 14px; color: #d63638; }
+.subsales-address-data-warning .dashicons{ font-size: 16px; vertical-align: text-bottom; }
+
+.subsales-address-data-action{ margin: 0; }
+
+.subsales-address-data-count{ font-size: 28px; margin-bottom: 4px; }
+.subsales-address-data-label{ margin: 0 0 8px 0; font-size: 13px; color: #646970; }
+
+.subsales-address-data-age-bar{ 
+  position: absolute; 
+  bottom: 0; 
+  left: 0; 
+  right: 0; 
+  padding: 4px 12px; 
+  font-size: 11px; 
+  text-align: center; 
+  border-top: 1px solid #dcdcde; 
+  background: #f6f7f7; 
+  color: #646970; 
+}
+.subsales-address-data-age-bar.needs-refresh{ 
+  background: #fef7f7; 
+  border-top-color: #f0c6c6; 
+  color: #d63638; 
+}
+.subsales-address-data-age-bar .dashicons{ font-size: 12px; vertical-align: text-bottom; }
+
+/* Address Management: Linear workflow styles */
+.subsales-workflow-section{ margin-bottom: 30px; }
+.subsales-workflow-section h3{ margin-top: 0; margin-bottom: 16px; font-size: 16px; color: #1d2327; }
+.subsales-workflow-section > p{ margin-bottom: 16px; color: #646970; }
+
+.subsales-card{ 
+  background: #fff; 
+  border: 1px solid #c3c4c7; 
+  border-radius: 4px; 
+  padding: 20px; 
+  margin-bottom: 20px; 
+}
+
+.subsales-card h3,
+.subsales-card h4{ 
+  margin-top: 0; 
+  padding-bottom: 10px; 
+  border-bottom: 1px solid #e0e0e0; 
+}
+
+.subsales-stats-grid{ 
+  display: grid; 
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px; 
+  margin-bottom: 30px; 
+}
+
+/* Reduce padding in stats tables */
+.subsales-stats-grid .form-table th,
+.subsales-stats-grid .form-table td{
+  padding: 6px 0;
+  line-height: 1.4;
+}
+
+.subsales-stats-grid .form-table th{
+  width: 60%;
+  font-weight: 500;
+}
+
+/* Zero-state boxes in stats cards */
+.subsales-stats-zero-state{
+  padding: 20px;
+  text-align: center;
+  background: #f0f6fc;
+  border: 1px dashed #0073aa;
+  border-radius: 4px;
+  margin: 10px 0;
+}
+
+.subsales-stats-zero-state p{
+  margin: 0;
+  font-size: 14px;
+  color: #135e96;
+}
+
+.subsales-stats-zero-state span{
+  font-size: 12px;
+}
+
+/* Error/warning text colors */
+.subsales-error-text{
+  color: #d63638;
+}
+
+.subsales-workflow-divider{ 
+  margin: 30px 0; 
+  border: 0; 
+  border-top: 1px solid #dcdcde; 
+}
 

@@ -22,6 +22,72 @@
   console.log('API Base:', apiBase);
   console.log('Plugin Base:', pluginBase);
   console.log('Brand Name:', brandName);
+  
+  // Global error handler for logging
+  window.addEventListener('error', function(event) {
+    if (window.PWALogger) {
+      window.PWALogger.logError('system', 'Uncaught error', {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        error: event.error
+      });
+    }
+  });
+  
+  window.addEventListener('unhandledrejection', function(event) {
+    if (window.PWALogger) {
+      window.PWALogger.logError('system', 'Unhandled promise rejection', {
+        reason: event.reason,
+        promise: String(event.promise)
+      });
+    }
+  });
+  
+  // Listen for address autocomplete module ready event
+  let addressAutocompleteReady = false;
+  let addressAutocompleteLoading = false;
+  window.addEventListener('subsalesNearbyReady', function() {
+    console.log('[Prefetch] Address autocomplete module is ready');
+    addressAutocompleteReady = true;
+  });
+  
+  // Load address autocomplete module dynamically (only after login)
+  function loadAddressAutocomplete() {
+    if (addressAutocompleteReady || addressAutocompleteLoading) {
+      console.log('[LoadModule] Address autocomplete already loaded/loading');
+      return Promise.resolve();
+    }
+    
+    console.log('[LoadModule] Loading address-autocomplete.js...');
+    addressAutocompleteLoading = true;
+    
+    return new Promise((resolve, reject) => {
+      try {
+        // Find the base path from app.js
+        const appScript = document.querySelector('script[src$="app.js"]');
+        const base = appScript ? appScript.src.replace(/app\.js(\?.*)?$/, '') : './';
+        
+        const script = document.createElement('script');
+        script.src = base + 'address-autocomplete.js';
+        script.onload = () => {
+          console.log('[LoadModule] address-autocomplete.js loaded successfully');
+          resolve();
+        };
+        script.onerror = (e) => {
+          console.error('[LoadModule] Failed to load address-autocomplete.js', e);
+          addressAutocompleteLoading = false;
+          reject(e);
+        };
+        document.head.appendChild(script);
+      } catch(e) {
+        console.error('[LoadModule] Error loading address-autocomplete.js', e);
+        addressAutocompleteLoading = false;
+        reject(e);
+      }
+    });
+  }
 
   // Apply runtime style overrides from admin settings (primary color and variant)
   (function applyRuntimeStyles(){
@@ -74,6 +140,45 @@
   })();
 
   const qs = s => document.querySelector(s);
+  
+  // Helper function for comprehensive logging with GPS
+  async function logWithContext(category, message, additionalContext = {}) {
+    if (!window.PWALogger || !window.PWALogger.debugEnabled) return;
+    
+    const context = {
+      ...additionalContext,
+      timestamp: new Date().toISOString(),
+      online: navigator.onLine,
+      user_id: localStorage.getItem('userId') || localStorage.getItem('teamMemberId'),
+      user_name: localStorage.getItem('userName') || localStorage.getItem('teamMemberName'),
+      team_id: localStorage.getItem('selectedTeamId') || localStorage.getItem('teamId'),
+      team_name: localStorage.getItem('selectedTeamName') || localStorage.getItem('teamName'),
+      login_mode: localStorage.getItem('loginMode') || 'legacy',
+      session_id: localStorage.getItem('pwaSessionId')
+    };
+    
+    // Try to get GPS coordinates if available
+    if ('geolocation' in navigator) {
+      try {
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 1000,
+            maximumAge: 30000,
+            enableHighAccuracy: false
+          });
+        });
+        
+        context.gps_latitude = position.coords.latitude;
+        context.gps_longitude = position.coords.longitude;
+        context.gps_accuracy = position.coords.accuracy;
+        context.gps_timestamp = new Date(position.timestamp).toISOString();
+      } catch(e) {
+        context.gps_error = e.message;
+      }
+    }
+    
+    window.PWALogger.log(category, message, context);
+  }
 
   // Ensure root container
   // Prefer server-rendered shortcode root `subsales-pwa-root`, then older `sm-pwa-root`, else create `subsales-pwa-root`.
@@ -1006,15 +1111,35 @@
         try { localStorage.setItem('teamMemberId', sel.value); } catch(e){}
         try { localStorage.setItem('teamMemberName', opt ? opt.text : ''); } catch(e){}
       }
+      // Start PWA session tracking
+      if (window.PWASessionTracking) {
+        window.PWASessionTracking.start({
+          userId: localStorage.getItem('teamMemberId'),
+          userName: localStorage.getItem('teamMemberName'),
+          teamId: localStorage.getItem('teamId'),
+          teamName: localStorage.getItem('teamName')
+        });
+        window.PWASessionTracking.startAutoHeartbeat();
+      }
       // Show app
   if (loginSection) { loginSection.classList.add('hidden'); try{ loginSection.style.display='none'; }catch(e){} }
   if (appSection) { appSection.classList.remove('hidden'); try{ appSection.style.display='block'; }catch(e){} }
   // reveal any server-side auth-only controls
   revealAuthControls();
-  // Prefetch ZIP data for address autocomplete
-  if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
-    window.subsalesNearby.prefetch();
-  }
+  
+  // Load address autocomplete module and prefetch (background - non-blocking)
+  console.log('[Team Member] Loading address autocomplete module...');
+  loadAddressAutocomplete().then(() => {
+    console.log('[Team Member] Module loaded, starting prefetch...');
+    if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+      return window.subsalesNearby.prefetch();
+    }
+  }).then(() => {
+    console.log('[Team Member] Address ZIP prefetch completed');
+  }).catch(e => {
+    console.warn('[Team Member] Module load/prefetch failed:', e);
+  });
+  
   if (deferredPrompt) installBox && installBox.classList.remove('hidden');
       trySync();
     });
@@ -1122,6 +1247,14 @@
   if (userLoginBtn) {
     userLoginBtn.addEventListener('click', async () => {
       console.log('===== USER LOGIN BUTTON CLICKED =====');
+      
+      // Log login attempt
+      if (window.PWALogger) {
+        window.PWALogger.log('auth', 'User login button clicked', {
+          login_mode: 'user'
+        });
+      }
+      
       const name = (qs('#userName') && qs('#userName').value.trim()) || '';
       const phone = (qs('#userPhone') && qs('#userPhone').value.trim()) || '';
       console.log('Name:', name, 'Phone:', phone ? phone.substring(0,3) + '***' : '(empty)');
@@ -1225,15 +1358,59 @@
         // Fetch config
         await fetchAppConfigUserMode();
         
-        // Prefetch ZIP data for address autocomplete
-        if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
-          console.log('Triggering address ZIP prefetch after login');
-          window.subsalesNearby.prefetch();
+        // Start PWA session tracking
+        if (window.PWASessionTracking) {
+          window.PWASessionTracking.start({
+            userId: localStorage.getItem('userId'),
+            userName: localStorage.getItem('userName'),
+            teamId: localStorage.getItem('selectedTeamId'),
+            teamName: localStorage.getItem('selectedTeamName')
+          });
+          window.PWASessionTracking.startAutoHeartbeat();
         }
         
-        // Show app
+        // Re-initialize PWA Logger with authenticated credentials
+        if (window.PWALogger) {
+          console.log('Re-initializing PWA Logger with authenticated credentials...');
+          try {
+            await window.PWALogger.init({
+              apiBase: apiBase,
+              teamName: localStorage.getItem('selectedTeamName') || '',
+              userName: localStorage.getItem('userName') || '',
+              sessionId: localStorage.getItem('pwaSessionId') || ''
+            });
+            
+            // Enable auto-instrumentation
+            window.PWALogger.instrumentUI();
+            
+            // Log successful login
+            window.PWALogger.log('auth', 'User login successful', {
+              user_id: localStorage.getItem('userId'),
+              user_name: localStorage.getItem('userName'),
+              team: localStorage.getItem('selectedTeamName'),
+              login_mode: 'user'
+            });
+          } catch(e) {
+            console.warn('Failed to re-initialize PWA Logger after login', e);
+          }
+        }
+        
+        // Show app FIRST - don't wait for module/prefetch
         if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
         if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
+        
+        // Load address autocomplete module and prefetch ZIP data (non-blocking - happens in background)
+        loadAddressAutocomplete().then(() => {
+          console.log('[Login] Address autocomplete module loaded, starting prefetch...');
+          if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+            return window.subsalesNearby.prefetch();
+          }
+        }).then(() => {
+          console.log('[Login] Address ZIP prefetch completed');
+        }).catch(e => {
+          console.warn('[Login] Address autocomplete load/prefetch failed:', e);
+        });
+        
         revealAuthControls();
         if (deferredPrompt) installBox && installBox.classList.remove('hidden');
         trySync();
@@ -1308,11 +1485,36 @@
       // Fetch config
       await fetchAppConfigUserMode();
       
-      // Show app
+      // Start PWA session tracking
+      if (window.PWASessionTracking) {
+        window.PWASessionTracking.start({
+          userId: localStorage.getItem('userId'),
+          userName: localStorage.getItem('userName'),
+          teamId: localStorage.getItem('selectedTeamId'),
+          teamName: localStorage.getItem('selectedTeamName')
+        });
+        window.PWASessionTracking.startAutoHeartbeat();
+      }
+      
+      // Show app FIRST - don't wait for prefetch
       if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
       if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
       revealAuthControls();
       updateCurrentTeamDisplay();
+      
+      // Load address autocomplete module and prefetch (non-blocking - happens in background)
+      console.log('[Team Selection] Loading address autocomplete module...');
+      loadAddressAutocomplete().then(() => {
+        console.log('[Team Selection] Module loaded, starting prefetch...');
+        if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+          return window.subsalesNearby.prefetch();
+        }
+      }).then(() => {
+        console.log('[Team Selection] Address ZIP prefetch completed');
+      }).catch(e => {
+        console.warn('[Team Selection] Module load/prefetch failed:', e);
+      });
+      
       if (deferredPrompt) installBox && installBox.classList.remove('hidden');
       trySync();
     } catch(e) {
@@ -1383,6 +1585,14 @@
 
   loginBtn && loginBtn.addEventListener('click', async ()=>{
     console.log('===== LEGACY LOGIN BUTTON CLICKED =====');
+    
+    // Log login attempt
+    if (window.PWALogger) {
+      window.PWALogger.log('auth', 'Legacy login button clicked', {
+        login_mode: 'legacy'
+      });
+    }
+    
     const team = (qs('#teamName') && qs('#teamName').value.trim()) || '';
     const code = (qs('#teamCode') && qs('#teamCode').value.trim()) || '';
     console.log('Team:', team, 'Code:', code ? '***' : '(empty)');
@@ -1415,6 +1625,32 @@
       // fetch config (google maps key etc.)
       await fetchAppConfig();
 
+      // Start PWA session tracking for legacy team login
+      if (window.PWASessionTracking) {
+        window.PWASessionTracking.start({
+          userId: null,
+          userName: team,
+          teamId: localStorage.getItem('teamId'),
+          teamName: team
+        });
+        window.PWASessionTracking.startAutoHeartbeat();
+      }
+      
+      // Update PWA Logger credentials now that we're logged in
+      if (window.PWALogger) {
+        window.PWALogger.updateCredentials(
+          team || '',
+          team || '',
+          localStorage.getItem('pwaSessionId') || ''
+        );
+        
+        // Log successful legacy login
+        window.PWALogger.log('auth', 'Legacy login successful', {
+          team_name: team,
+          login_mode: 'legacy'
+        });
+      }
+
       // fetch team members and require selection if present
       const members = await fetchTeamMembers();
       if (members && members.length) {
@@ -1446,6 +1682,23 @@
       const salesMode = (config && config.salesMode) || 'legacy';
       
       console.log('Config loaded - loginMode:', loginMode, 'salesMode:', salesMode);
+      
+      // Initialize PWA Logger early (before login) so we can log login attempts
+      if (window.PWALogger) {
+        try {
+          await window.PWALogger.init({
+            apiBase: apiBase,
+            teamName: '', // Will be updated after login
+            userName: '', // Will be updated after login
+            sessionId: '' // Will be updated after login
+          });
+          
+          // Enable auto-instrumentation for button clicks and input changes
+          window.PWALogger.instrumentUI();
+        } catch(e) {
+          console.warn('Failed to initialize PWA Logger', e);
+        }
+      }
       
       const legacyLogin = qs('#legacyLogin');
       const userLogin = qs('#userLogin');
@@ -1480,10 +1733,13 @@
     }
   })();
 
-  // On boot, auto-restore session if not expired
+  // On boot, auto-restore session if not expired (wait for DOM to be ready)
   (function restoreSession(){
-    try{
-      const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    const doRestore = () => {
+      console.log('[Session Restore] Checking for existing session...');
+      try{
+        const loginMode = localStorage.getItem('loginMode') || 'legacy';
+        console.log('[Session Restore] Login mode:', loginMode);
       
       if (loginMode === 'user') {
         // User mode session restore
@@ -1492,22 +1748,36 @@
         const userPhone = localStorage.getItem('userPhone');
         const expiry = localStorage.getItem('sessionExpiry');
         
+        console.log('[Session Restore] User session check:', {userId: !!userId, userName: !!userName, expiry: expiry});
+        
         if (userId && userName && userPhone && expiry) {
           const expTime = new Date(expiry).getTime();
           if (expTime && expTime > Date.now()) {
+            console.log('[Session Restore] Valid user session found - restoring...');
             // valid user session
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
             revealAuthControls();
             updateCurrentTeamDisplay();
             fetchAppConfigUserMode().catch(()=>{});
-            // Prefetch ZIP data for address autocomplete
-            if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
-              window.subsalesNearby.prefetch();
-            }
+            
+            // Load address autocomplete module and prefetch ZIP data (non-blocking)
+            console.log('[Session Restore] Loading address autocomplete module...');
+            loadAddressAutocomplete().then(() => {
+              console.log('[Session Restore] Module loaded, starting prefetch...');
+              if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+                return window.subsalesNearby.prefetch();
+              }
+            }).then(() => {
+              console.log('[Session Restore] Address ZIP prefetch completed');
+            }).catch(e => {
+              console.warn('[Session Restore] Module load/prefetch failed:', e);
+            });
+            
             trySync();
             return;
           } else {
+            console.log('[Session Restore] User session expired');
             // expired
             try { localStorage.removeItem('sessionExpiry'); } catch(e){}
           }
@@ -1518,9 +1788,12 @@
         const code = localStorage.getItem('teamCode');
         const expiry = localStorage.getItem('sessionExpiry');
         
+        console.log('[Session Restore] Legacy session check:', {team: !!team, code: !!code, expiry: expiry});
+        
         if (team && code && expiry) {
           const expTime = new Date(expiry).getTime();
           if (expTime && expTime > Date.now()) {
+            console.log('[Session Restore] Valid legacy session found - restoring...');
             // valid session
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
@@ -1528,20 +1801,42 @@
             updateCurrentTeamDisplay();
             fetchAppConfig().catch(()=>{});
             fetchTeamMembers().then(members=>{ if (members && members.length) populateTeamMemberSelect(members); }).catch(()=>{});
-            // Prefetch ZIP data for address autocomplete
-            if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
-              window.subsalesNearby.prefetch();
-            }
+            
+            // Load address autocomplete module and prefetch ZIP data (non-blocking)
+            console.log('[Session Restore] Loading address autocomplete module...');
+            loadAddressAutocomplete().then(() => {
+              console.log('[Session Restore] Module loaded, starting prefetch...');
+              if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
+                return window.subsalesNearby.prefetch();
+              }
+            }).then(() => {
+              console.log('[Session Restore] Address ZIP prefetch completed');
+            }).catch(e => {
+              console.warn('[Session Restore] Module load/prefetch failed:', e);
+            });
+            
             trySync();
             return;
           } else {
+            console.log('[Session Restore] Legacy session expired');
             // expired
             try { localStorage.removeItem('sessionExpiry'); } catch(e){}
           }
         }
       }
+      
+      console.log('[Session Restore] No valid session found - showing login');
     }catch(e){
-      console.warn('Session restore failed', e);
+      console.error('[Session Restore] Failed:', e);
+    }
+    };
+    
+    // Wait for DOM to be ready before manipulating UI
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', doRestore);
+    } else {
+      // DOM already ready, run immediately
+      doRestore();
     }
   })();
 
@@ -1612,6 +1907,19 @@
   }
 
   saveOrderBtn && saveOrderBtn.addEventListener('click', async ()=>{
+    // Track activity
+    if (window.PWASessionTracking) {
+      window.PWASessionTracking.track('save_order_click');
+    }
+    
+    // Log order save attempt
+    if (window.PWALogger) {
+      window.PWALogger.log('order', 'Save order button clicked', {
+        has_customer: !!(qs('#customerName') && qs('#customerName').value.trim()),
+        has_address: !!(qs('#address') && qs('#address').value.trim())
+      });
+    }
+    
     // Check session validity - allow order entry even if expired (stores locally for sync later)
     const sessionValid = checkSessionValid(true);
     
@@ -1769,6 +2077,17 @@
     await Storage.add(order);
     renderOrders();
     syncStatus && (syncStatus.textContent='Queued for sync');
+    
+    // Log successful order save
+    if (window.PWALogger) {
+      window.PWALogger.log('order', 'Order saved successfully', {
+        order_id: order.id,
+        customer: order.customer ? 'present' : 'missing',
+        products_count: order.products ? order.products.length : 0,
+        online: navigator.onLine
+      });
+    }
+    
     // Show confirmation popup (don't clear form yet - OK button will do it)
     showOrderConfirmation(order, false);
     if (navigator.onLine) trySync();
@@ -1996,6 +2315,13 @@
     const loginMode = localStorage.getItem('loginMode') || 'legacy';
     console.log('Login mode:', loginMode);
     
+    // Log function execution start
+    if (window.PWALogger) {
+      window.PWALogger.log('ui', 'showMyOrders() function started', {
+        login_mode: loginMode
+      });
+    }
+    
     let currentUserId, currentUserName;
     
     if (loginMode === 'user') {
@@ -2046,8 +2372,33 @@
       loginMode
     });
     
+    // Log to server with detailed context
+    if (window.PWALogger) {
+      window.PWALogger.log('ui', 'My Orders - Local orders filtered', {
+        login_mode: loginMode,
+        current_user_id: currentUserId,
+        current_user_name: currentUserName,
+        total_local_orders: local.length,
+        filtered_local_orders: localFiltered.length,
+        has_sample: !!local[0],
+        sample_order_id: local[0] ? local[0].id : null,
+        sample_entered_by_id: local[0] ? local[0].entered_by_id : null,
+        sample_subsales_user_id: local[0] ? local[0].subsales_user_id : null,
+        sample_entered_by_name: local[0] ? local[0].entered_by_name : null
+      });
+    }
+    
     // Fetch and filter remote orders: current user + today only
     const remote = await fetchRemoteOrders(1000);
+    
+    // Log remote fetch results
+    if (window.PWALogger) {
+      window.PWALogger.log('api', 'My Orders - Remote orders fetched', {
+        total_remote_orders: remote ? remote.length : 0,
+        online: navigator.onLine
+      });
+    }
+    
     const remoteFiltered = (remote || []).filter(r => {
       // Check if order is from today
       if (!isToday(r.created_at || r.createdAt)) return false;
@@ -2068,6 +2419,17 @@
       if (currentUserId && r.user_id && String(r.user_id) === String(currentUserId)) return true;
       return false;
     });
+    
+    // Log remote filtering results
+    if (window.PWALogger) {
+      window.PWALogger.log('ui', 'My Orders - Remote orders filtered', {
+        total_remote: remote ? remote.length : 0,
+        filtered_remote: remoteFiltered.length,
+        current_user_id: currentUserId,
+        sample_remote_id: remote && remote[0] ? (remote[0].order_id || remote[0].id) : null,
+        sample_remote_user_id: remote && remote[0] ? remote[0].user_id : null
+      });
+    }
 
   // Render modal-like overlay
     const modalId = 'myOrdersModal';
@@ -2095,18 +2457,89 @@
     }).join('') : '<div>No remote orders</div>';
 
     modal.innerHTML = `<div class="modal-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><div><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div></div><div class="modal-body"><div class="modal-col"> <h4>Local (pending sync)</h4>${localHtml}</div><div class="modal-col"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
-    const closeBtn = qs('#closeMyOrdersBtn'); if (closeBtn) closeBtn.addEventListener('click', ()=>{ modal.classList.add('hidden'); });
+    const closeBtn = qs('#closeMyOrdersBtn'); 
+    if (closeBtn) closeBtn.addEventListener('click', async ()=>{ 
+      await logWithContext('ui', 'My Orders modal closed');
+      modal.classList.add('hidden'); 
+    });
 
     // Attach delegated handlers for edit/delete
-    modal.querySelectorAll('.edit-order').forEach(b=>{ b.addEventListener('click', async (e)=>{ const id = b.getAttribute('data-local-id'); const ord = await Storage.get(id); if (ord) enterEditMode(ord, { local:true }); modal.classList.add('hidden'); }); });
-    modal.querySelectorAll('.delete-order').forEach(b=>{ b.addEventListener('click', async (e)=>{ const id = b.getAttribute('data-local-id'); if (!confirm('Delete this local queued order?')) return; // perform deletion but allow undo
-  const ord = await Storage.get(id); if (!ord) return; await Storage.remove(id); await renderOrders(); await renderInlay(); window.showUndoSnackbar('Local order deleted', async ()=>{ try{ await Storage.add(ord); await renderOrders(); await renderInlay(); }catch(e){} });
+    modal.querySelectorAll('.edit-order').forEach(b=>{ b.addEventListener('click', async (e)=>{ 
+      const id = b.getAttribute('data-local-id'); 
+      await logWithContext('order', 'Edit local order clicked', { order_id: id });
+      const ord = await Storage.get(id); 
+      if (ord) {
+        await logWithContext('order', 'Entering edit mode for local order', { 
+          order_id: id,
+          customer: ord.customer,
+          address_present: !!ord.address
+        });
+        enterEditMode(ord, { local:true }); 
+      }
+      modal.classList.add('hidden'); 
     }); });
-    modal.querySelectorAll('.edit-order-remote').forEach(b=>{ b.addEventListener('click', async ()=>{ const id = b.getAttribute('data-remote-id'); // find remote order data
+    
+    modal.querySelectorAll('.delete-order').forEach(b=>{ b.addEventListener('click', async (e)=>{ 
+      const id = b.getAttribute('data-local-id'); 
+      await logWithContext('order', 'Delete local order clicked', { order_id: id });
+      
+      if (!confirm('Delete this local queued order?')) {
+        await logWithContext('order', 'Delete local order cancelled', { order_id: id });
+        return;
+      }
+      
+      const ord = await Storage.get(id); 
+      if (!ord) return; 
+      
+      await Storage.remove(id); 
+      await logWithContext('order', 'Local order deleted', { 
+        order_id: id,
+        customer: ord.customer 
+      });
+      
+      await renderOrders(); 
+      await renderInlay(); 
+      window.showUndoSnackbar('Local order deleted', async ()=>{ 
+        try{ 
+          await Storage.add(ord); 
+          await logWithContext('order', 'Local order delete undone', { order_id: id });
+          await renderOrders(); 
+          await renderInlay(); 
+        }catch(e){} 
+      });
+    }); });
+    
+    modal.querySelectorAll('.edit-order-remote').forEach(b=>{ b.addEventListener('click', async ()=>{ 
+      const id = b.getAttribute('data-remote-id');
+      await logWithContext('order', 'Edit remote order clicked', { order_id: id });
+      
       const remote = remoteFiltered.find(r=>String(r.order_id||r.order_id) === String(id));
-      if (remote){ const od = (remote.order_data && typeof remote.order_data === 'string') ? (function(){ try{ return JSON.parse(remote.order_data); }catch(e){ return {}; } })() : (remote.order_data || {}); const orderObj = Object.assign({}, od, { id: remote.order_id || remote.order_id }); enterEditMode(orderObj, { local:false, remoteRaw: remote }); modal.classList.add('hidden'); }
+      if (remote){ 
+        const od = (remote.order_data && typeof remote.order_data === 'string') ? (function(){ try{ return JSON.parse(remote.order_data); }catch(e){ return {}; } })() : (remote.order_data || {}); 
+        const orderObj = Object.assign({}, od, { id: remote.order_id || remote.order_id }); 
+        
+        await logWithContext('order', 'Entering edit mode for remote order', { 
+          order_id: id,
+          customer: od.customer || remote.customer,
+          address_present: !!(od.address || remote.address)
+        });
+        
+        enterEditMode(orderObj, { local:false, remoteRaw: remote }); 
+        modal.classList.add('hidden'); 
+      }
     }); });
-    modal.querySelectorAll('.delete-order-remote').forEach(b=>{ b.addEventListener('click', async ()=>{ const id = b.getAttribute('data-remote-id'); if (!confirm('Delete this order from server?')) return; // attempt delete now or queue
+    
+    modal.querySelectorAll('.delete-order-remote').forEach(b=>{ b.addEventListener('click', async ()=>{ 
+      const id = b.getAttribute('data-remote-id'); 
+      await logWithContext('order', 'Delete remote order clicked', { 
+        order_id: id,
+        online: navigator.onLine 
+      });
+      
+      if (!confirm('Delete this order from server?')) {
+        await logWithContext('order', 'Delete remote order cancelled', { order_id: id });
+        return;
+      }
       
       // Build headers based on login mode
       const loginMode = localStorage.getItem('loginMode') || 'legacy';
@@ -2120,10 +2553,47 @@
       }
       
       if (navigator.onLine) {
-        try{ const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(id); const resp = await fetch(url, { method: 'DELETE', headers: headers }); if (resp.ok) { alert('Order deleted'); } else { alert('Delete failed: ' + resp.status); } }catch(e){ alert('Delete failed: ' + e); }
+        try{ 
+          const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(id); 
+          const resp = await fetch(url, { method: 'DELETE', headers: headers }); 
+          
+          if (resp.ok) { 
+            await logWithContext('order', 'Remote order deleted successfully', { 
+              order_id: id,
+              status: resp.status 
+            });
+            alert('Order deleted'); 
+          } else { 
+            await logWithContext('order', 'Remote order delete failed', { 
+              order_id: id,
+              status: resp.status 
+            });
+            alert('Delete failed: ' + resp.status); 
+          } 
+        }catch(e){ 
+          if (window.PWALogger) {
+            window.PWALogger.logError('order', 'Remote order delete error', { 
+              order_id: id,
+              error: e.message 
+            });
+          }
+          alert('Delete failed: ' + e); 
+        }
       } else {
         const opId = await Storage.queueOperation({ type:'delete', order_id: id });
-  window.showUndoSnackbar('Delete queued (will run when online)', async ()=>{ try{ if (opId) await Storage.removeQueuedOp(opId); await renderOrders(); await renderInlay(); }catch(e){} });
+        await logWithContext('order', 'Remote order delete queued (offline)', { 
+          order_id: id,
+          operation_id: opId 
+        });
+        
+  window.showUndoSnackbar('Delete queued (will run when online)', async ()=>{ 
+    try{ 
+      if (opId) await Storage.removeQueuedOp(opId); 
+      await logWithContext('order', 'Queued delete operation undone', { operation_id: opId });
+      await renderOrders(); 
+      await renderInlay(); 
+    }catch(e){} 
+  });
       }
       // refresh remote list
       try{ await fetchRemoteOrders(); }catch(e){}
@@ -2131,6 +2601,15 @@
       modal.classList.add('hidden');
     }); });
     modal.classList.remove('hidden');
+    
+    // Log modal display
+    if (window.PWALogger) {
+      window.PWALogger.log('ui', 'My Orders modal displayed', {
+        local_orders_shown: localFiltered.length,
+        remote_orders_shown: remoteFiltered.length,
+        total_orders_shown: localFiltered.length + remoteFiltered.length
+      });
+    }
   // manual helpers removed
   }
 
@@ -2139,9 +2618,21 @@
     console.log('My Orders button found, attaching listener');
     myOrdersBtn.addEventListener('click', ()=>{ 
       console.log('===== MY ORDERS BUTTON CLICKED =====');
+      
+      // Log button click
+      if (window.PWALogger) {
+        window.PWALogger.log('ui', 'My Orders button clicked', {
+          timestamp: new Date().toISOString(),
+          online: navigator.onLine
+        });
+      }
+      
       console.log('Session valid check...');
       if(!checkSessionValid()) {
         console.log('Session NOT valid - aborting');
+        if (window.PWALogger) {
+          window.PWALogger.log('ui', 'My Orders blocked - session invalid', {});
+        }
         return;
       }
       console.log('Session valid - calling showMyOrders()');
@@ -2155,9 +2646,27 @@
   if (eodBtn) {
     console.log('EOD button found, attaching listener');
     eodBtn.addEventListener('click', async ()=>{ 
+      if (window.PWASessionTracking) window.PWASessionTracking.track('eod_click');
+      await logWithContext('ui', 'EOD Tally button clicked');
+      
       console.log('===== EOD BUTTON CLICKED =====');
-      if(!checkSessionValid()) return; 
-      try{ qs('#eodInlay') || ensureEodExists(); qs('#eodInlay').classList.remove('hidden'); await renderEod(); }catch(e){ console.warn('EOD open error', e); } 
+      if(!checkSessionValid()) {
+        await logWithContext('ui', 'EOD blocked - session invalid');
+        return;
+      }
+      
+      try{ 
+        await logWithContext('ui', 'EOD modal opening');
+        qs('#eodInlay') || ensureEodExists(); 
+        qs('#eodInlay').classList.remove('hidden'); 
+        await renderEod();
+        await logWithContext('ui', 'EOD modal displayed successfully');
+      }catch(e){ 
+        console.warn('EOD open error', e);
+        if (window.PWALogger) {
+          window.PWALogger.logError('ui', 'EOD modal error', e);
+        }
+      } 
     });
   } else {
     console.warn('EOD button NOT found in DOM');
@@ -2166,21 +2675,59 @@
   const forceSyncBtn = qs('#forceSyncBtn');
   if (forceSyncBtn) {
     forceSyncBtn.addEventListener('click', async ()=>{
-      if(!checkSessionValid()) return;
-      if (!navigator.onLine) { alert('No network connection. Sync will start when online.'); return; }
+      if (window.PWASessionTracking) window.PWASessionTracking.track('force_sync_click');
+      await logWithContext('sync', 'Force Sync button clicked', {
+        online: navigator.onLine
+      });
+      
+      if(!checkSessionValid()) {
+        await logWithContext('sync', 'Force Sync blocked - session invalid');
+        return;
+      }
+      
+      if (!navigator.onLine) {
+        await logWithContext('sync', 'Force Sync failed - offline');
+        alert('No network connection. Sync will start when online.');
+        return;
+      }
+      
       try {
         syncStatus && (syncStatus.textContent = 'Manual sync...');
+        await logWithContext('sync', 'Force Sync started');
+        
         await trySync();
+        
+        if (window.PWASessionTracking) window.PWASessionTracking.track('sync_completed');
+        await logWithContext('sync', 'Force Sync completed successfully');
         alert('Sync completed (or queued items attempted).');
-      } catch (e) { console.warn('Manual sync error', e); alert('Sync failed. See console for details.'); }
+      } catch (e) { 
+        console.warn('Manual sync error', e);
+        if (window.PWALogger) {
+          window.PWALogger.logError('sync', 'Force Sync failed', e);
+        }
+        alert('Sync failed. See console for details.');
+      }
     });
   }
 
   // Logout button: clear session and return to login screen
   const logoutBtn = qs('#logoutBtn');
   if (logoutBtn) {
-    logoutBtn.addEventListener('click', ()=>{
-      if (!confirm('Log out of the app?')) return;
+    logoutBtn.addEventListener('click', async ()=>{
+      await logWithContext('auth', 'Logout button clicked');
+      
+      if (!confirm('Log out of the app?')) {
+        await logWithContext('auth', 'Logout cancelled by user');
+        return;
+      }
+      
+      await logWithContext('auth', 'Logout confirmed - clearing session');
+      
+      // End PWA session tracking
+      if (window.PWASessionTracking) {
+        window.PWASessionTracking.stopAutoHeartbeat();
+        await window.PWASessionTracking.end();
+      }
       try {
         // Clear legacy session keys
         localStorage.removeItem('teamName');
@@ -2198,7 +2745,13 @@
         localStorage.removeItem('selectedTeamId');
         localStorage.removeItem('selectedTeamName');
         localStorage.removeItem('userTeams');
-      } catch(e){}
+        
+        await logWithContext('auth', 'Logout complete - session cleared');
+      } catch(e){
+        if (window.PWALogger) {
+          window.PWALogger.logError('auth', 'Logout error clearing localStorage', e);
+        }
+      }
   // show login
   if (loginSection) { loginSection.classList.remove('hidden'); try{ loginSection.style.display='block'; }catch(e){} }
   if (appSection) { appSection.classList.add('hidden'); try{ appSection.style.display='none'; }catch(e){} }

@@ -167,5 +167,78 @@
         $btn.prop('disabled', false).text('Refresh ZIP Index');
       });
     });
+
+    // Match Addresses with Overpass - Auto-continuing batch processor
+    $('#subsales-match-addresses-btn').on('click', function(e){
+      e.preventDefault();
+      var $btn = $(this);
+      var $log = $('#subsales-match-log');
+      
+      if (!confirm('Start matching addresses with OpenStreetMap Overpass API? This will process in automatic batches until complete.')) return;
+      
+      $btn.prop('disabled', true).text('Matching...');
+      $log.show().html('<div id="match-progress-container" style="margin-bottom:15px"><div id="match-progress-bar" style="background:#e0e0e0;height:30px;border-radius:5px;overflow:hidden;position:relative"><div id="match-progress-fill" style="background:#46b450;height:100%;width:0%;transition:width 0.3s"></div><div id="match-progress-text" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-weight:bold;color:#333">Starting...</div></div></div><div id="match-log-text">Starting address matching with Overpass API...\n</div>');
+      
+      var totalMatched = 0;
+      var totalFailed = 0;
+      var totalProcessed = 0;
+      var batchCount = 0;
+      var initialTotal = 0;
+      
+      function processBatch() {
+        batchCount++;
+        $('#match-log-text').append('\n[Batch ' + batchCount + '] Processing...\n');
+        
+        $.post(SubsalesZipAdmin.ajaxUrl, {
+          action: 'subsales_match_addresses_batch',
+          nonce: SubsalesZipAdmin.matchNonce
+        }).done(function(resp){
+          if (!resp || !resp.success) {
+            $('#match-log-text').append('❌ Error: ' + JSON.stringify(resp.data || 'Unknown error') + '\n');
+            alert('Matching failed. See log for details.');
+            $btn.prop('disabled', false).text('Match Addresses with Overpass');
+          } else {
+            var data = resp.data;
+            totalMatched += data.matched || 0;
+            totalFailed += data.failed || 0;
+            totalProcessed += data.total || 0;
+            
+            // Set initial total on first batch (remaining BEFORE this batch + what we just processed)
+            if (batchCount === 1 && data.total > 0) {
+              initialTotal = (data.remaining || 0) + (data.total || 0);
+              $('#match-log-text').append('   Total to process: ' + initialTotal + '\n');
+            }
+            
+            // Update progress bar
+            var completed = totalProcessed;
+            var percentComplete = initialTotal > 0 ? Math.round((completed / initialTotal) * 100) : 0;
+            $('#match-progress-fill').css('width', percentComplete + '%');
+            $('#match-progress-text').text(completed + ' / ' + initialTotal + ' processed (' + percentComplete + '%)');
+            
+            $('#match-log-text').append('✓ Batch ' + batchCount + ' complete: ' + data.total + ' processed, ' + data.matched + ' matched, ' + data.failed + ' failed\n');
+            $('#match-log-text').append('   Remaining: ' + data.remaining + '\n');
+            
+            // Auto-continue if not complete
+            if (!data.complete && data.remaining > 0) {
+              $('#match-log-text').append('   ⏩ Auto-continuing...\n');
+              setTimeout(processBatch, 500); // Small delay between batches
+            } else {
+              $('#match-progress-fill').css('width', '100%').css('background', '#00a32a');
+              $('#match-progress-text').text('Complete! ' + totalProcessed + ' processed');
+              $('#match-log-text').append('\n🎉 COMPLETE! Total: ' + totalProcessed + ' processed, ' + totalMatched + ' matched, ' + totalFailed + ' failed\n');
+              alert('Address matching complete!\n\nProcessed: ' + totalProcessed + '\nMatched: ' + totalMatched + '\nFailed: ' + totalFailed);
+              $btn.prop('disabled', false).text('Match Addresses with Overpass');
+            }
+          }
+        }).fail(function(xhr){
+          $('#match-log-text').append('❌ AJAX failure: ' + xhr.status + ' ' + xhr.statusText + '\n');
+          alert('Matching request failed. Check server logs.');
+          $btn.prop('disabled', false).text('Match Addresses with Overpass');
+        });
+      }
+      
+      // Start first batch
+      processBatch();
+    });
   });
 })(jQuery);

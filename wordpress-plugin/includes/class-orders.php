@@ -31,7 +31,7 @@ class Subsales_Orders {
      */
     public static function get_orders( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         
         $limit = $request->get_param( 'limit' ) ? intval( $request->get_param( 'limit' ) ) : 10;
         $offset = $request->get_param( 'offset' ) ? intval( $request->get_param( 'offset' ) ) : 0;
@@ -128,7 +128,7 @@ class Subsales_Orders {
      */
     public static function get_order_by_id( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         
         $order_id = $request->get_param( 'id' );
         
@@ -157,11 +157,20 @@ class Subsales_Orders {
      */
     public static function create_order( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
 
         $data = $request->get_json_params();
+        
+        // DEBUG log: Order creation attempt
+        Subsales_Database::log( 'DEBUG', 'orders', 'Create order API called', array(
+            'has_order_id' => isset( $data['order_id'] ),
+            'has_user_id' => isset( $data['user_id'] ),
+            'has_team_id' => isset( $data['team_id'] ),
+            'data_keys' => array_keys( $data )
+        ), 'api' );
 
         if ( ! isset( $data['order_id'] ) || ! isset( $data['user_id'] ) ) {
+            Subsales_Database::log( 'DEBUG', 'orders', 'Create order failed: missing fields', array(), 'api' );
             return new WP_REST_Response( 'Missing required fields: order_id, user_id', 400 );
         }
 
@@ -176,6 +185,9 @@ class Subsales_Orders {
         
         if ( $existing_order ) {
             // Order already exists - return success (idempotent)
+            Subsales_Database::log( 'DEBUG', 'orders', 'Order already exists (idempotent)', array(
+                'order_id' => $order_id
+            ), 'api' );
             return new WP_REST_Response( array(
                 'message' => 'Order already exists',
                 'order_id' => $order_id,
@@ -256,7 +268,7 @@ class Subsales_Orders {
             if ( empty( $creator_name ) && ! empty( $user_id ) ) {
                 // Try to look up user name from team_members table
                 $user_row = $wpdb->get_row( $wpdb->prepare( 
-                    "SELECT name FROM {$wpdb->prefix}order_sync_team_members WHERE id = %d", 
+                    "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", 
                     intval( $user_id ) 
                 ) );
                 if ( $user_row ) {
@@ -292,7 +304,7 @@ class Subsales_Orders {
      */
     public static function update_order( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         
         $order_id = $request->get_param( 'id' );
         $data = $request->get_json_params();
@@ -376,7 +388,7 @@ class Subsales_Orders {
      */
     public static function delete_order( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         
         $order_id = $request->get_param( 'id' );
         $data = $request->get_json_params();
@@ -456,8 +468,8 @@ class Subsales_Orders {
      */
     public static function get_order_history( $request ) {
         global $wpdb;
-        $history_table = $wpdb->prefix . 'order_edit_history';
-        $orders_table = $wpdb->prefix . 'order_sync_orders';
+        $history_table = $wpdb->prefix . 'ss_edit_history';
+        $orders_table = $wpdb->prefix . 'ss_orders';
         
         $order_db_id = intval( $request->get_param( 'id' ) );
         
@@ -503,7 +515,7 @@ class Subsales_Orders {
      */
     public static function restore_order( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         
         $order_db_id = intval( $request->get_param( 'id' ) );
         
@@ -576,7 +588,7 @@ class Subsales_Orders {
      */
     public static function tally_orders( $request ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_orders';
+        $table_name = $wpdb->prefix . 'ss_orders';
         $current_user = wp_get_current_user();
         
         $data = $request->get_json_params();

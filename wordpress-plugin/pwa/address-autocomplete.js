@@ -55,10 +55,29 @@
   async function fetchNearby(lat,lng,radius=500,max=50){
     const key = cacheKey(lat,lng,radius,max);
     console.log('subsalesNearby: fetchNearby called', { lat, lng, radius, max, key });
+    
+    // Log search initiation
+    if(window.PWALogger && window.PWALogger.debugEnabled){
+      window.PWALogger.log('address', 'Nearby address search initiated', {
+        latitude: lat,
+        longitude: lng,
+        radius: radius,
+        max_results: max,
+        cache_key: key
+      });
+    }
+    
     try{
       const cached = await idbGet(key);
       if(cached && cached.ts && (Date.now() - cached.ts) < CACHE_TTL_MS){
         console.log('subsalesNearby: cache hit (IndexedDB)', { key, ageMs: Date.now()-cached.ts, count: (cached.results||[]).length });
+        if(window.PWALogger && window.PWALogger.debugEnabled){
+          window.PWALogger.log('address', 'Address search: cache hit', {
+            cache_type: 'IndexedDB',
+            results_count: (cached.results||[]).length,
+            cache_age_ms: Date.now()-cached.ts
+          });
+        }
         return cached;
       }
     }catch(e){ console.warn('subsalesNearby: idbGet error', e); }
@@ -70,17 +89,37 @@
       if(!resp.ok) throw new Error('network ' + resp.status);
       const json = await resp.json();
       console.log('subsalesNearby: server returned', (json && json.results && json.results.length) || 0, 'results');
+      
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('address', 'Address search: server response', {
+          results_count: (json && json.results && json.results.length) || 0,
+          source: 'nearby_api'
+        });
+      }
+      
       // cache raw response in Cache API for SW access
       try{ const c = await caches.open(CACHE_NAME); await c.put(url, new Response(JSON.stringify(json))); }catch(e){ console.warn('subsalesNearby: cache.put failed', e); }
       await idbPut(key, { results: json.results, ts: Date.now() });
       return { results: json.results };
     }catch(err){
       console.warn('subsalesNearby: fetch failed, trying Cache API', err);
+      if(window.PWALogger){
+        window.PWALogger.logError('address', 'Address search: fetch failed', err);
+      }
       // network failed, try Cache API
       try{
         const c = await caches.open(CACHE_NAME);
         const cachedResp = await c.match(url);
-        if(cachedResp){ const j = await cachedResp.json(); console.log('subsalesNearby: cache API hit', (j && j.results && j.results.length)||0); return { results: j.results || [] }; }
+        if(cachedResp){ 
+          const j = await cachedResp.json(); 
+          console.log('subsalesNearby: cache API hit', (j && j.results && j.results.length)||0);
+          if(window.PWALogger && window.PWALogger.debugEnabled){
+            window.PWALogger.log('address', 'Address search: Cache API fallback', {
+              results_count: (j && j.results && j.results.length)||0
+            });
+          }
+          return { results: j.results || [] }; 
+        }
       }catch(e){ console.warn('subsalesNearby: cache match failed', e); }
       return { results: [] };
     }
@@ -93,9 +132,26 @@
   async function loadZipData(zip){
     zip = (''+zip).trim();
     if(!/^[0-9]{5}$/.test(zip)) throw new Error('invalid zip');
-    if(ZIP_CACHE[zip]){ console.log('subsalesNearby: zip cache hit', zip); return ZIP_CACHE[zip]; }
+    if(ZIP_CACHE[zip]){ 
+      console.log('subsalesNearby: zip cache hit', zip);
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('address', 'ZIP data loaded from memory cache', {
+          zip: zip,
+          records_count: ZIP_CACHE[zip].length
+        });
+      }
+      return ZIP_CACHE[zip]; 
+    }
     const url = ZIP_BASE_URL + zip + '.json';
     console.log('subsalesNearby: loading zip data', url);
+    
+    if(window.PWALogger && window.PWALogger.debugEnabled){
+      window.PWALogger.log('address', 'Loading ZIP data', {
+        zip: zip,
+        url: url
+      });
+    }
+    
     try{
       const resp = await fetch(url, { cache: 'no-store' });
       if(!resp.ok) throw new Error('network ' + resp.status);
@@ -105,11 +161,36 @@
       // also persist small index in idb for offline
       try{ await idbPut('zip_' + zip, { ts: Date.now(), results: arr }); }catch(e){ console.warn('subsalesNearby: idb store zip failed', e); }
       console.log('subsalesNearby: loaded', arr.length, 'records for zip', zip);
+      
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('address', 'ZIP data loaded successfully', {
+          zip: zip,
+          records_count: arr.length,
+          source: 'server'
+        });
+      }
+      
       return arr;
     }catch(e){
       console.warn('subsalesNearby: loadZipData failed', e);
+      if(window.PWALogger){
+        window.PWALogger.logError('address', 'ZIP data load failed', e);
+      }
       // attempt to read from idb
-      try{ const cached = await idbGet('zip_' + zip); if(cached && cached.results){ ZIP_CACHE[zip] = cached.results; console.log('subsalesNearby: loaded zip from idb', zip); return cached.results; } }catch(ie){ console.warn('subsalesNearby: idb read failed', ie); }
+      try{ 
+        const cached = await idbGet('zip_' + zip); 
+        if(cached && cached.results){ 
+          ZIP_CACHE[zip] = cached.results; 
+          console.log('subsalesNearby: loaded zip from idb', zip);
+          if(window.PWALogger && window.PWALogger.debugEnabled){
+            window.PWALogger.log('address', 'ZIP data loaded from IndexedDB fallback', {
+              zip: zip,
+              records_count: cached.results.length
+            });
+          }
+          return cached.results; 
+        } 
+      }catch(ie){ console.warn('subsalesNearby: idb read failed', ie); }
       throw e;
     }
   }
@@ -136,33 +217,70 @@
     }
 
   // Prefetch a list of zips in the background and store them in IndexedDB + memory cache.
-  function prefetchAllZips(indexData){
+  async function prefetchAllZips(indexData){
+    console.log('[prefetchAllZips] Called with indexData:', indexData);
+    
     // Handle both formats: array of zips or object with {zips: [], baseUrl: ''}
     let zipList = [];
     if(Array.isArray(indexData)){
       zipList = indexData;
+      console.log('[prefetchAllZips] indexData is array, length:', zipList.length);
     } else if(indexData && typeof indexData === 'object'){
       if(indexData.baseUrl) ZIP_BASE_URL = indexData.baseUrl;
       zipList = indexData.zips || [];
+      console.log('[prefetchAllZips] indexData is object, zips:', zipList, 'baseUrl:', indexData.baseUrl);
     }
     
-    if(!Array.isArray(zipList) || zipList.length === 0) return;
-    console.log('subsalesNearby: prefetching zips', zipList, 'from', ZIP_BASE_URL);
-    const work = async ()=>{
-      for(let i=0;i<zipList.length;i++){
-        const z = (''+zipList[i]).trim();
-        if(!/^[0-9]{5}$/.test(z)) continue;
-        try{ await loadZipData(z); }
-        catch(e){ console.warn('subsalesNearby: prefetch zip failed', z, e); }
-        // yield to idle/batch
-        await new Promise(r=>setTimeout(r, 200));
+    if(!Array.isArray(zipList) || zipList.length === 0) {
+      console.warn('[prefetchAllZips] No ZIPs to load! zipList:', zipList);
+      return;
+    }
+    
+    console.log('subsalesNearby: prefetching ALL zips NOW (blocking)', zipList, 'from', ZIP_BASE_URL);
+    
+    if(window.PWALogger && window.PWALogger.debugEnabled){
+      window.PWALogger.log('address', 'ZIP prefetch started', {
+        zip_count: zipList.length,
+        base_url: ZIP_BASE_URL
+      });
+    }
+    
+    // Update UI to indicate prefetch start (orange)
+    try{ updateHeaderStatus('orange','Loading address data…'); }catch(e){}
+    
+    // Load ALL ZIPs immediately - no background loading
+    let successCount = 0;
+    let failCount = 0;
+    
+    for(let i = 0; i < zipList.length; i++){
+      const z = (''+zipList[i]).trim();
+      if(!/^[0-9]{5}$/.test(z)) continue;
+      try{ 
+        await loadZipData(z);
+        successCount++;
+        // Log progress
+        console.log(`subsalesNearby: loaded ${successCount}/${zipList.length} - ${z} (${Object.keys(ZIP_CACHE).length} ZIPs in cache)`);
       }
-      console.log('subsalesNearby: prefetch complete');
-    };
-    // update UI to indicate prefetch start (orange)
-    try{ updateHeaderStatus('orange','Prefetching address index…'); }catch(e){}
-    if('requestIdleCallback' in window){ requestIdleCallback(()=>{ work().catch(()=>{}); }, { timeout: 2000 }); }
-    else setTimeout(()=>{ work().catch(()=>{}); }, 1000);
+      catch(e){ 
+        console.warn('subsalesNearby: prefetch zip failed', z, e);
+        failCount++;
+      }
+      // Small delay between loads to avoid overwhelming the server
+      if(i < zipList.length - 1) await new Promise(r=>setTimeout(r, 100));
+    }
+    
+    console.log(`subsalesNearby: ALL ZIPs loaded! ${successCount} successful, ${failCount} failed`);
+    
+    if(window.PWALogger && window.PWALogger.debugEnabled){
+      window.PWALogger.log('address', 'ZIP prefetch completed', {
+        total_zips: zipList.length,
+        success_count: successCount,
+        fail_count: failCount
+      });
+    }
+    
+    // Update header to green when complete
+    try{ updateHeaderStatus('green',`Address data ready (${successCount} ZIPs)`); }catch(e){}
   }
 
   // Fetch a bundled broad recommendation list (fallback) from the plugin's pwa folder
@@ -284,6 +402,13 @@
   }
   function renderDropdown(inputEl, items){
     console.log('subsalesNearby: renderDropdown', { items: items ? items.length : 0 });
+    
+    if(window.PWALogger && window.PWALogger.debugEnabled){
+      window.PWALogger.log('address', 'Address suggestions displayed', {
+        suggestions_count: items ? items.length : 0
+      });
+    }
+    
     removeDropdown(inputEl);
     const list = document.createElement('div');
     list.className = 'subsales-nearby-list';
@@ -316,6 +441,17 @@
       // unify selection logic so we can trigger it from pointer/touch/click
       const doSelect = ()=>{
         console.log('subsalesNearby: suggestion selected', it);
+        
+        if(window.PWALogger && window.PWALogger.debugEnabled){
+          window.PWALogger.log('address', 'Address suggestion selected', {
+            selected_address: normalizeAddress(it),
+            city: it.city || '',
+            state: it.state || '',
+            zip: it.zip || '',
+            has_coordinates: !!(it.lat && it.lng)
+          });
+        }
+        
         // Only update the input value if user hasn't continued typing
         // This allows users to freely type their own address
         const currentVal = (inputEl.value || '').trim();
@@ -327,9 +463,24 @@
       };
 
       // pointerdown handles touch and mouse earlier than click (prevents blur issues on mobile)
-      row.addEventListener('pointerdown', (e)=>{ try{ e.preventDefault(); }catch(ex){} doSelect(); });
+      // CRITICAL: Stop propagation to prevent clicking through to elements beneath the dropdown
+      row.addEventListener('pointerdown', (e)=>{ 
+        try{ 
+          e.preventDefault(); 
+          e.stopPropagation(); 
+          e.stopImmediatePropagation();
+        }catch(ex){} 
+        // Use setTimeout to ensure event is fully stopped before DOM manipulation
+        setTimeout(()=>{ doSelect(); }, 0);
+      }, true); // capture phase
       // fallback click handler for older browsers
-      row.addEventListener('click', (e)=>{ e.preventDefault(); doSelect(); });
+      row.addEventListener('click', (e)=>{ 
+        e.preventDefault(); 
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        // Use setTimeout to ensure event is fully stopped before DOM manipulation
+        setTimeout(()=>{ doSelect(); }, 0);
+      }, true); // capture phase
       // keep a lightweight touchstart highlight for visual feedback (don't prevent default here)
       row.addEventListener('touchstart', (e)=>{ row.classList.add('subsales-highlight'); });
       list.appendChild(row);
@@ -372,7 +523,11 @@
       input.setAttribute('autocapitalize','off');
       input.setAttribute('spellcheck','false');
       input.setAttribute('data-lpignore','true'); // LastPass / password managers
+      input.setAttribute('placeholder', '123 Main St, Southington, CT 06489');
     }catch(e){}
+    
+    // Add "Use my location" button
+    addLocationButton(input);
 
   // Only show suggestions after the user starts typing into the address field.
     // This avoids presenting suggestions at the login screen or when the `#address` input is hidden.
@@ -380,7 +535,9 @@
     let inputTimer = null;
     let lastFetchTs = 0;
     let retryButtonShownFor = null; // track which input has retry
+    let manualModeButtonShownFor = null; // track which input has manual mode button
   let currentZipLoaded = null; // string zip loaded into memory
+    let isManualMode = false; // track if user switched to manual entry mode
 
     function matchesQuery(item, q){
       if(!q) return true;
@@ -392,9 +549,22 @@
 
     input.addEventListener('input', (ev)=>{
       const q = (ev.target.value || '').trim();
-      // clear dropdown and retry if empty
-      if(!q){ removeDropdown(input); // remove retry button if present
-        const b = document.getElementById('subsales-retry-btn'); if(b) b.parentNode && b.parentNode.removeChild(b); retryButtonShownFor = null; return; }
+      
+      // clear dropdown and buttons if empty
+      if(!q){ 
+        removeDropdown(input);
+        removeManualModeButton();
+        const b = document.getElementById('subsales-retry-btn'); 
+        if(b) b.parentNode && b.parentNode.removeChild(b); 
+        retryButtonShownFor = null; 
+        return; 
+      }
+      
+      // If in manual mode, don't show autocomplete
+      if(isManualMode){
+        removeDropdown(input);
+        return;
+      }
 
       // debounce
       if(inputTimer) clearTimeout(inputTimer);
@@ -402,8 +572,36 @@
         // throttle repeated requests
         const now = Date.now(); if(now - lastFetchTs < 1000) return; lastFetchTs = now;
         console.log('subsalesNearby: input triggered fetch for query', q);
-        // If a ZIP is loaded, use it as authoritative source (fast, local-files based)
-        if(currentZipLoaded){
+        
+        if(window.PWALogger && window.PWALogger.debugEnabled){
+          window.PWALogger.log('address', 'Address input search triggered', {
+            query_length: q.length,
+            has_zip_loaded: !!currentZipLoaded,
+            cached_zips: Object.keys(ZIP_CACHE).length,
+            cached_zip_list: Object.keys(ZIP_CACHE).join(', ')
+          });
+        }
+        
+        // Try to detect a 5-digit ZIP anywhere in the typed value
+        const zipMatch = q.match(/\b([0-9]{5})\b/);
+        const detectedZip = zipMatch ? zipMatch[1] : null;
+        
+        // If we detected a different ZIP than currently loaded, switch to it
+        if(detectedZip && detectedZip !== currentZipLoaded){
+          try{
+            const data = await loadZipData(detectedZip);
+            currentZipLoaded = detectedZip;
+            const items = (data||[]).filter(i=>matchesQuery(i,q)).slice(0,50);
+            if(items.length) renderDropdown(input, items);
+            else removeDropdown(input);
+            // ensure retry not shown
+            const b = document.getElementById('subsales-retry-btn'); if(b){ b.parentNode && b.parentNode.removeChild(b); retryButtonShownFor = null; }
+            return;
+          }catch(e){ console.warn('subsalesNearby: load zip failed', detectedZip, e); /* fall back to broad search */ }
+        }
+        
+        // If a ZIP is already loaded (and still matches), use it as authoritative source
+        if(currentZipLoaded && (!detectedZip || detectedZip === currentZipLoaded)){
           try{
             const data = await loadZipData(currentZipLoaded);
             const items = (data||[]).filter(i=>matchesQuery(i,q)).slice(0,50);
@@ -413,29 +611,41 @@
           return;
         }
 
-        // If no ZIP loaded, try to detect a trailing 5-digit ZIP within the typed value
-        const zipMatch = q.match(/([0-9]{5})$/);
-        if(zipMatch){
-          const zip = zipMatch[1];
-          try{
-            const data = await loadZipData(zip);
-            currentZipLoaded = zip;
-            const items = (data||[]).filter(i=>matchesQuery(i,q)).slice(0,50);
-            if(items.length) renderDropdown(input, items);
-            else removeDropdown(input);
-            // ensure retry not shown
-            const b = document.getElementById('subsales-retry-btn'); if(b){ b.parentNode && b.parentNode.removeChild(b); retryButtonShownFor = null; }
-            return;
-          }catch(e){ console.warn('subsalesNearby: load zip failed', zip, e); /* fall back to broad recs */ }
-        }
-
-        // no zip context: search all cached ZIPs (memory first, then IDB)
+        // No specific ZIP detected/loaded: search ALL cached ZIPs (memory + IDB)
+        // This allows searching immediately after login when prefetch has loaded data
         let pool = [];
-        if(Object.keys(ZIP_CACHE).length > 0){ for(const z of Object.keys(ZIP_CACHE)){ pool.push(...(ZIP_CACHE[z]||[])); } }
-        if(pool.length === 0){ try{ pool = await idbGetAllZips(); }catch(e){ console.warn('subsalesNearby: idb get all zips failed', e); } }
-  const poolItems = pool || [];
-  const matches = rankItems(poolItems, q, 50);
-  if(matches.length) renderDropdown(input, matches); else removeDropdown(input);
+        
+        // First, use in-memory cached ZIPs (fast)
+        if(Object.keys(ZIP_CACHE).length > 0){ 
+          for(const z of Object.keys(ZIP_CACHE)){ 
+            pool.push(...(ZIP_CACHE[z]||[])); 
+          }
+          console.log('subsalesNearby: searching', pool.length, 'addresses from', Object.keys(ZIP_CACHE).length, 'cached ZIPs');
+        }
+        
+        // If no memory cache, try IndexedDB
+        if(pool.length === 0){ 
+          try{ 
+            pool = await idbGetAllZips(); 
+            console.log('subsalesNearby: searching', pool.length, 'addresses from IndexedDB');
+          }catch(e){ console.warn('subsalesNearby: idb get all zips failed', e); } 
+        }
+        
+        const poolItems = pool || [];
+        const matches = rankItems(poolItems, q, 50);
+        if(matches.length) renderDropdown(input, matches); 
+        else removeDropdown(input);
+        
+        // If no matches found and query is 3+ characters, show "Address isn't listed" button
+        if(matches.length === 0 && q.length >= 3){
+          if(manualModeButtonShownFor !== input){ 
+            showManualModeButton(input); 
+            manualModeButtonShownFor = input; 
+          }
+        } else {
+          removeManualModeButton();
+        }
+        
         // if nothing found and no prefetch has happened, trigger prefetch of zip-index.json
         if(matches.length === 0 && Object.keys(ZIP_CACHE).length === 0){
           if(retryButtonShownFor !== input){ showReloadAndPrefetch(input); retryButtonShownFor = input; }
@@ -486,6 +696,132 @@
     }
   }
 
+  // Show "Address isn't listed" button when no matches found
+  function showManualModeButton(inputEl){
+    removeManualModeButton(); // remove any existing
+    const btn = document.createElement('button');
+    btn.id = 'subsales-manual-mode-btn';
+    btn.type = 'button';
+    btn.innerText = 'Address isn\'t listed';
+    btn.style.marginTop = '8px';
+    btn.style.padding = '10px 16px';
+    btn.style.borderRadius = '8px';
+    btn.style.fontSize = '15px';
+    btn.style.border = '1px solid rgba(0,0,0,0.2)';
+    btn.style.background = '#f8f9fa';
+    btn.style.cursor = 'pointer';
+    btn.style.width = '100%';
+    btn.style.textAlign = 'center';
+    btn.setAttribute('aria-label','Switch to manual address entry');
+    
+    btn.addEventListener('click', ()=>{
+      console.log('subsalesNearby: manual mode activated');
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('address', 'Manual address entry mode activated');
+      }
+      
+      isManualMode = true;
+      inputEl.value = '';
+      inputEl.placeholder = 'Enter full address: 123 Main St, Southington, CT 06489';
+      inputEl.focus();
+      removeDropdown(inputEl);
+      removeManualModeButton();
+      
+      // Add a small indicator that they're in manual mode
+      inputEl.style.borderColor = '#4CAF50';
+      inputEl.style.borderWidth = '2px';
+    });
+    
+    inputEl.parentNode && inputEl.parentNode.insertBefore(btn, inputEl.nextSibling);
+  }
+  
+  function removeManualModeButton(){
+    const btn = document.getElementById('subsales-manual-mode-btn');
+    if(btn) btn.parentNode && btn.parentNode.removeChild(btn);
+    manualModeButtonShownFor = null;
+  }
+  
+  // Add "Use my location" button above address field
+  function addLocationButton(inputEl){
+    // Check if button already exists
+    if(document.getElementById('subsales-location-btn')) return;
+    
+    const btn = document.createElement('button');
+    btn.id = 'subsales-location-btn';
+    btn.type = 'button';
+    btn.innerHTML = '📍 Use my location';
+    btn.style.display = 'block';
+    btn.style.margin = '0 auto';
+    btn.style.padding = '10px 16px';
+    btn.style.borderRadius = '8px';
+    btn.style.fontSize = '15px';
+    btn.style.border = '1px solid rgba(0,0,0,0.2)';
+    btn.style.background = '#fff';
+    btn.style.cursor = 'pointer';
+    btn.setAttribute('aria-label','Use GPS to fill address');
+    
+    btn.addEventListener('click', async ()=>{
+      if(!navigator.geolocation){
+        alert('Location services not available in your browser');
+        return;
+      }
+      
+      console.log('subsalesNearby: location button clicked');
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('address', 'Use my location clicked');
+      }
+      
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Getting location...';
+      
+      navigator.geolocation.getCurrentPosition(async (position)=>{
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        
+        console.log('subsalesNearby: got coordinates', lat, lng);
+        if(window.PWALogger && window.PWALogger.debugEnabled){
+          window.PWALogger.log('address', 'GPS coordinates obtained', {lat, lng});
+        }
+        
+        // Reverse geocode using Google Maps API if available
+        const apiKey = window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.googleMapsApiKey;
+        if(apiKey){
+          try{
+            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            
+            if(data.results && data.results[0]){
+              const addr = data.results[0].formatted_address;
+              inputEl.value = addr;
+              console.log('subsalesNearby: reverse geocoded to', addr);
+              if(window.PWALogger && window.PWALogger.debugEnabled){
+                window.PWALogger.log('address', 'Address filled from GPS', {address: addr});
+              }
+            }
+          }catch(e){
+            console.warn('subsalesNearby: reverse geocode failed', e);
+            inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          }
+        } else {
+          // No API key - just show coordinates
+          inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        }
+        
+        btn.disabled = false;
+        btn.innerHTML = '📍 Use my location';
+      }, (error)=>{
+        console.warn('subsalesNearby: geolocation error', error);
+        alert('Could not get your location. Please check permissions.');
+        btn.disabled = false;
+        btn.innerHTML = '📍 Use my location';
+      });
+    });
+    
+    // Insert button BEFORE the input field to avoid click-through issues
+    inputEl.parentNode && inputEl.parentNode.insertBefore(btn, inputEl);
+  }
+
   // Show a reload/prefetch button to populate local ZIP datasets when no local data is present
   async function showReloadAndPrefetch(inputEl){
     removeDropdown(inputEl);
@@ -510,7 +846,7 @@
           const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
           if(resp && resp.ok){ 
             const indexData = await resp.json(); 
-            prefetchAllZips(indexData);
+            await prefetchAllZips(indexData); // Wait for first ZIP
           }
         }catch(e){ console.warn('subsalesNearby: trigger prefetch failed', e); }
         // allow button to be used again
@@ -524,34 +860,36 @@
   window.subsalesNearby = {
     init: initNearbyAutocomplete,
     fetchNearby: fetchNearby,
-    prefetch: function(){ // expose prefetch so app.js can call it on login
-      (async ()=>{
-        try{
-          const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
-          if(!resp.ok) return;
-          const indexData = await resp.json();
-          prefetchAllZips(indexData);
-        }catch(e){ console.warn('subsalesNearby: manual prefetch failed', e); }
-      })();
+    prefetch: async function(){ // MUST be async and return the promise
+      console.log('subsalesNearby: Manual prefetch triggered - loading ALL served ZIPs now...');
+      try{
+        const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
+        if(!resp.ok) {
+          console.warn('subsalesNearby: zip-index.json fetch failed, HTTP', resp.status);
+          return;
+        }
+        const indexData = await resp.json();
+        console.log('subsalesNearby: zip-index.json loaded, loading all ZIPs now...');
+        await prefetchAllZips(indexData); // Wait for ALL ZIPs to load
+        console.log('subsalesNearby: ALL ZIPs loaded and ready for use!');
+      }catch(e){ 
+        console.warn('subsalesNearby: manual prefetch failed', e); 
+        throw e; // Re-throw so caller knows it failed
+      }
     }
   };
+  
+  // Notify app.js that address autocomplete is ready
+  console.log('subsalesNearby: Module loaded and ready');
+  if(typeof window.dispatchEvent === 'function'){
+    window.dispatchEvent(new CustomEvent('subsalesNearbyReady'));
+  }
 
   // Auto-init when DOM ready
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ()=>{ initNearbyAutocomplete(); }); else initNearbyAutocomplete();
 
-  // Start background prefetch of zips listed in zip-index.json (non-blocking)
-  (function(){
-    const tryPrefetch = async ()=>{
-      try{
-        const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
-        if(!resp.ok) return;
-        const indexData = await resp.json();
-        prefetchAllZips(indexData);
-      }catch(e){ console.warn('subsalesNearby: zip-index prefetch failed', e); }
-    };
-    // delay prefetch slightly so it doesn't block initial paint
-    if('requestIdleCallback' in window) requestIdleCallback(tryPrefetch, { timeout: 3000 }); else setTimeout(tryPrefetch, 2500);
-  })();
+  // NOTE: Background prefetch removed - now only triggered on login via window.subsalesNearby.prefetch()
+  // This ensures all ZIPs are loaded when the user actually needs them, not on every page load
 
   // header status updater helper (uses existing header UI if present)
   function updateHeaderStatus(color, text){
@@ -562,28 +900,6 @@
       if(txt && typeof text === 'string') txt.textContent = text;
     }catch(e){ /* noop */ }
   }
-
-  // listen for prefetch complete to mark green or partial (called from work())
-  // We'll monkeypatch prefetchAllZips' internal work completion by detecting ZIP_CACHE changes in a small interval.
-  (function watchPrefetchCompletion(){
-    let lastCount = Object.keys(ZIP_CACHE).length;
-    const check = ()=>{
-      const nowCount = Object.keys(ZIP_CACHE).length;
-      if(nowCount > 0 && nowCount !== lastCount){
-        // still loading; set orange
-        updateHeaderStatus('orange','Loading address data…');
-        lastCount = nowCount;
-      }
-      // when prefetch likely finished (no change after 2s), mark green
-      setTimeout(()=>{
-        const after = Object.keys(ZIP_CACHE).length;
-        if(after === lastCount && after > 0){ updateHeaderStatus('green','Address index loaded'); }
-        else check();
-      }, 2000);
-    };
-    // start watching after short delay
-    setTimeout(check, 1500);
-  })();
 
 
 })();

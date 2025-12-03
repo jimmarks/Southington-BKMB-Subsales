@@ -198,21 +198,24 @@
     </script>
     <script src="app.js"></script>
     <script>
-      // Dynamically load address-autocomplete.js relative to the resolved app.js location.
+      // Dynamically load session-tracking.js relative to app.js location
+      // NOTE: address-autocomplete.js is now loaded ONLY after login (in app.js) to speed up initial load
       (function(){
         try{
           var appScript = document.querySelector('script[src$="app.js"]');
           if(appScript){
             var base = appScript.src.replace(/app\.js(\?.*)?$/,'');
-            var s = document.createElement('script');
-            s.src = base + 'address-autocomplete.js';
-            s.defer = true;
-            document.head.appendChild(s);
+            
+            // Load session-tracking.js
+            var sessionScript = document.createElement('script');
+            sessionScript.src = base + 'session-tracking.js';
+            document.head.appendChild(sessionScript);
           } else {
-            // fallback to relative path
-            var s2 = document.createElement('script'); s2.src = 'address-autocomplete.js'; s2.defer = true; document.head.appendChild(s2);
+            // fallback to relative paths
+            var st = document.createElement('script'); st.src = 'session-tracking.js'; document.head.appendChild(st);
+            var logger = document.createElement('script'); logger.src = 'pwa-logger.js'; logger.defer = true; document.head.appendChild(logger);
           }
-        }catch(e){ console.warn('failed to load address-autocomplete dynamically', e); }
+        }catch(e){ console.warn('failed to load scripts dynamically', e); }
       })();
     </script>
     <script>

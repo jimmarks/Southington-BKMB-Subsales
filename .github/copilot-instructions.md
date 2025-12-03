@@ -176,6 +176,13 @@ Project-specific notes & conventions
   3) The PWA lazy-loads those files (client-side caching, IndexedDB) to provide offline suggestions.
 - Canonical address field: `#address` is authoritative. Do not attempt to extract visible suggestion text from third-party widgets in production code — instead provide a controlled autocomplete that writes to `#address`.
 
+**CSS & Styling Standards (CRITICAL)**
+- **ALL CSS must go in stylesheets** - `wordpress-plugin/assets/css/admin-dashboard.css` for admin UI
+- **NEVER use inline styles** in PHP/HTML except for truly dynamic values (conditional colors, calculated positions)
+- **Quick features are NOT exempt** - even rapid prototypes must use proper CSS architecture
+- When adding styles: (1) Add CSS classes to stylesheet, (2) Apply classes in HTML, (3) Only use inline styles for PHP-computed values
+- Breaking this rule creates technical debt, hurts maintainability, and has caused build breaks in the past
+
 Small changelog
 ---------------
 - 2025-11-08: Updated to reflect the admin ZIP extract generator, Overpass usage, canonical `#address` behavior, and packaging script.

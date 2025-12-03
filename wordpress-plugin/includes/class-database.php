@@ -28,6 +28,7 @@ class Subsales_Database {
         }
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_old_logs' ) );
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'check_debug_timeout' ) );
+        add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_stale_pwa_sessions' ) );
     }
     
     /**
@@ -36,9 +37,9 @@ class Subsales_Database {
     public static function create_tables() {
         global $wpdb;
         
-        $table_name = $wpdb->prefix . 'order_sync_orders';
-        $teams_table_name = $wpdb->prefix . 'order_sync_teams';
-        $team_members_table_name = $wpdb->prefix . 'order_sync_team_members';
+        $table_name = $wpdb->prefix . 'ss_orders';
+        $teams_table_name = $wpdb->prefix . 'ss_teams';
+        $team_members_table_name = $wpdb->prefix . 'ss_team_members';
         
         $charset_collate = $wpdb->get_charset_collate();
         
@@ -95,7 +96,7 @@ class Subsales_Database {
         ) $charset_collate;";
         
         // Junction table for many-to-many user-team relationships
-        $user_teams_table_name = $wpdb->prefix . 'order_sync_user_teams';
+        $user_teams_table_name = $wpdb->prefix . 'ss_user_teams';
         $user_teams_sql = "CREATE TABLE $user_teams_table_name (
             id mediumint(9) NOT NULL AUTO_INCREMENT,
             user_id mediumint(9) NOT NULL,
@@ -108,7 +109,7 @@ class Subsales_Database {
         ) $charset_collate;";
         
         // Edit history table for order auditing
-        $edit_history_table_name = $wpdb->prefix . 'order_edit_history';
+        $edit_history_table_name = $wpdb->prefix . 'ss_edit_history';
         $edit_history_sql = "CREATE TABLE $edit_history_table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             order_id bigint(20) unsigned NOT NULL,
@@ -127,7 +128,7 @@ class Subsales_Database {
         ) $charset_collate;";
         
         // Logs table for system-wide logging with debug mode support
-        $logs_table_name = $wpdb->prefix . 'subsales_logs';
+        $logs_table_name = $wpdb->prefix . 'ss_logs';
         $logs_sql = "CREATE TABLE $logs_table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             log_level enum('DEBUG','INFO','WARNING','ERROR','CRITICAL') NOT NULL DEFAULT 'INFO',
@@ -147,6 +148,59 @@ class Subsales_Database {
             KEY user_id (user_id)
         ) $charset_collate;";
         
+        // PWA Sessions table for tracking active PWA clients
+        $pwa_sessions_table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        $pwa_sessions_sql = "CREATE TABLE $pwa_sessions_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            session_id varchar(64) NOT NULL,
+            user_id bigint(20) unsigned DEFAULT NULL,
+            user_name varchar(255) DEFAULT '',
+            team_id bigint(20) unsigned DEFAULT NULL,
+            team_name varchar(255) DEFAULT '',
+            user_agent text,
+            ip_address varchar(45) DEFAULT '',
+            login_at datetime NOT NULL,
+            last_heartbeat datetime NOT NULL,
+            logout_at datetime DEFAULT NULL,
+            session_data longtext,
+            status enum('active','idle','ended') NOT NULL DEFAULT 'active',
+            PRIMARY KEY  (id),
+            UNIQUE KEY session_id (session_id),
+            KEY user_id (user_id),
+            KEY team_id (team_id),
+            KEY status (status),
+            KEY last_heartbeat (last_heartbeat),
+            KEY login_at (login_at)
+        ) $charset_collate;";
+        
+        // Address Lookup table for validated addresses with GPS coordinates
+        $addresses_table_name = $wpdb->prefix . 'ss_addresses';
+        $addresses_sql = "CREATE TABLE $addresses_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            street varchar(255) NOT NULL,
+            house_number varchar(20) DEFAULT '',
+            unit varchar(20) DEFAULT '',
+            city varchar(100) NOT NULL DEFAULT 'Southington',
+            state varchar(2) NOT NULL DEFAULT 'CT',
+            zip varchar(10) NOT NULL,
+            lat decimal(10, 8) NOT NULL,
+            lng decimal(11, 8) NOT NULL,
+            source enum('parcel','overpass','csv','manual') NOT NULL DEFAULT 'manual',
+            confidence enum('high','medium','low') NOT NULL DEFAULT 'medium',
+            matched tinyint(1) DEFAULT 0,
+            type enum('residential','commercial','other') NOT NULL DEFAULT 'residential',
+            full_address text,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY unique_address (street, house_number, unit, zip),
+            KEY idx_zip (zip),
+            KEY idx_street (street),
+            KEY idx_type (type),
+            KEY idx_source (source),
+            KEY idx_coordinates (lat, lng)
+        ) $charset_collate;";
+        
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql );
         dbDelta( $teams_sql );
@@ -154,6 +208,8 @@ class Subsales_Database {
         dbDelta( $user_teams_sql );
         dbDelta( $edit_history_sql );
         dbDelta( $logs_sql );
+        dbDelta( $pwa_sessions_sql );
+        dbDelta( $addresses_sql );
         
         // Run schema migrations
         self::migrate_phone_column( $team_members_table_name );
@@ -344,9 +400,9 @@ class Subsales_Database {
      * @param string $description Optional description
      * @return bool Success
      */
-    public static function add_team( $name, $access_code, $description = '' ) {
+    public static function add_team( $name, $access_code, $description = '', $status = 'active' ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_teams';
+        $table_name = $wpdb->prefix . 'ss_teams';
         
         $existing = $wpdb->get_row( 
             $wpdb->prepare(
@@ -367,7 +423,7 @@ class Subsales_Database {
                 'name' => $name,
                 'access_code' => $access_code,
                 'description' => $description,
-                'status' => 'active'
+                'status' => $status
             ),
             array( '%s', '%s', '%s', '%s' )
         );
@@ -388,8 +444,8 @@ class Subsales_Database {
      */
     public static function remove_team( $team_id ) {
         global $wpdb;
-        $teams_table = $wpdb->prefix . 'order_sync_teams';
-        $members_table = $wpdb->prefix . 'order_sync_team_members';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
         
         $wpdb->delete( $members_table, array( 'team_id' => $team_id ), array( '%d' ) );
         return $wpdb->delete( $teams_table, array( 'id' => $team_id ), array( '%d' ) );
@@ -402,10 +458,10 @@ class Subsales_Database {
      */
     public static function get_teams() {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_teams';
+        $table_name = $wpdb->prefix . 'ss_teams';
         
         return $wpdb->get_results( 
-            "SELECT * FROM {$table_name} WHERE status = 'active' ORDER BY created_at DESC", 
+            "SELECT * FROM {$table_name} ORDER BY status DESC, created_at DESC", 
             ARRAY_A 
         );
     }
@@ -419,7 +475,7 @@ class Subsales_Database {
      */
     public static function get_team_by_credentials( $team_name, $access_code ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_teams';
+        $table_name = $wpdb->prefix . 'ss_teams';
         
         return $wpdb->get_row( 
             $wpdb->prepare( 
@@ -442,7 +498,7 @@ class Subsales_Database {
      */
     public static function add_team_member( $team_id, $name, $email, $role = 'member' ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_team_members';
+        $table_name = $wpdb->prefix . 'ss_team_members';
         
         $result = $wpdb->insert(
             $table_name,
@@ -467,7 +523,7 @@ class Subsales_Database {
      */
     public static function remove_team_member( $member_id ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_team_members';
+        $table_name = $wpdb->prefix . 'ss_team_members';
         
         return $wpdb->delete(
             $table_name,
@@ -484,7 +540,7 @@ class Subsales_Database {
      */
     public static function get_team_members_by_team( $team_id ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_team_members';
+        $table_name = $wpdb->prefix . 'ss_team_members';
         
         return $wpdb->get_results( 
             $wpdb->prepare(
@@ -504,7 +560,7 @@ class Subsales_Database {
      */
     public static function verify_team_member( $email, $team_id ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'order_sync_team_members';
+        $table_name = $wpdb->prefix . 'ss_team_members';
         
         $member = $wpdb->get_row( 
             $wpdb->prepare( 
@@ -543,7 +599,7 @@ class Subsales_Database {
      */
     public static function log( $level, $category, $message, $context = array(), $source = 'admin', $user_id = null, $user_name = '' ) {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'subsales_logs';
+        $table_name = $wpdb->prefix . 'ss_logs';
         
         // Validate log level
         $valid_levels = array( 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL' );
@@ -553,7 +609,9 @@ class Subsales_Database {
         
         // Check if debug logging is enabled
         $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
-        $is_debug = ( $level === 'DEBUG' || $debug_enabled ) ? 1 : 0;
+        
+        // Only DEBUG level logs are marked as debug logs
+        $is_debug = ( $level === 'DEBUG' ) ? 1 : 0;
         
         // Skip DEBUG logs if debug mode is not enabled
         if ( $level === 'DEBUG' && ! $debug_enabled ) {
@@ -628,7 +686,7 @@ class Subsales_Database {
      */
     public static function cleanup_old_logs() {
         global $wpdb;
-        $table_name = $wpdb->prefix . 'subsales_logs';
+        $table_name = $wpdb->prefix . 'ss_logs';
         
         // Delete debug logs older than 24 hours
         $wpdb->query(
@@ -678,7 +736,7 @@ class Subsales_Database {
      */
     public static function log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
         global $wpdb;
-        $history_table = $wpdb->prefix . 'order_edit_history';
+        $history_table = $wpdb->prefix . 'ss_edit_history';
         
         // Build field-by-field comparison
         $changes = array();
@@ -834,5 +892,344 @@ class Subsales_Database {
         }
         
         return $result !== false;
+    }
+    
+    /**
+     * ====================================================================
+     * PWA SESSION TRACKING
+     * ====================================================================
+     */
+    
+    /**
+     * Start a new PWA session
+     * 
+     * @param string $session_id Unique session identifier (generated client-side)
+     * @param int $user_id Optional user ID
+     * @param string $user_name User display name
+     * @param int $team_id Team ID
+     * @param string $team_name Team name
+     * @param array $session_data Additional session metadata
+     * @return int|false Session record ID or false on failure
+     */
+    public static function start_pwa_session( $session_id, $user_id = null, $user_name = '', $team_id = null, $team_name = '', $session_data = array() ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        // Get client info
+        $user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( $_SERVER['HTTP_USER_AGENT'] ) : '';
+        $ip_address = self::get_client_ip();
+        
+        // Prepare session data JSON
+        $session_data_json = ! empty( $session_data ) ? wp_json_encode( $session_data ) : null;
+        
+        $now = current_time( 'mysql' );
+        
+        // End any existing active sessions for this user (prevent duplicates)
+        if ( $user_id ) {
+            $wpdb->update(
+                $table_name,
+                array(
+                    'status' => 'ended',
+                    'logout_at' => $now
+                ),
+                array(
+                    'user_id' => $user_id,
+                    'status' => 'active'
+                ),
+                array( '%s', '%s' ),
+                array( '%d', '%s' )
+            );
+            
+            self::log( 'DEBUG', 'pwa', 'Ended previous sessions for user', array(
+                'user_id' => $user_id,
+                'user_name' => $user_name
+            ), 'pwa', $user_id, $user_name );
+        }
+        
+        // Insert or update session
+        $existing = $wpdb->get_var( $wpdb->prepare( 
+            "SELECT id FROM {$table_name} WHERE session_id = %s", 
+            $session_id 
+        ) );
+        
+        if ( $existing ) {
+            // Update existing session (reactivate if ended)
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'user_id' => $user_id,
+                    'user_name' => sanitize_text_field( $user_name ),
+                    'team_id' => $team_id,
+                    'team_name' => sanitize_text_field( $team_name ),
+                    'user_agent' => $user_agent,
+                    'ip_address' => $ip_address,
+                    'login_at' => $now,
+                    'last_heartbeat' => $now,
+                    'logout_at' => null,
+                    'session_data' => $session_data_json,
+                    'status' => 'active'
+                ),
+                array( 'session_id' => $session_id ),
+                array( '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ),
+                array( '%s' )
+            );
+            
+            self::log( 'DEBUG', 'pwa', 'PWA session reactivated', array(
+                'session_id' => $session_id,
+                'user_name' => $user_name,
+                'team_name' => $team_name,
+                'ip' => $ip_address
+            ), 'pwa', $user_id, $user_name );
+            
+            return $existing;
+        } else {
+            // Create new session
+            $result = $wpdb->insert(
+                $table_name,
+                array(
+                    'session_id' => $session_id,
+                    'user_id' => $user_id,
+                    'user_name' => sanitize_text_field( $user_name ),
+                    'team_id' => $team_id,
+                    'team_name' => sanitize_text_field( $team_name ),
+                    'user_agent' => $user_agent,
+                    'ip_address' => $ip_address,
+                    'login_at' => $now,
+                    'last_heartbeat' => $now,
+                    'session_data' => $session_data_json,
+                    'status' => 'active'
+                ),
+                array( '%s', '%d', '%s', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+            );
+            
+            self::log( 'DEBUG', 'pwa', 'PWA session started', array(
+                'session_id' => $session_id,
+                'user_name' => $user_name,
+                'team_name' => $team_name,
+                'ip' => $ip_address
+            ), 'pwa', $user_id, $user_name );
+            
+            return $result !== false ? $wpdb->insert_id : false;
+        }
+    }
+    
+    /**
+     * Update PWA session heartbeat
+     * 
+     * @param string $session_id Session identifier
+     * @param array $activity_data Optional activity data (clicks, navigation, etc)
+     * @return bool Success
+     */
+    public static function update_pwa_heartbeat( $session_id, $activity_data = array() ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        $now = current_time( 'mysql' );
+        
+        // Get existing session data
+        $session = $wpdb->get_row( $wpdb->prepare(
+            "SELECT session_data FROM {$table_name} WHERE session_id = %s",
+            $session_id
+        ), ARRAY_A );
+        
+        if ( ! $session ) {
+            return false;
+        }
+        
+        // Merge activity data into session data
+        $session_data = $session['session_data'] ? json_decode( $session['session_data'], true ) : array();
+        
+        if ( ! isset( $session_data['activity'] ) ) {
+            $session_data['activity'] = array();
+        }
+        
+        if ( ! empty( $activity_data ) ) {
+            $session_data['activity'][] = array_merge( $activity_data, array( 'timestamp' => $now ) );
+            // Keep only last 50 activity events
+            if ( count( $session_data['activity'] ) > 50 ) {
+                $session_data['activity'] = array_slice( $session_data['activity'], -50 );
+            }
+        }
+        
+        $result = $wpdb->update(
+            $table_name,
+            array(
+                'last_heartbeat' => $now,
+                'status' => 'active',
+                'session_data' => wp_json_encode( $session_data )
+            ),
+            array( 'session_id' => $session_id ),
+            array( '%s', '%s', '%s' ),
+            array( '%s' )
+        );
+        
+        return $result !== false;
+    }
+    
+    /**
+     * End PWA session (logout)
+     * 
+     * @param string $session_id Session identifier
+     * @return bool Success
+     */
+    public static function end_pwa_session( $session_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        $now = current_time( 'mysql' );
+        
+        // Get session info for logging
+        $session = $wpdb->get_row( $wpdb->prepare(
+            "SELECT user_id, user_name, team_name FROM {$table_name} WHERE session_id = %s",
+            $session_id
+        ), ARRAY_A );
+        
+        $result = $wpdb->update(
+            $table_name,
+            array(
+                'logout_at' => $now,
+                'status' => 'ended'
+            ),
+            array( 'session_id' => $session_id ),
+            array( '%s', '%s' ),
+            array( '%s' )
+        );
+        
+        if ( $session ) {
+            self::log( 'DEBUG', 'pwa', 'PWA session ended', array(
+                'session_id' => $session_id,
+                'user_name' => $session['user_name'],
+                'team_name' => $session['team_name']
+            ), 'pwa', $session['user_id'], $session['user_name'] );
+        }
+        
+        return $result !== false;
+    }
+    
+    /**
+     * Get active PWA sessions
+     * 
+     * @param int $limit Optional limit
+     * @return array Active sessions
+     */
+    public static function get_active_pwa_sessions( $limit = 100 ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        // Consider sessions active if:
+        // 1. Not logged out (logout_at IS NULL)
+        // 2. Heartbeat within last 5 minutes
+        // Use current_time() to match WordPress timezone used when storing
+        $five_min_ago = date( 'Y-m-d H:i:s', strtotime( current_time( 'mysql' ) ) - 300 );
+        
+        $sessions = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table_name} 
+             WHERE logout_at IS NULL
+             AND last_heartbeat >= %s
+             ORDER BY last_heartbeat DESC
+             LIMIT %d",
+            $five_min_ago,
+            $limit
+        ), ARRAY_A );
+        
+        return $sessions;
+    }
+    
+    /**
+     * Get all PWA sessions (with pagination)
+     * 
+     * @param array $args Query arguments
+     * @return array Sessions
+     */
+    public static function get_pwa_sessions( $args = array() ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        $defaults = array(
+            'status' => 'all',
+            'team_id' => null,
+            'user_id' => null,
+            'limit' => 100,
+            'offset' => 0,
+            'orderby' => 'last_heartbeat',
+            'order' => 'DESC'
+        );
+        
+        $args = wp_parse_args( $args, $defaults );
+        
+        $where = array( '1=1' );
+        
+        if ( $args['status'] !== 'all' ) {
+            $where[] = $wpdb->prepare( 'status = %s', $args['status'] );
+        }
+        
+        if ( $args['team_id'] ) {
+            $where[] = $wpdb->prepare( 'team_id = %d', $args['team_id'] );
+        }
+        
+        if ( $args['user_id'] ) {
+            $where[] = $wpdb->prepare( 'user_id = %d', $args['user_id'] );
+        }
+        
+        $where_sql = implode( ' AND ', $where );
+        $orderby = sanitize_sql_orderby( $args['orderby'] . ' ' . $args['order'] );
+        
+        $sessions = $wpdb->get_results(
+            "SELECT * FROM {$table_name} 
+             WHERE {$where_sql} 
+             ORDER BY {$orderby}
+             LIMIT {$args['limit']} OFFSET {$args['offset']}",
+            ARRAY_A
+        );
+        
+        return $sessions;
+    }
+    
+    /**
+     * Cleanup stale PWA sessions
+     * Marks sessions as idle if no heartbeat for 5 minutes
+     * 
+     * @return int Number of sessions marked idle
+     */
+    public static function cleanup_stale_pwa_sessions() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        // Use current_time() to match WordPress timezone
+        $five_min_ago = date( 'Y-m-d H:i:s', strtotime( current_time( 'mysql' ) ) - 300 );
+        
+        $result = $wpdb->query( $wpdb->prepare(
+            "UPDATE {$table_name} 
+             SET status = 'idle' 
+             WHERE status = 'active' 
+             AND last_heartbeat < %s
+             AND logout_at IS NULL",
+            $five_min_ago
+        ) );
+        
+        if ( $result > 0 ) {
+            self::log( 'DEBUG', 'pwa', "Marked {$result} stale PWA sessions as idle", array(), 'cron' );
+        }
+        
+        return $result;
+    }
+    
+    /**
+     * Get client IP address
+     * 
+     * @return string IP address
+     */
+    private static function get_client_ip() {
+        $ip = '';
+        
+        if ( ! empty( $_SERVER['HTTP_CLIENT_IP'] ) ) {
+            $ip = $_SERVER['HTTP_CLIENT_IP'];
+        } elseif ( ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+        } elseif ( ! empty( $_SERVER['REMOTE_ADDR'] ) ) {
+            $ip = $_SERVER['REMOTE_ADDR'];
+        }
+        
+        return sanitize_text_field( $ip );
     }
 }
