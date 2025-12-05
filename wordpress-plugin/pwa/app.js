@@ -253,8 +253,8 @@
                 <input id="customerName" placeholder="Customer name" />
                 <label>Address</label>
                 <input id="address" placeholder="Address" />
-                <label for="cellNumber">Cell number</label>
-                <input id="cellNumber" type="tel" inputmode="tel" placeholder="Cell number" maxlength="10" />
+                <label for="cellNumber">Phone Number</label>
+                <input id="cellNumber" type="tel" inputmode="tel" placeholder="Phone Number" maxlength="10" required />
                 <div class="row row-spaced">
                   <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
                 </div>
@@ -1944,9 +1944,10 @@
   if (unitFloorApt) {
     address = address + (address ? ' ' : '') + unitFloorApt;
   }
+  const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
   if (!customer || !address) return alert('Customer and address required');
+  if (!cell) return alert('Phone number is required');
     const notes = qs('#notes') && qs('#notes').value || '';
-    const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
     // gather product quantities from rendered inputs
     const prodInputs = document.querySelectorAll('input[data-product-id]');
     const products = [];

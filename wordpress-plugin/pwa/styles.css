@@ -82,8 +82,8 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 /* Google PlaceAutocompleteElement may inject its own element; make adjacent elements full width */
 #address, #address + * { width:100% !important; max-width:none !important; box-sizing:border-box }
 
-/* Phone input validation visuals */
-input[type="tel"]:invalid:not(:placeholder-shown):not(:focus){border-color:#dc2626}
+/* Phone input validation visuals - only show red border when field has value and is invalid */
+input[type="tel"]:user-invalid{border-color:#dc2626}
 input[type="tel"]:invalid:focus{border-color:#2563eb}
 input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,0.06)}
 
