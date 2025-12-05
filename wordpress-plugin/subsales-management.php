@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.31
+ * Version: 2.0.0.53
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.31' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.53' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -57,9 +57,13 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
 
 // Initialize database
 Subsales_Database::init();
+
+// Initialize background matcher
+Subsales_Background_Matcher::init();
 
 // Initialize REST API
 Subsales_REST_API::init();
@@ -111,103 +115,139 @@ function subsales_activate() {
 }
 
 /**
- * Deactivation hook - store flag to show data deletion prompt
+ * Deactivation hook - cleanup only
  */
 function subsales_deactivate() {
-    // Set a transient to show data deletion prompt on plugins page
-    set_transient( 'subsales_show_deletion_prompt', true, 300 ); // 5 minutes to decide
+    // Nothing to do on deactivation
+    // Data deletion preference is handled via modal before deactivation
 }
 
 /**
- * Show data deletion prompt after deactivation
+ * Add deactivation modal and JavaScript to plugins page
  */
-add_action( 'admin_notices', 'subsales_deactivation_deletion_prompt' );
-function subsales_deactivation_deletion_prompt() {
-    // Only show on plugins page after deactivation
-    if ( ! get_transient( 'subsales_show_deletion_prompt' ) ) {
-        return;
-    }
-    
-    $screen = get_current_screen();
-    if ( ! $screen || $screen->id !== 'plugins' ) {
-        return;
-    }
-    
-    // Check if deletion option is already set
+add_action( 'admin_footer-plugins.php', 'subsales_deactivation_modal' );
+function subsales_deactivation_modal() {
+    // Check if user has already made a choice
     $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', '' );
-    
-    if ( $delete_on_uninstall === 'yes' || $delete_on_uninstall === 'no' ) {
-        // User already made a choice, don't show again
-        delete_transient( 'subsales_show_deletion_prompt' );
-        return;
-    }
+    $has_choice = ( $delete_on_uninstall === 'yes' || $delete_on_uninstall === 'no' );
     
     ?>
-    <div class="notice notice-warning is-dismissible" id="subsales-deletion-notice" style="border-left-color: #d63638;">
-        <h2 style="margin-top: 0.5em;">⚠️ Subsales Management: Data Deletion Settings</h2>
-        <p><strong>The Subsales Management plugin has been deactivated.</strong></p>
-        <p>Would you like to <strong>delete all plugin data</strong> when you delete this plugin?</p>
-        
-        <div style="background: #fff; border: 1px solid #c3c4c7; padding: 15px; margin: 15px 0; border-radius: 4px;">
-            <p style="margin-top: 0;"><strong>This includes:</strong></p>
-            <ul style="margin-left: 20px;">
-                <li>All orders and customer data</li>
-                <li>All teams and team members</li>
-                <li>All activity logs</li>
-                <li>All plugin settings and configurations</li>
-                <li>PWA page and frontend portal</li>
-                <li>Uploaded ZIP data files</li>
-            </ul>
+    <div id="subsales-deactivation-modal" style="display:none;">
+        <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 160000;">
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 30px; border-radius: 8px; max-width: 600px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                <h2 style="margin-top: 0; color: #d63638;">⚠️ Deactivating Subsales Management</h2>
+                
+                <?php if ( ! $has_choice ) : ?>
+                    <p><strong>Before you deactivate, please tell us:</strong></p>
+                    <p>Would you like to <strong>delete all plugin data</strong> when you eventually delete this plugin?</p>
+                    
+                    <div style="background: #f6f7f7; border: 1px solid #c3c4c7; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <p style="margin-top: 0;"><strong>This would include:</strong></p>
+                        <ul style="margin-left: 20px; margin-bottom: 0;">
+                            <li>All orders and customer data</li>
+                            <li>All teams and team members</li>
+                            <li>All activity logs</li>
+                            <li>All plugin settings and configurations</li>
+                            <li>PWA page and frontend portal</li>
+                            <li>Uploaded ZIP data files</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button type="button" class="button" onclick="subsalesDeactivateWithChoice('yes')" style="background: #d63638; border-color: #d63638; color: white;">
+                            🗑️ Delete Data & Deactivate
+                        </button>
+                        <button type="button" class="button button-primary" onclick="subsalesDeactivateWithChoice('no')">
+                            💾 Keep Data & Deactivate
+                        </button>
+                        <button type="button" class="button" onclick="subsalesCancelDeactivation()">
+                            Cancel
+                        </button>
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
+                        You can change this setting anytime in <strong>BKMB Subsales → Settings</strong>
+                    </p>
+                <?php else : ?>
+                    <p>Are you sure you want to deactivate Subsales Management?</p>
+                    
+                    <?php if ( $delete_on_uninstall === 'yes' ) : ?>
+                        <div style="background: #fcf0f1; border: 1px solid #d63638; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                            <p style="margin: 0; color: #d63638;">
+                                <strong>⚠️ Warning:</strong> Your data deletion setting is currently set to <strong>"Delete All Data"</strong>.
+                                When you delete this plugin (not just deactivate), all your data will be permanently removed.
+                            </p>
+                        </div>
+                    <?php else : ?>
+                        <div style="background: #f0f6fc; border: 1px solid #0071a1; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                            <p style="margin: 0; color: #0071a1;">
+                                <strong>✓ Your data will be kept safe.</strong> When you delete this plugin, your data will be preserved.
+                            </p>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <div style="margin-top: 20px; display: flex; gap: 10px;">
+                        <button type="button" class="button button-primary" onclick="subsalesProceedDeactivation()">
+                            Deactivate Plugin
+                        </button>
+                        <button type="button" class="button" onclick="subsalesCancelDeactivation()">
+                            Cancel
+                        </button>
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
+                        Change deletion setting in <strong>BKMB Subsales → Settings</strong>
+                    </p>
+                <?php endif; ?>
+            </div>
         </div>
-        
-        <p style="margin-bottom: 15px;">
-            <button type="button" class="button button-primary" onclick="subsalesSetDeletionOption('yes')" style="margin-right: 10px;">
-                🗑️ Yes, Delete All Data When Plugin is Deleted
-            </button>
-            <button type="button" class="button button-secondary" onclick="subsalesSetDeletionOption('no')">
-                💾 No, Keep My Data Safe
-            </button>
-        </p>
-        
-        <p style="font-size: 12px; color: #646970;">
-            You can change this setting anytime in <strong>BKMB Subsales → Settings</strong>
-        </p>
     </div>
     
     <script>
-    function subsalesSetDeletionOption(choice) {
-        const notice = document.getElementById('subsales-deletion-notice');
-        const originalContent = notice.innerHTML;
+    jQuery(document).ready(function($) {
+        // Store the deactivation URL when clicked
+        let deactivationUrl = null;
         
-        notice.innerHTML = '<p style="padding: 10px 0;">⏳ Saving your preference...</p>';
+        // Intercept deactivate link clicks
+        $('tr[data-plugin="subsales-management/subsales-management.php"] .deactivate a').on('click', function(e) {
+            e.preventDefault();
+            deactivationUrl = $(this).attr('href');
+            $('#subsales-deactivation-modal').show();
+        });
+    });
+    
+    function subsalesDeactivateWithChoice(choice) {
+        // Show saving state
+        const modal = document.getElementById('subsales-deactivation-modal');
+        modal.querySelector('div > div').innerHTML = '<div style="text-align: center; padding: 40px;"><p style="font-size: 18px;">⏳ Saving preference and deactivating...</p></div>';
         
+        // Save choice and then deactivate
         jQuery.post(ajaxurl, {
             action: 'subsales_set_deletion_option',
             choice: choice,
             nonce: '<?php echo wp_create_nonce( 'subsales_deletion_option' ); ?>'
         }, function(response) {
             if (response.success) {
-                if (choice === 'yes') {
-                    notice.className = 'notice notice-error is-dismissible';
-                    notice.innerHTML = '<p><strong>✅ Data deletion enabled.</strong> All plugin data will be permanently deleted when you delete this plugin.</p>';
-                } else {
-                    notice.className = 'notice notice-success is-dismissible';
-                    notice.innerHTML = '<p><strong>✅ Data preserved.</strong> Your data will be kept safe even if you delete the plugin.</p>';
-                }
-                
-                setTimeout(function() {
-                    notice.style.display = 'none';
-                }, 5000);
+                // Preference saved, now deactivate
+                subsalesProceedDeactivation();
             } else {
-                notice.className = 'notice notice-error';
-                notice.innerHTML = '<p><strong>❌ Error:</strong> Could not save preference. Please try again.</p>' +
-                                   '<p><button onclick="location.reload()" class="button">Retry</button></p>';
+                modal.querySelector('div > div').innerHTML = '<div style="text-align: center; padding: 40px;"><p style="color: #d63638;">❌ Error saving preference. Please try again.</p><button class="button" onclick="subsalesCancelDeactivation()">Close</button></div>';
             }
         }).fail(function() {
-            notice.className = 'notice notice-error';
-            notice.innerHTML = '<p><strong>❌ Connection error.</strong> Please try again.</p>' +
-                               '<p><button onclick="location.reload()" class="button">Retry</button></p>';
+            modal.querySelector('div > div').innerHTML = '<div style="text-align: center; padding: 40px;"><p style="color: #d63638;">❌ Connection error. Please try again.</p><button class="button" onclick="subsalesCancelDeactivation()">Close</button></div>';
         });
+    }
+    
+    function subsalesProceedDeactivation() {
+        // Get the stored deactivation URL and proceed
+        const deactivationUrl = jQuery('tr[data-plugin="subsales-management/subsales-management.php"] .deactivate a').attr('href');
+        if (deactivationUrl) {
+            window.location.href = deactivationUrl;
+        }
+    }
+    
+    function subsalesCancelDeactivation() {
+        document.getElementById('subsales-deactivation-modal').style.display = 'none';
     }
     </script>
     <?php
@@ -1126,6 +1166,13 @@ add_action( 'wp_ajax_subsales_toggle_debug', 'subsales_toggle_debug_ajax' );
 add_action( 'wp_ajax_subsales_get_active_sessions_count', 'subsales_get_active_sessions_count_ajax' );
 add_action( 'wp_ajax_subsales_match_addresses_batch', 'subsales_match_addresses_batch_ajax' );
 
+// Background matching AJAX handlers
+add_action( 'wp_ajax_subsales_bg_match_start', 'subsales_bg_match_start_ajax' );
+add_action( 'wp_ajax_subsales_bg_match_stop', 'subsales_bg_match_stop_ajax' );
+add_action( 'wp_ajax_subsales_bg_match_resume', 'subsales_bg_match_resume_ajax' );
+add_action( 'wp_ajax_subsales_bg_match_status', 'subsales_bg_match_status_ajax' );
+add_action( 'wp_ajax_subsales_bg_match_reset', 'subsales_bg_match_reset_ajax' );
+
 // Import/Export handlers for users and teams
 add_action( 'admin_post_subsales_export_users_teams', 'subsales_export_users_teams' );
 add_action( 'admin_post_subsales_import_users_teams', 'subsales_import_users_teams' );
@@ -1144,6 +1191,73 @@ function subsales_match_addresses_batch_ajax() {
     
     $result = Subsales_Overpass_Matcher::match_addresses();
     
+    if ( $result['success'] ) {
+        wp_send_json_success( $result );
+    } else {
+        wp_send_json_error( $result );
+    }
+}
+
+// Background matching AJAX handlers
+function subsales_bg_match_start_ajax() {
+    check_ajax_referer( 'subsales_bg_match', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $result = Subsales_Background_Matcher::start_job();
+    if ( $result['success'] ) {
+        wp_send_json_success( $result );
+    } else {
+        wp_send_json_error( $result );
+    }
+}
+
+function subsales_bg_match_stop_ajax() {
+    check_ajax_referer( 'subsales_bg_match', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $result = Subsales_Background_Matcher::stop_job();
+    if ( $result['success'] ) {
+        wp_send_json_success( $result );
+    } else {
+        wp_send_json_error( $result );
+    }
+}
+
+function subsales_bg_match_resume_ajax() {
+    check_ajax_referer( 'subsales_bg_match', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $result = Subsales_Background_Matcher::resume_job();
+    if ( $result['success'] ) {
+        wp_send_json_success( $result );
+    } else {
+        wp_send_json_error( $result );
+    }
+}
+
+function subsales_bg_match_status_ajax() {
+    check_ajax_referer( 'subsales_bg_match', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $status = Subsales_Background_Matcher::get_complete_status();
+    wp_send_json_success( $status );
+}
+
+function subsales_bg_match_reset_ajax() {
+    check_ajax_referer( 'subsales_bg_match', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $result = Subsales_Background_Matcher::reset_job();
     if ( $result['success'] ) {
         wp_send_json_success( $result );
     } else {
@@ -1622,18 +1736,40 @@ function subsales_update_sales_mode_ajax() {
     wp_send_json_success( array( 'mode' => $mode ) );
 }
 
-// AJAX handler to generate per-ZIP extracts using Overpass (OpenStreetMap)
+// Helper: Get served ZIP codes as an array (handles both string and array formats)
+function subsales_get_served_zips() {
+    $zips = get_option( 'subsales_served_zips', array() );
+    
+    // Handle legacy string format (comma-separated)
+    if ( is_string( $zips ) && ! empty( $zips ) ) {
+        $zips = array_map( 'trim', explode( ',', $zips ) );
+        $zips = array_filter( $zips ); // Remove empty values
+    }
+    
+    // Ensure it's an array
+    if ( ! is_array( $zips ) ) {
+        $zips = array();
+    }
+    
+    return $zips;
+}
+
+// AJAX handler to generate per-ZIP JSON extracts from database (no API calls needed)
 add_action( 'wp_ajax_subsales_generate_zip_extracts', 'subsales_generate_zip_extracts' );
 function subsales_generate_zip_extracts() {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Permission denied' );
     check_ajax_referer( 'subsales_zip_generate', 'nonce' );
 
-    $zips = get_option( 'subsales_served_zips', array() );
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'ss_addresses';
+    
+    $zips = subsales_get_served_zips();
     if ( ! is_array( $zips ) || empty( $zips ) ) {
-        wp_send_json_error( 'No ZIPs configured' );
+        wp_send_json_error( 'No ZIPs configured. Please add ZIP codes in Settings → Overall → ZIP Codes first.' );
     }
 
-    $upload = wp_upload_dir(); $base = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
+    $upload = wp_upload_dir(); 
+    $base = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
     if ( ! is_dir( $base ) ) wp_mkdir_p( $base );
 
     // Start logging
@@ -1641,7 +1777,7 @@ function subsales_generate_zip_extracts() {
     $user = wp_get_current_user();
     
     // Log ZIP generation start
-    subsales_log( 'INFO', 'zip', 'ZIP extract generation started', array(
+    subsales_log( 'INFO', 'zip', 'ZIP extract generation started from database', array(
         'zip_count' => count( $zips ),
         'zips' => $zips
     ), 'admin', $user->ID, $user->display_name );
@@ -1662,70 +1798,78 @@ function subsales_generate_zip_extracts() {
     foreach ( $zips as $zip ) {
         $zip_start = microtime( true );
         
-        // Get selected sources
-        $sources = get_option( 'subsales_address_sources', array( 'osm', 'openaddresses' ) );
-        $all_addresses = array();
-        $source_counts = array();
+        // Query database for addresses in this ZIP that have coordinates
+        $addresses = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table_name} WHERE zip = %s AND lat IS NOT NULL AND lng IS NOT NULL ORDER BY street, house_number",
+            $zip
+        ), ARRAY_A );
         
-        // Collect from each source
-        foreach ( $sources as $source ) {
-            if ( $source === 'osm' ) {
-                $osm_data = subsales_generate_zip_from_overpass( $zip, $base );
-                if ( isset( $osm_data['addresses'] ) ) {
-                    $all_addresses = array_merge( $all_addresses, $osm_data['addresses'] );
-                    $source_counts['osm'] = count( $osm_data['addresses'] );
-                }
-            } elseif ( $source === 'openaddresses' ) {
-                $oa_data = subsales_fetch_openaddresses_data( $zip );
-                $all_addresses = array_merge( $all_addresses, $oa_data );
-                $source_counts['openaddresses'] = count( $oa_data );
-            }
+        if ( empty( $addresses ) ) {
+            $res = array( 
+                'error' => 'no_addresses', 
+                'message' => 'No addresses with coordinates found for ZIP ' . $zip . '. Upload/geocode addresses first.',
+                'count' => 0
+            );
+            $results[ $zip ] = $res;
+            $error_count++;
+            continue;
         }
         
-        // Deduplicate by address label
-        $unique = array();
-        $seen = array();
-        foreach ( $all_addresses as $addr ) {
-            $key = md5( strtolower( isset( $addr['label'] ) ? $addr['label'] : '' ) );
-            if ( ! isset( $seen[ $key ] ) ) {
-                $seen[ $key ] = true;
-                $unique[] = $addr;
+        // Convert database records to PWA-compatible format
+        $formatted = array();
+        foreach ( $addresses as $addr ) {
+            // Use full_address if available, otherwise construct from parts
+            $label = ! empty( $addr['full_address'] ) ? $addr['full_address'] : '';
+            if ( empty( $label ) ) {
+                $parts = array_filter( array(
+                    $addr['house_number'],
+                    $addr['street'],
+                    ! empty( $addr['unit'] ) ? 'Unit ' . $addr['unit'] : '',
+                    $addr['city'],
+                    $addr['state'],
+                    $addr['zip']
+                ) );
+                $label = implode( ', ', $parts );
             }
+            
+            $formatted[] = array(
+                'label' => $label,
+                'street' => $addr['street'] ?? '',
+                'house_number' => $addr['house_number'] ?? '',
+                'unit' => $addr['unit'] ?? '',
+                'city' => $addr['city'] ?? '',
+                'state' => $addr['state'] ?? '',
+                'postcode' => $addr['zip'] ?? '',
+                'lat' => floatval( $addr['lat'] ),
+                'lng' => floatval( $addr['lng'] ),
+                'source' => $addr['source'] ?? 'unknown',
+                'type' => $addr['type'] ?? 'residential'
+            );
         }
         
         // Write to file
         $file = trailingslashit( $base ) . $zip . '.json';
-        $written = file_put_contents( $file, wp_json_encode( $unique ) );
+        $written = file_put_contents( $file, wp_json_encode( $formatted ) );
         
         $zip_duration = round( microtime( true ) - $zip_start, 2 );
         
         if ( $written === false ) {
             $res = array( 'error' => 'write_failed', 'message' => 'Failed to write JSON file' );
+            $error_count++;
         } else {
             $res = array(
-                'count' => count( $unique ),
+                'count' => count( $formatted ),
                 'file' => $file,
-                'sources' => $source_counts,
-                'duplicates_removed' => count( $all_addresses ) - count( $unique ),
-                'message' => count( $unique ) . ' unique addresses from ' . count( $sources ) . ' source(s)'
+                'message' => count( $formatted ) . ' addresses exported from database',
+                'duration' => $zip_duration,
+                'source' => 'database',
+                'zip' => $zip
             );
-        }
-        
-        $res['duration'] = $zip_duration;
-        $results[ $zip ] = $res;
-        
-        if ( isset( $res['count'] ) ) {
-            $total_addresses += $res['count'];
+            $total_addresses += count( $formatted );
             $success_count++;
-        } else {
-            $error_count++;
         }
         
-        // Add a 2-second delay between requests to avoid rate limiting
-        // (except for the last ZIP)
-        if ( $zip !== end( $zips ) ) {
-            sleep( 2 );
-        }
+        $results[ $zip ] = $res;
     }
 
     // Update zip-index.json in the PWA directory with existing extract files
@@ -1740,14 +1884,14 @@ function subsales_generate_zip_extracts() {
         'failed' => $error_count,
         'total_addresses' => $total_addresses,
         'duration_seconds' => $total_duration,
-        'source' => 'OpenStreetMap Overpass API'
+        'source' => 'wp_ss_addresses database'
     );
 
     // Save log to database
     subsales_save_generation_log( $log_entry );
     
     // Log ZIP generation completion
-    subsales_log( 'INFO', 'zip', 'ZIP extract generation completed', array(
+    subsales_log( 'INFO', 'zip', 'ZIP extract generation completed from database', array(
         'total_zips' => count( $zips ),
         'successful' => $success_count,
         'failed' => $error_count,
@@ -1756,6 +1900,446 @@ function subsales_generate_zip_extracts() {
     ), 'admin', $user->ID, $user->display_name );
 
     wp_send_json_success( $results );
+}
+
+// AJAX handler to upload and process address files
+add_action( 'wp_ajax_subsales_upload_address_file', 'subsales_upload_address_file_ajax' );
+function subsales_upload_address_file_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_upload_address', 'nonce' );
+    
+    if ( ! isset( $_FILES['address_file'] ) || $_FILES['address_file']['error'] !== UPLOAD_ERR_OK ) {
+        wp_send_json_error( 'File upload failed. Please try again.' );
+    }
+    
+    $file = $_FILES['address_file'];
+    $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+    
+    // Initialize upload job status
+    update_option( 'subsales_upload_status', array(
+        'status' => 'uploading',
+        'percent' => 30,
+        'message' => 'File uploaded, detecting type...',
+        'complete' => false,
+        'success' => false
+    ), false );
+    
+    // Detect file type
+    if ( $file_ext === 'zip' ) {
+        // Check if it's a shapefile (contains .shp, .dbf, .prj)
+        $zip = new ZipArchive();
+        if ( $zip->open( $file['tmp_name'] ) === true ) {
+            $has_shp = false;
+            $has_dbf = false;
+            $has_prj = false;
+            
+            for ( $i = 0; $i < $zip->numFiles; $i++ ) {
+                $filename = $zip->getNameIndex( $i );
+                $ext = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+                if ( $ext === 'shp' ) $has_shp = true;
+                if ( $ext === 'dbf' ) $has_dbf = true;
+                if ( $ext === 'prj' ) $has_prj = true;
+            }
+            
+            $zip->close();
+            
+            if ( $has_shp && $has_dbf && $has_prj ) {
+                // Process shapefile in background
+                subsales_process_shapefile_upload( $file['tmp_name'] );
+                wp_send_json_success( array( 'message' => 'Shapefile detected, processing started' ) );
+            } else {
+                update_option( 'subsales_upload_status', array(
+                    'status' => 'error',
+                    'percent' => 0,
+                    'message' => 'Invalid shapefile. Must contain .shp, .dbf, and .prj files.',
+                    'complete' => true,
+                    'success' => false
+                ), false );
+                wp_send_json_error( 'Invalid shapefile. Must contain .shp, .dbf, and .prj files.' );
+            }
+        } else {
+            update_option( 'subsales_upload_status', array(
+                'status' => 'error',
+                'percent' => 0,
+                'message' => 'Could not open ZIP file.',
+                'complete' => true,
+                'success' => false
+            ), false );
+            wp_send_json_error( 'Could not open ZIP file.' );
+        }
+    } elseif ( $file_ext === 'csv' ) {
+        update_option( 'subsales_upload_status', array(
+            'status' => 'error',
+            'percent' => 0,
+            'message' => 'CSV parsing not yet implemented. Coming in Phase 8!',
+            'complete' => true,
+            'success' => false
+        ), false );
+        wp_send_json_error( 'CSV parsing not yet implemented. Coming in Phase 8!' );
+    } else {
+        update_option( 'subsales_upload_status', array(
+            'status' => 'error',
+            'percent' => 0,
+            'message' => 'Invalid file type. Please upload a .zip (shapefile) or .csv file.',
+            'complete' => true,
+            'success' => false
+        ), false );
+        wp_send_json_error( 'Invalid file type. Please upload a .zip (shapefile) or .csv file.' );
+    }
+}
+
+// Process shapefile upload with progress tracking
+function subsales_process_shapefile_upload( $file_path ) {
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Update status: parsing
+    update_option( 'subsales_upload_status', array(
+        'status' => 'parsing',
+        'percent' => 40,
+        'status_text' => 'Parsing shapefile...',
+        'message' => 'Parsing shapefile data...',
+        'complete' => false,
+        'success' => false
+    ), false );
+    
+    // Parse shapefile
+    $result = Subsales_Shapefile_Parser::parse_shapefile( $file_path );
+    
+    if ( is_wp_error( $result ) ) {
+        update_option( 'subsales_upload_status', array(
+            'status' => 'error',
+            'percent' => 0,
+            'status_text' => 'Parsing failed',
+            'message' => 'Shapefile parsing failed: ' . $result->get_error_message(),
+            'complete' => true,
+            'success' => false
+        ), false );
+        return;
+    }
+    
+    $addresses_parsed = $result;
+    $count = count( $addresses_parsed );
+    
+    // Update status: assigning ZIP codes via border-based lookup
+    update_option( 'subsales_upload_status', array(
+        'status' => 'assigning_zips',
+        'percent' => 50,
+        'status_text' => 'Assigning ZIP codes...',
+        'message' => "Parsed {$count} addresses, assigning ZIP codes via spatial query (fast method)...",
+        'complete' => false,
+        'success' => false
+    ), false );
+    
+    // Assign ZIP codes using border-based spatial lookup (100x faster than individual API calls)
+    $addresses_with_zips = subsales_assign_zips_by_borders( $addresses_parsed );
+    
+    // Update status: inserting
+    update_option( 'subsales_upload_status', array(
+        'status' => 'inserting',
+        'percent' => 60,
+        'status_text' => 'Inserting addresses...',
+        'message' => "ZIP codes assigned, inserting {$count} addresses into database...",
+        'complete' => false,
+        'success' => false
+    ), false );
+    
+    // Store addresses in database
+    $inserted = 0;
+    $skipped = 0;
+    
+    // Suppress duplicate key errors
+    $wpdb->suppress_errors( true );
+    
+    foreach ( $addresses_with_zips as $index => $addr ) {
+        // Update progress every 100 addresses
+        if ( $index % 100 === 0 && $index > 0 ) {
+            $progress = 60 + ( ( $index / $count ) * 30 ); // 60-90%
+            update_option( 'subsales_upload_status', array(
+                'status' => 'inserting',
+                'percent' => round( $progress ),
+                'status_text' => 'Inserting addresses...',
+                'message' => "Inserted {$index} of {$count} addresses (skipped {$skipped} duplicates)...",
+                'complete' => false,
+                'success' => false
+            ), false );
+        }
+        
+        // Check for duplicates BEFORE insert (more efficient)
+        // UNIQUE constraint is on (street, house_number, unit, zip)
+        $existing = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$addresses_table} WHERE street = %s AND house_number = %s AND unit = %s AND zip = %s LIMIT 1",
+            $addr['street'],
+            $addr['house_number'],
+            $addr['unit'] ?: '',
+            $addr['zip']
+        ) );
+        
+        if ( $existing ) {
+            // Duplicate found - skip insert
+            $skipped++;
+            continue;
+        }
+        
+        // Insert into database
+        $insert_result = $wpdb->insert(
+            $addresses_table,
+            array(
+                'street' => $addr['street'],
+                'house_number' => $addr['house_number'],
+                'unit' => $addr['unit'],
+                'city' => $addr['city'],
+                'state' => $addr['state'],
+                'zip' => $addr['zip'], // Border-based ZIP assignment
+                'lat' => $addr['lat'],
+                'lng' => $addr['lng'],
+                'source' => $addr['source'],
+                'confidence' => $addr['confidence'],
+                'matched' => $addr['matched'],
+                'type' => $addr['type'],
+                'full_address' => $addr['full_address']
+            ),
+            array( '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s', '%d', '%s', '%s' )
+        );
+        
+        if ( $insert_result ) {
+            $inserted++;
+        } else {
+            // Should rarely happen now that we check duplicates first
+            error_log( 'Address insert failed: ' . $wpdb->last_error );
+        }
+    }
+    
+    // Re-enable error reporting
+    $wpdb->suppress_errors( false );
+    
+    // Complete
+    update_option( 'subsales_upload_status', array(
+        'status' => 'complete',
+        'percent' => 100,
+        'status_text' => 'Processing complete',
+        'message' => "Successfully processed! Parsed {$count} addresses, inserted {$inserted} new records, skipped {$skipped} duplicates.",
+        'complete' => true,
+        'success' => true,
+        'parsed' => $count,
+        'inserted' => $inserted,
+        'skipped' => $skipped
+    ), false );
+}
+
+// Border-based ZIP assignment (100x faster than individual API calls)
+// Uses spatial point-in-polygon logic based on coordinate boundaries
+function subsales_assign_zips_by_borders( $addresses ) {
+    // Get configured ZIP codes and their boundaries
+    $served_zips = subsales_get_served_zips();
+    
+    if ( empty( $served_zips ) ) {
+        // No ZIPs configured - assign default Southington ZIP
+        foreach ( $addresses as &$addr ) {
+            $addr['zip'] = '06479'; // Default Southington
+            $addr['confidence'] = 'low';
+        }
+        return $addresses;
+    }
+    
+    // Get ZIP boundaries from database (if we have them) or use reverse geocoding for first pass
+    $zip_boundaries = subsales_get_zip_boundaries( $served_zips );
+    
+    if ( empty( $zip_boundaries ) ) {
+        // First time - build boundaries from reverse geocoding a sample
+        $zip_boundaries = subsales_build_zip_boundaries_from_sample( $addresses, $served_zips );
+    }
+    
+    // Assign ZIPs using spatial matching
+    foreach ( $addresses as &$addr ) {
+        $lat = floatval( $addr['lat'] );
+        $lng = floatval( $addr['lng'] );
+        
+        // Check which ZIP boundary contains this point
+        $matched_zip = null;
+        foreach ( $zip_boundaries as $zip => $bounds ) {
+            if ( subsales_point_in_bounds( $lat, $lng, $bounds ) ) {
+                $matched_zip = $zip;
+                break;
+            }
+        }
+        
+        if ( $matched_zip ) {
+            $addr['zip'] = $matched_zip;
+            $addr['confidence'] = 'high';
+        } else {
+            // Fallback: find nearest ZIP boundary
+            $addr['zip'] = subsales_find_nearest_zip( $lat, $lng, $zip_boundaries );
+            $addr['confidence'] = 'medium';
+        }
+    }
+    
+    return $addresses;
+}
+
+// Get or build ZIP boundaries (bounding boxes for fast spatial queries)
+function subsales_get_zip_boundaries( $zips ) {
+    $boundaries = get_option( 'subsales_zip_boundaries', array() );
+    
+    // Filter to only requested ZIPs
+    $result = array();
+    foreach ( $zips as $zip ) {
+        if ( isset( $boundaries[ $zip ] ) ) {
+            $result[ $zip ] = $boundaries[ $zip ];
+        }
+    }
+    
+    return $result;
+}
+
+// Build ZIP boundaries from a sample of addresses (one-time operation)
+function subsales_build_zip_boundaries_from_sample( $addresses, $served_zips ) {
+    $boundaries = array();
+    $sample_size = min( 50, count( $addresses ) ); // Sample 50 addresses
+    $samples = array_slice( $addresses, 0, $sample_size );
+    
+    // Reverse geocode sample to get initial ZIP assignments
+    $zip_points = array();
+    foreach ( $samples as $addr ) {
+        $lat = floatval( $addr['lat'] );
+        $lng = floatval( $addr['lng'] );
+        
+        if ( function_exists( 'order_sync_reverse_geocode' ) ) {
+            $zip = order_sync_reverse_geocode( $lat, $lng );
+            if ( $zip && in_array( $zip, $served_zips ) ) {
+                if ( ! isset( $zip_points[ $zip ] ) ) {
+                    $zip_points[ $zip ] = array();
+                }
+                $zip_points[ $zip ][] = array( 'lat' => $lat, 'lng' => $lng );
+            }
+        }
+    }
+    
+    // Calculate bounding boxes for each ZIP
+    foreach ( $zip_points as $zip => $points ) {
+        if ( count( $points ) < 2 ) continue;
+        
+        $lats = array_column( $points, 'lat' );
+        $lngs = array_column( $points, 'lng' );
+        
+        $boundaries[ $zip ] = array(
+            'min_lat' => min( $lats ) - 0.01, // Add small buffer
+            'max_lat' => max( $lats ) + 0.01,
+            'min_lng' => min( $lngs ) - 0.01,
+            'max_lng' => max( $lngs ) + 0.01,
+            'center_lat' => array_sum( $lats ) / count( $lats ),
+            'center_lng' => array_sum( $lngs ) / count( $lngs ),
+        );
+    }
+    
+    // Save for future use
+    update_option( 'subsales_zip_boundaries', $boundaries, false );
+    
+    return $boundaries;
+}
+
+// Check if a point is within bounding box
+function subsales_point_in_bounds( $lat, $lng, $bounds ) {
+    return $lat >= $bounds['min_lat'] && $lat <= $bounds['max_lat'] &&
+           $lng >= $bounds['min_lng'] && $lng <= $bounds['max_lng'];
+}
+
+// Find nearest ZIP boundary center (fallback for edge cases)
+function subsales_find_nearest_zip( $lat, $lng, $boundaries ) {
+    $nearest_zip = null;
+    $min_distance = PHP_FLOAT_MAX;
+    
+    foreach ( $boundaries as $zip => $bounds ) {
+        // Calculate distance to center of ZIP boundary
+        $distance = sqrt(
+            pow( $lat - $bounds['center_lat'], 2 ) +
+            pow( $lng - $bounds['center_lng'], 2 )
+        );
+        
+        if ( $distance < $min_distance ) {
+            $min_distance = $distance;
+            $nearest_zip = $zip;
+        }
+    }
+    
+    return $nearest_zip ?: '06479'; // Default to Southington if nothing found
+}
+
+// AJAX handler to get upload status
+add_action( 'wp_ajax_subsales_upload_status', 'subsales_upload_status_ajax' );
+function subsales_upload_status_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_upload_address', 'nonce' );
+    
+    $status = get_option( 'subsales_upload_status', array(
+        'status' => 'idle',
+        'percent' => 0,
+        'status_text' => 'Idle',
+        'message' => 'No upload in progress',
+        'complete' => true,
+        'success' => false
+    ) );
+    
+    wp_send_json_success( $status );
+}
+
+// AJAX handler to re-run ZIP assignment for all addresses
+add_action( 'wp_ajax_subsales_reassign_zips', 'subsales_reassign_zips_ajax' );
+function subsales_reassign_zips_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_reassign_zips', 'nonce' );
+    
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Get all addresses with coordinates
+    $addresses = $wpdb->get_results(
+        "SELECT * FROM {$addresses_table} WHERE lat IS NOT NULL AND lng IS NOT NULL",
+        ARRAY_A
+    );
+    
+    if ( empty( $addresses ) ) {
+        wp_send_json_error( 'No addresses with coordinates found.' );
+    }
+    
+    // Re-assign ZIP codes using border-based lookup
+    $addresses_with_zips = subsales_assign_zips_by_borders( $addresses );
+    
+    // Update addresses in database
+    $updated = 0;
+    $failed = 0;
+    
+    foreach ( $addresses_with_zips as $addr ) {
+        $result = $wpdb->update(
+            $addresses_table,
+            array(
+                'zip' => $addr['zip'],
+                'confidence' => $addr['confidence']
+            ),
+            array( 'id' => $addr['id'] ),
+            array( '%s', '%s' ),
+            array( '%d' )
+        );
+        
+        if ( $result !== false ) {
+            $updated++;
+        } else {
+            $failed++;
+        }
+    }
+    
+    wp_send_json_success( array(
+        'message' => "ZIP codes reassigned successfully!",
+        'total' => count( $addresses ),
+        'updated' => $updated,
+        'failed' => $failed
+    ) );
 }
 
 // Helper: generate a single ZIP file by querying Overpass API for nodes/ways with addr:postcode and addr:housenumber
@@ -2024,6 +2608,99 @@ function subsales_get_generation_logs( $limit = 10 ) {
     return array_slice( $logs, 0, $limit );
 }
 
+/**
+ * Generate ZIP code JSON files from database (Phase 7)
+ * Filters to residential addresses only for PWA consumption
+ * 
+ * @param array $zip_codes Array of ZIP codes to generate
+ * @return array Results with counts per ZIP
+ */
+function subsales_generate_zip_json_from_database( $zip_codes = null ) {
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Use configured ZIPs if none provided
+    if ( $zip_codes === null ) {
+        $zip_codes = get_option( 'subsales_served_zips', array() );
+        if ( ! is_array( $zip_codes ) ) {
+            $zip_codes = array_filter( array_map( 'trim', explode( ',', $zip_codes ) ) );
+        }
+    }
+    
+    if ( empty( $zip_codes ) ) {
+        return array( 'error' => 'No ZIP codes configured' );
+    }
+    
+    $upload = wp_upload_dir();
+    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
+    
+    // Ensure directory exists
+    if ( ! is_dir( $base_dir ) ) {
+        wp_mkdir_p( $base_dir );
+    }
+    
+    $results = array();
+    
+    foreach ( $zip_codes as $zip ) {
+        // Query RESIDENTIAL addresses only for this ZIP
+        $addresses = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$addresses_table} 
+             WHERE zip = %s 
+             AND type = 'residential'
+             ORDER BY street, house_number",
+            $zip
+        ), ARRAY_A );
+        
+        // Format for PWA compatibility
+        $formatted = array();
+        foreach ( $addresses as $addr ) {
+            $label_parts = array( $addr['house_number'] . ' ' . $addr['street'] );
+            if ( ! empty( $addr['unit'] ) ) {
+                $label_parts[0] .= ' Unit ' . $addr['unit'];
+            }
+            if ( ! empty( $addr['city'] ) ) {
+                $label_parts[] = $addr['city'];
+            }
+            if ( ! empty( $addr['state'] ) ) {
+                $label_parts[] = $addr['state'];
+            }
+            $label_parts[] = $addr['zip'];
+            
+            $formatted[] = array(
+                'id' => 'db-' . $addr['id'],
+                'label' => implode( ', ', $label_parts ),
+                'street' => $addr['street'],
+                'housenumber' => $addr['house_number'],
+                'unit' => $addr['unit'],
+                'floor' => '',
+                'door' => '',
+                'housename' => '',
+                'city' => $addr['city'],
+                'state' => $addr['state'],
+                'zip' => $addr['zip'],
+                'lat' => (float) $addr['lat'],
+                'lng' => (float) $addr['lng']
+            );
+        }
+        
+        // Write JSON file
+        $file_path = trailingslashit( $base_dir ) . $zip . '.json';
+        $written = file_put_contents( $file_path, wp_json_encode( $formatted, JSON_PRETTY_PRINT ) );
+        
+        $results[ $zip ] = array(
+            'count' => count( $formatted ),
+            'file' => $file_path,
+            'bytes' => $written,
+            'source' => 'database'
+        );
+    }
+    
+    // Update zip-index.json
+    subsales_update_zip_index();
+    
+    return $results;
+}
+
 // Enqueue admin assets for settings page (media uploader for header image)
 add_action( 'admin_enqueue_scripts', 'order_sync_admin_assets' );
 function order_sync_admin_assets( $hook ) {
@@ -2045,6 +2722,9 @@ function order_sync_admin_assets( $hook ) {
         'searchNonce' => wp_create_nonce( 'subsales_address_search' ),
         'refreshIndexNonce' => wp_create_nonce( 'subsales_refresh_index' ),
         'matchNonce' => wp_create_nonce( 'subsales_match_addresses' ),
+        'bgMatchNonce' => wp_create_nonce( 'subsales_bg_match' ),
+        'uploadNonce' => wp_create_nonce( 'subsales_upload_address' ),
+        'reassignZipsNonce' => wp_create_nonce( 'subsales_reassign_zips' ),
     ) );
 }
 
@@ -2189,6 +2869,7 @@ function order_sync_fetch_orders_ajax() {
     $payment_method = isset( $_POST['payment_method'] ) ? sanitize_text_field( $_POST['payment_method'] ) : '';
     $tally_status = isset( $_POST['tally_status'] ) ? sanitize_text_field( $_POST['tally_status'] ) : 'all';
     $show_deleted = isset( $_POST['show_deleted'] ) && $_POST['show_deleted'] === '1';
+    $search_query = isset( $_POST['search_query'] ) ? sanitize_text_field( $_POST['search_query'] ) : '';
     $page = isset( $_POST['page'] ) ? max(1,intval($_POST['page'])) : 1;
     $page_size = isset( $_POST['page_size'] ) ? intval( $_POST['page_size'] ) : 100;
     if ( $page_size <= 0 || $page_size > 100 ) $page_size = 100;
@@ -2208,6 +2889,16 @@ function order_sync_fetch_orders_ajax() {
         $where[] = "tallied = 1";
     }
     // 'all' means no tally filter
+    
+    // Quick search filter (customer name, address, or phone)
+    if ( ! empty( $search_query ) ) {
+        $search_like = '%' . $wpdb->esc_like( $search_query ) . '%';
+        $where[] = "(order_data LIKE %s OR order_data LIKE %s OR order_data LIKE %s)";
+        // Search in customer, address, and cellNumber fields
+        $params[] = '%' . $wpdb->esc_like( '"customer"' ) . '%' . $wpdb->esc_like( $search_query ) . '%';
+        $params[] = '%' . $wpdb->esc_like( '"address"' ) . '%' . $wpdb->esc_like( $search_query ) . '%';
+        $params[] = '%' . $wpdb->esc_like( '"cellNumber"' ) . '%' . $wpdb->esc_like( $search_query ) . '%';
+    }
 
     if ( ! empty( $start_date ) ) {
         $where[] = "created_at >= %s";
@@ -2485,7 +3176,10 @@ function order_sync_run_init_ajax() {
     // Save ZIP codes if provided
     $zip_codes = isset( $_POST['zip_codes'] ) ? sanitize_text_field( $_POST['zip_codes'] ) : '';
     if ( ! empty( $zip_codes ) ) {
-        update_option( 'subsales_served_zips', $zip_codes );
+        // Convert comma-separated string to array
+        $zip_array = array_map( 'trim', explode( ',', $zip_codes ) );
+        $zip_array = array_filter( $zip_array ); // Remove empty values
+        update_option( 'subsales_served_zips', $zip_array );
     }
 
     // Products
@@ -3341,7 +4035,9 @@ function order_sync_admin_export_settings() {
     if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
     check_admin_referer( 'subsales_export_nonce' );
     $keys = array(
-        'order_sync_portal_slug','order_sync_google_maps_api_key','subsales_branding','order_sync_products','order_sync_primary_color','order_sync_style_variant'
+        'order_sync_portal_slug','order_sync_google_maps_api_key','subsales_branding','order_sync_products',
+        'order_sync_primary_color','order_sync_style_variant','order_sync_interval','order_sync_session_duration',
+        'order_sync_login_mode','subsales_header_image','subsales_served_zipcodes','subsales_delete_on_uninstall'
     );
     header( 'Content-Type: text/csv; charset=utf-8' );
     header( 'Content-Disposition: attachment; filename=subsales-settings-' . date('Ymd_His') . '.csv' );
@@ -3356,6 +4052,85 @@ function order_sync_admin_export_settings() {
     exit;
 }
 
+// Export teams CSV
+add_action( 'admin_post_subsales_export_teams', 'subsales_export_teams_csv' );
+function subsales_export_teams_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    check_admin_referer( 'subsales_export_nonce' );
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_teams';
+    $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=subsales-teams-' . date('Ymd_His') . '.csv' );
+    $out = fopen( 'php://output', 'w' );
+    fputcsv( $out, array( 'id','team_name','access_code','created_at' ) );
+    foreach ( $rows as $r ) {
+        fputcsv( $out, array( $r['id'], $r['team_name'], $r['access_code'], $r['created_at'] ) );
+    }
+    fclose( $out );
+    exit;
+}
+
+// Export team members CSV
+add_action( 'admin_post_subsales_export_members', 'subsales_export_members_csv' );
+function subsales_export_members_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    check_admin_referer( 'subsales_export_nonce' );
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_team_members';
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    // Get all members with their team assignments
+    $rows = $wpdb->get_results( "
+        SELECT m.*, GROUP_CONCAT(ut.team_id) as team_ids
+        FROM {$table} m
+        LEFT JOIN {$user_teams_table} ut ON m.id = ut.user_id
+        GROUP BY m.id
+        ORDER BY m.id ASC
+    ", ARRAY_A );
+
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=subsales-members-' . date('Ymd_His') . '.csv' );
+    $out = fopen( 'php://output', 'w' );
+    fputcsv( $out, array( 'id','name','phone','email','team_ids','created_at' ) );
+    foreach ( $rows as $r ) {
+        fputcsv( $out, array( $r['id'], $r['name'], $r['phone'], $r['email'] ?? '', $r['team_ids'] ?? '', $r['created_at'] ) );
+    }
+    fclose( $out );
+    exit;
+}
+
+// Export addresses CSV
+add_action( 'admin_post_subsales_export_addresses', 'subsales_export_addresses_csv' );
+function subsales_export_addresses_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    check_admin_referer( 'subsales_export_nonce' );
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_addresses';
+    $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC LIMIT 50000", ARRAY_A );
+
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=subsales-addresses-' . date('Ymd_His') . '.csv' );
+    $out = fopen( 'php://output', 'w' );
+    fputcsv( $out, array( 'id','address','city','state','zip','lat','lng','source','created_at' ) );
+    foreach ( $rows as $r ) {
+        fputcsv( $out, array( 
+            $r['id'], 
+            $r['address'] ?? '', 
+            $r['city'] ?? '', 
+            $r['state'] ?? '', 
+            $r['zip'] ?? '', 
+            $r['lat'] ?? '', 
+            $r['lng'] ?? '', 
+            $r['source'] ?? '', 
+            $r['created_at'] ?? ''
+        ) );
+    }
+    fclose( $out );
+    exit;
+}
+
 // Admin-post handler: export combined backup (orders + settings) as a ZIP
 add_action( 'admin_post_subsales_export_backup_combined', 'order_sync_admin_export_backup_combined' );
 function order_sync_admin_export_backup_combined() {
@@ -3363,32 +4138,81 @@ function order_sync_admin_export_backup_combined() {
     check_admin_referer( 'subsales_export_nonce' );
 
     global $wpdb;
-    // Build orders CSV in-memory
+    
+    // Helper function to build CSV in-memory
+    $build_csv = function( $headers, $rows ) {
+        $out = fopen('php://temp', 'r+');
+        fputcsv( $out, $headers );
+        foreach ( $rows as $r ) {
+            fputcsv( $out, $r );
+        }
+        rewind( $out );
+        $csv = stream_get_contents( $out );
+        fclose( $out );
+        return $csv;
+    };
+    
+    // Build orders CSV
     $orders_table = $wpdb->prefix . 'ss_orders';
-    $rows = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY created_at DESC", ARRAY_A );
-    $out = fopen('php://temp', 'r+');
-    fputcsv( $out, array( 'id','order_id','user_id','team_id','order_data','sync_status','created_at','updated_at' ) );
-    foreach ( $rows as $r ) {
-        fputcsv( $out, array( $r['id'], $r['order_id'], $r['user_id'], $r['team_id'], $r['order_data'], $r['sync_status'], $r['created_at'], $r['updated_at'] ) );
-    }
-    rewind( $out );
-    $orders_csv = stream_get_contents( $out );
-    fclose( $out );
-
-    // Build settings CSV in-memory
-    $keys = array(
-        'order_sync_portal_slug','order_sync_google_maps_api_key','subsales_branding','order_sync_products','order_sync_primary_color','order_sync_style_variant'
+    $orders = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY created_at DESC", ARRAY_A );
+    $orders_csv = $build_csv( 
+        array( 'id','order_id','user_id','team_id','order_data','sync_status','created_at','updated_at' ),
+        array_map( function($r) {
+            return array( $r['id'], $r['order_id'], $r['user_id'], $r['team_id'], $r['order_data'], $r['sync_status'], $r['created_at'], $r['updated_at'] );
+        }, $orders )
     );
-    $out2 = fopen('php://temp', 'r+');
-    fputcsv( $out2, array( 'option_key','option_value' ) );
-    foreach ( $keys as $k ) {
-        $v = get_option( $k );
-        if ( is_array( $v ) || is_object( $v ) ) $v = wp_json_encode( $v );
-        fputcsv( $out2, array( $k, $v ) );
-    }
-    rewind( $out2 );
-    $settings_csv = stream_get_contents( $out2 );
-    fclose( $out2 );
+
+    // Build teams CSV
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $teams = $wpdb->get_results( "SELECT * FROM {$teams_table} ORDER BY id ASC", ARRAY_A );
+    $teams_csv = $build_csv(
+        array( 'id','team_name','access_code','created_at' ),
+        array_map( function($r) {
+            return array( $r['id'], $r['team_name'], $r['access_code'], $r['created_at'] );
+        }, $teams )
+    );
+    
+    // Build members CSV (with team assignments)
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    $members = $wpdb->get_results( "
+        SELECT m.*, GROUP_CONCAT(ut.team_id) as team_ids
+        FROM {$members_table} m
+        LEFT JOIN {$user_teams_table} ut ON m.id = ut.user_id
+        GROUP BY m.id
+        ORDER BY m.id ASC
+    ", ARRAY_A );
+    $members_csv = $build_csv(
+        array( 'id','name','phone','email','team_ids','created_at' ),
+        array_map( function($r) {
+            return array( $r['id'], $r['name'], $r['phone'], $r['email'] ?? '', $r['team_ids'] ?? '', $r['created_at'] );
+        }, $members )
+    );
+    
+    // Build addresses CSV (limit to 50k for performance)
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    $addresses = $wpdb->get_results( "SELECT * FROM {$addresses_table} ORDER BY id ASC LIMIT 50000", ARRAY_A );
+    $addresses_csv = $build_csv(
+        array( 'id','address','city','state','zip','lat','lng','source','created_at' ),
+        array_map( function($r) {
+            return array( $r['id'], $r['address'] ?? '', $r['city'] ?? '', $r['state'] ?? '', $r['zip'] ?? '', $r['lat'] ?? '', $r['lng'] ?? '', $r['source'] ?? '', $r['created_at'] ?? '' );
+        }, $addresses )
+    );
+
+    // Build settings CSV
+    $keys = array(
+        'order_sync_portal_slug','order_sync_google_maps_api_key','subsales_branding','order_sync_products',
+        'order_sync_primary_color','order_sync_style_variant','order_sync_interval','order_sync_session_duration',
+        'order_sync_login_mode','subsales_header_image','subsales_served_zipcodes','subsales_delete_on_uninstall'
+    );
+    $settings_csv = $build_csv(
+        array( 'option_key','option_value' ),
+        array_map( function($k) {
+            $v = get_option( $k );
+            if ( is_array( $v ) || is_object( $v ) ) $v = wp_json_encode( $v );
+            return array( $k, $v );
+        }, $keys )
+    );
 
     // Create ZIP in temp file
     $zipname = sys_get_temp_dir() . '/subsales-backup-' . time() . '.zip';
@@ -3397,6 +4221,9 @@ function order_sync_admin_export_backup_combined() {
         wp_die( 'Could not create zip' );
     }
     $za->addFromString( 'orders.csv', $orders_csv );
+    $za->addFromString( 'teams.csv', $teams_csv );
+    $za->addFromString( 'members.csv', $members_csv );
+    $za->addFromString( 'addresses.csv', $addresses_csv );
     $za->addFromString( 'settings.csv', $settings_csv );
     $za->close();
 
@@ -3423,7 +4250,18 @@ function order_sync_admin_import_backup() {
 
     $result = order_sync_process_import_file( $tmp, $update_existing );
 
-    $msg = sprintf( 'Imported=%d, Updated=%d, Skipped=%d', $result['imported'], $result['updated'], $result['skipped'] );
+    $msg_parts = array();
+    $msg_parts[] = sprintf( 'Imported=%d', $result['imported'] );
+    $msg_parts[] = sprintf( 'Updated=%d', $result['updated'] );
+    $msg_parts[] = sprintf( 'Skipped=%d', $result['skipped'] );
+    if ( isset( $result['geocoded'] ) && $result['geocoded'] > 0 ) {
+        $msg_parts[] = sprintf( 'Geocoded=%d', $result['geocoded'] );
+    }
+    if ( isset( $result['zip_corrected'] ) && $result['zip_corrected'] > 0 ) {
+        $msg_parts[] = sprintf( 'ZIPs_Corrected=%d', $result['zip_corrected'] );
+    }
+    $msg = implode( ', ', $msg_parts );
+    
     // Suppress onboarding modal on the immediate redirect after an import/restore
     set_transient( 'subsales_suppress_onboarding', true, 30 );
     wp_redirect( add_query_arg( 'subsales_import_result', rawurlencode($msg), wp_get_referer() ) ); exit;
@@ -3432,21 +4270,24 @@ function order_sync_admin_import_backup() {
 // Reusable import processor: accepts a path to uploaded file (tmp) and returns totals/errors
 function order_sync_process_import_file( $tmp, $update_existing = false ) {
     $total_imported = 0; $total_updated = 0; $total_skipped = 0; $total_errors = array();
+    $geocoded_count = 0; $zip_corrections = 0;
+    global $wpdb;
 
-    // Helper to process a CSV file path. Returns array(imported, updated, skipped, errors)
-    $process_csv = function( $filepath, $update_existing ) {
-        $imported = 0; $updated = 0; $skipped = 0; $errors = array();
-        if ( ! file_exists( $filepath ) ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('file_missing') );
+    // Helper to process a CSV file path. Returns array(imported, updated, skipped, errors, geocoded, zip_corrected)
+    $process_csv = function( $filepath, $update_existing ) use ( $wpdb ) {
+        $imported = 0; $updated = 0; $skipped = 0; $errors = array(); $geocoded = 0; $zip_corrected = 0;
+        if ( ! file_exists( $filepath ) ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('file_missing'),'geocoded'=>0,'zip_corrected'=>0 );
         $handle = fopen( $filepath, 'r' );
-        if ( ! $handle ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('openfail') );
+        if ( ! $handle ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('openfail'),'geocoded'=>0,'zip_corrected'=>0 );
         $header = fgetcsv( $handle );
-        if ( ! $header ) { fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('invalid') ); }
+        if ( ! $header ) { fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('invalid'),'geocoded'=>0,'zip_corrected'=>0 ); }
         $lower = array_map('strtolower',$header);
-        global $wpdb;
-        $orders_table = $wpdb->prefix . 'ss_orders';
-
+        $map = array(); foreach ( $header as $i => $h ) $map[strtolower($h)] = $i;
+        
+        // Detect table type by headers
         if ( in_array( 'order_id', $lower ) ) {
-            $map = array(); foreach ( $header as $i => $h ) $map[strtolower($h)] = $i;
+            // Orders table
+            $table = $wpdb->prefix . 'ss_orders';
             while ( ($row = fgetcsv( $handle )) !== false ) {
                 $order_id = isset( $map['order_id'] ) ? $row[$map['order_id']] : '';
                 if ( empty( $order_id ) ) { $skipped++; continue; }
@@ -3455,19 +4296,147 @@ function order_sync_process_import_file( $tmp, $update_existing = false ) {
                 $order_data = isset( $map['order_data'] ) ? $row[$map['order_data']] : '{}';
                 $sync_status = isset( $map['sync_status'] ) ? $row[$map['sync_status']] : 'synced';
                 $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$orders_table} WHERE order_id = %s", $order_id ) );
+                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE order_id = %s", $order_id ) );
                 if ( $existing ) {
                     if ( $update_existing ) {
-                        $res = $wpdb->update( $orders_table, array( 'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'updated_at'=>current_time('mysql') ), array( 'order_id'=>$order_id ), array('%s','%d','%s','%s','%s'), array('%s') );
+                        $res = $wpdb->update( $table, array( 'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'updated_at'=>current_time('mysql') ), array( 'order_id'=>$order_id ), array('%s','%d','%s','%s','%s'), array('%s') );
                         if ( $res !== false ) $updated++; else $skipped++;
                     } else { $skipped++; }
                 } else {
-                    $ins = $wpdb->insert( $orders_table, array( 'order_id'=>$order_id,'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'created_at'=>$created_at ), array('%s','%s','%d','%s','%s','%s') );
+                    $ins = $wpdb->insert( $table, array( 'order_id'=>$order_id,'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'created_at'=>$created_at ), array('%s','%s','%d','%s','%s','%s') );
+                    if ( $ins !== false ) $imported++; else $skipped++;
+                }
+            }
+        } else if ( in_array( 'team_name', $lower ) ) {
+            // Teams table
+            $table = $wpdb->prefix . 'ss_teams';
+            while ( ($row = fgetcsv( $handle )) !== false ) {
+                $team_name = isset( $map['team_name'] ) ? $row[$map['team_name']] : '';
+                if ( empty( $team_name ) ) { $skipped++; continue; }
+                $access_code = isset( $map['access_code'] ) ? $row[$map['access_code']] : '';
+                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
+                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE team_name = %s", $team_name ) );
+                if ( $existing ) {
+                    if ( $update_existing ) {
+                        $res = $wpdb->update( $table, array( 'access_code'=>$access_code ), array( 'team_name'=>$team_name ), array('%s'), array('%s') );
+                        if ( $res !== false ) $updated++; else $skipped++;
+                    } else { $skipped++; }
+                } else {
+                    $ins = $wpdb->insert( $table, array( 'team_name'=>$team_name,'access_code'=>$access_code,'created_at'=>$created_at ), array('%s','%s','%s') );
+                    if ( $ins !== false ) $imported++; else $skipped++;
+                }
+            }
+        } else if ( in_array( 'phone', $lower ) && in_array( 'name', $lower ) ) {
+            // Team members table
+            $members_table = $wpdb->prefix . 'ss_team_members';
+            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+            while ( ($row = fgetcsv( $handle )) !== false ) {
+                $name = isset( $map['name'] ) ? $row[$map['name']] : '';
+                $phone = isset( $map['phone'] ) ? $row[$map['phone']] : '';
+                if ( empty( $name ) || empty( $phone ) ) { $skipped++; continue; }
+                $email = isset( $map['email'] ) ? $row[$map['email']] : '';
+                $team_ids = isset( $map['team_ids'] ) ? $row[$map['team_ids']] : '';
+                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
+                
+                // Check if member exists by phone (unique)
+                $existing_id = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$members_table} WHERE phone = %s", $phone ) );
+                if ( $existing_id ) {
+                    if ( $update_existing ) {
+                        $res = $wpdb->update( $members_table, array( 'name'=>$name,'email'=>$email ), array( 'id'=>$existing_id ), array('%s','%s'), array('%d') );
+                        if ( $res !== false ) $updated++; else $skipped++;
+                        $user_id = $existing_id;
+                    } else {
+                        $skipped++;
+                        continue;
+                    }
+                } else {
+                    $ins = $wpdb->insert( $members_table, array( 'name'=>$name,'phone'=>$phone,'email'=>$email,'created_at'=>$created_at ), array('%s','%s','%s','%s') );
+                    if ( $ins !== false ) {
+                        $imported++;
+                        $user_id = $wpdb->insert_id;
+                    } else {
+                        $skipped++;
+                        continue;
+                    }
+                }
+                
+                // Handle team assignments (team_ids is comma-separated list)
+                if ( ! empty( $team_ids ) && $user_id ) {
+                    $wpdb->query( $wpdb->prepare( "DELETE FROM {$user_teams_table} WHERE user_id = %d", $user_id ) );
+                    $team_ids_array = explode( ',', $team_ids );
+                    foreach ( $team_ids_array as $tid ) {
+                        $tid = intval( trim( $tid ) );
+                        if ( $tid > 0 ) {
+                            $wpdb->insert( $user_teams_table, array( 'user_id'=>$user_id,'team_id'=>$tid ), array('%d','%d') );
+                        }
+                    }
+                }
+            }
+        } else if ( in_array( 'address', $lower ) && in_array( 'zip', $lower ) ) {
+            // Addresses table
+            $table = $wpdb->prefix . 'ss_addresses';
+            while ( ($row = fgetcsv( $handle )) !== false ) {
+                $address = isset( $map['address'] ) ? $row[$map['address']] : '';
+                $city = isset( $map['city'] ) ? $row[$map['city']] : 'Southington';
+                $state = isset( $map['state'] ) ? $row[$map['state']] : 'CT';
+                $zip = isset( $map['zip'] ) ? $row[$map['zip']] : '';
+                if ( empty( $address ) || empty( $zip ) ) { $skipped++; continue; }
+                
+                // Parse street/house_number from address (simple split)
+                $street = $address;
+                $house_number = '';
+                if ( preg_match( '/^(\d+[A-Za-z]?)\s+(.+)$/', $address, $matches ) ) {
+                    $house_number = $matches[1];
+                    $street = $matches[2];
+                }
+                
+                $unit = isset( $map['unit'] ) ? $row[$map['unit']] : '';
+                $lat = isset( $map['lat'] ) ? $row[$map['lat']] : null;
+                $lng = isset( $map['lng'] ) ? $row[$map['lng']] : null;
+                $source = isset( $map['source'] ) ? $row[$map['source']] : 'csv';
+                $type = isset( $map['type'] ) ? $row[$map['type']] : 'residential';
+                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
+                
+                // Auto-geocode if coordinates are missing
+                if ( ( empty( $lat ) || empty( $lng ) ) && function_exists( 'order_sync_geocode_address' ) ) {
+                    $full_address = trim( $address . ', ' . $city . ', ' . $state . ' ' . $zip );
+                    $coords = order_sync_geocode_address( $full_address );
+                    if ( $coords && isset( $coords['lat'] ) && isset( $coords['lng'] ) ) {
+                        $lat = $coords['lat'];
+                        $lng = $coords['lng'];
+                        if ( $source === 'csv' ) $source = 'geocoded';
+                        $geocoded++;
+                    }
+                }
+                
+                // Validate ZIP against coordinates (if we have both)
+                $original_zip = $zip;
+                if ( ! empty( $lat ) && ! empty( $lng ) && function_exists( 'order_sync_reverse_geocode' ) ) {
+                    $geocoded_zip = order_sync_reverse_geocode( $lat, $lng );
+                    if ( $geocoded_zip && $geocoded_zip !== $zip ) {
+                        // ZIP mismatch - use coordinate-based ZIP as authoritative
+                        $zip = $geocoded_zip;
+                        if ( strpos( $source, 'corrected' ) === false ) {
+                            $source = $source . '_zip_corrected';
+                        }
+                        $zip_corrected++;
+                    }
+                }
+                
+                // Check if address exists (by street, house_number, zip)
+                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE street = %s AND house_number = %s AND zip = %s", $street, $house_number, $zip ) );
+                if ( $existing ) {
+                    if ( $update_existing ) {
+                        $res = $wpdb->update( $table, array( 'city'=>$city,'state'=>$state,'lat'=>$lat,'lng'=>$lng,'source'=>$source,'unit'=>$unit,'type'=>$type,'full_address'=>$address ), array( 'id'=>$existing ), array('%s','%s','%s','%s','%s','%s','%s','%s'), array('%d') );
+                        if ( $res !== false ) $updated++; else $skipped++;
+                    } else { $skipped++; }
+                } else {
+                    $ins = $wpdb->insert( $table, array( 'street'=>$street,'house_number'=>$house_number,'unit'=>$unit,'city'=>$city,'state'=>$state,'zip'=>$zip,'lat'=>$lat,'lng'=>$lng,'source'=>$source,'type'=>$type,'full_address'=>$address,'created_at'=>$created_at ), array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s') );
                     if ( $ins !== false ) $imported++; else $skipped++;
                 }
             }
         } else if ( in_array( 'option_key', $lower ) || in_array( 'key', $lower ) ) {
-            $map = array(); foreach ( $header as $i => $h ) $map[strtolower($h)] = $i;
+            // Settings (options)
             while ( ($row = fgetcsv( $handle )) !== false ) {
                 $key = isset( $map['option_key'] ) ? $row[$map['option_key']] : ( isset($map['key']) ? $row[$map['key']] : '' );
                 $val = isset( $map['option_value'] ) ? $row[$map['option_value']] : ( isset($map['value']) ? $row[$map['value']] : '' );
@@ -3478,11 +4447,11 @@ function order_sync_process_import_file( $tmp, $update_existing = false ) {
                 $imported++;
             }
         } else {
-            fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('unknownformat') );
+            fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('unknownformat'),'geocoded'=>0,'zip_corrected'=>0 );
         }
 
         fclose( $handle );
-        return array( 'imported'=>$imported,'updated'=>$updated,'skipped'=>$skipped,'errors'=>$errors );
+        return array( 'imported'=>$imported,'updated'=>$updated,'skipped'=>$skipped,'errors'=>$errors,'geocoded'=>$geocoded,'zip_corrected'=>$zip_corrected );
     };
 
     // If the uploaded file is a zip, extract and process contained CSVs
@@ -3507,6 +4476,8 @@ function order_sync_process_import_file( $tmp, $update_existing = false ) {
                     $total_imported += $res['imported'];
                     $total_updated += $res['updated'];
                     $total_skipped += $res['skipped'];
+                    $geocoded_count += isset( $res['geocoded'] ) ? $res['geocoded'] : 0;
+                    $zip_corrections += isset( $res['zip_corrected'] ) ? $res['zip_corrected'] : 0;
                     if ( ! empty( $res['errors'] ) ) $total_errors = array_merge( $total_errors, $res['errors'] );
                 }
             }
@@ -3517,10 +4488,12 @@ function order_sync_process_import_file( $tmp, $update_existing = false ) {
         $total_imported += $res['imported'];
         $total_updated += $res['updated'];
         $total_skipped += $res['skipped'];
+        $geocoded_count += isset( $res['geocoded'] ) ? $res['geocoded'] : 0;
+        $zip_corrections += isset( $res['zip_corrected'] ) ? $res['zip_corrected'] : 0;
         if ( ! empty( $res['errors'] ) ) $total_errors = array_merge( $total_errors, $res['errors'] );
     }
 
-    return array( 'imported'=>$total_imported, 'updated'=>$total_updated, 'skipped'=>$total_skipped, 'errors'=>$total_errors );
+    return array( 'imported'=>$total_imported, 'updated'=>$total_updated, 'skipped'=>$total_skipped, 'errors'=>$total_errors, 'geocoded'=>$geocoded_count, 'zip_corrected'=>$zip_corrections );
 }
 
 // Admin-post handler: destructive restore (clear plugin data then import uploaded CSV/ZIP)
@@ -3532,11 +4505,11 @@ function order_sync_admin_restore_and_import() {
         wp_redirect( add_query_arg( 'subsales_import_error', 'nofile', wp_get_referer() ) ); exit;
     }
 
-    // Determine clear scope: orders, settings, or both (default: both)
+    // Determine clear scope: data, settings, or both (default: both)
     $restore_target = isset( $_POST['restore_target'] ) ? sanitize_text_field( $_POST['restore_target'] ) : 'both';
     if ( $restore_target === 'both' ) {
         if ( function_exists( 'order_sync_clear_data' ) ) order_sync_clear_data();
-    } else if ( $restore_target === 'orders' ) {
+    } else if ( $restore_target === 'data' ) {
         if ( function_exists( 'order_sync_clear_orders' ) ) order_sync_clear_orders();
     } else if ( $restore_target === 'settings' ) {
         if ( function_exists( 'order_sync_clear_settings' ) ) order_sync_clear_settings();
@@ -4069,13 +5042,15 @@ function order_sync_ensure_pwa_page( $slug = 'subsales-portal' ) {
     return Subsales_PWA::ensure_pwa_page( $slug );
 }
 
-// Clear only orders/teams/members tables (preserves options)
+// Clear only orders/teams/members/addresses tables (preserves options)
 function order_sync_clear_orders() {
     global $wpdb;
     $tables = array(
         $wpdb->prefix . 'ss_orders',
         $wpdb->prefix . 'ss_teams',
-        $wpdb->prefix . 'ss_team_members'
+        $wpdb->prefix . 'ss_team_members',
+        $wpdb->prefix . 'ss_user_teams',
+        $wpdb->prefix . 'ss_addresses'
     );
 
     foreach ( $tables as $table ) {
@@ -4098,9 +5073,11 @@ function order_sync_clear_settings() {
         'order_sync_session_duration',
         'order_sync_style_variant',
         'order_sync_primary_color',
+        'order_sync_login_mode',
         'subsales_branding',
         'subsales_delete_on_uninstall',
-        'subsales_header_image'
+        'subsales_header_image',
+        'subsales_served_zipcodes'
     );
 
     foreach ( $option_keys as $ok ) {
@@ -4122,7 +5099,9 @@ function subsales_uninstall() {
     $tables = array(
         $wpdb->prefix . 'ss_orders',
         $wpdb->prefix . 'ss_teams',
-        $wpdb->prefix . 'ss_team_members'
+        $wpdb->prefix . 'ss_team_members',
+        $wpdb->prefix . 'ss_user_teams',
+        $wpdb->prefix . 'ss_addresses'
     );
 
     foreach ( $tables as $table ) {
@@ -4465,6 +5444,34 @@ function order_sync_geocode_address( $address ) {
     }
 }
 
+// Reverse geocode: Get ZIP code from lat/lng coordinates
+function order_sync_reverse_geocode( $lat, $lng ) {
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    if ( empty( $api_key ) ) return null;
+
+    $url = 'https://maps.googleapis.com/maps/api/geocode/json?latlng=' . floatval($lat) . ',' . floatval($lng) . '&key=' . rawurlencode( $api_key );
+    $resp = wp_remote_get( $url, array( 'timeout' => 10 ) );
+    if ( is_wp_error( $resp ) ) return null;
+    
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    
+    if ( ! is_array( $json ) || ! isset( $json['status'] ) || $json['status'] !== 'OK' ) {
+        return null;
+    }
+    
+    // Extract ZIP code from address components
+    if ( ! empty( $json['results'][0]['address_components'] ) ) {
+        foreach ( $json['results'][0]['address_components'] as $component ) {
+            if ( in_array( 'postal_code', $component['types'] ) ) {
+                return $component['short_name'];
+            }
+        }
+    }
+    
+    return null;
+}
+
 // Address Extracts admin page
 function subsales_address_extracts_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -4479,128 +5486,6 @@ function subsales_address_extracts_page() {
     if ( isset( $_POST['run_overpass_matching'] ) && check_admin_referer( 'subsales_overpass_matching' ) ) {
         $limit = isset( $_POST['match_limit'] ) ? intval( $_POST['match_limit'] ) : 100;
         $matching_result = Subsales_Overpass_Matcher::match_addresses( $limit );
-    }
-    
-    // Handle file upload
-    $upload_message = '';
-    $upload_error = '';
-    $processing_status = array();
-    
-    if ( isset( $_POST['upload_file'] ) && check_admin_referer( 'subsales_upload_address_file' ) ) {
-        if ( isset( $_FILES['address_file'] ) && $_FILES['address_file']['error'] === UPLOAD_ERR_OK ) {
-            $file = $_FILES['address_file'];
-            $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
-            
-            // Detect file type
-            if ( $file_ext === 'zip' ) {
-                // Check if it's a shapefile (contains .shp, .dbf, .prj)
-                $zip = new ZipArchive();
-                if ( $zip->open( $file['tmp_name'] ) === true ) {
-                    $has_shp = false;
-                    $has_dbf = false;
-                    $has_prj = false;
-                    
-                    for ( $i = 0; $i < $zip->numFiles; $i++ ) {
-                        $filename = $zip->getNameIndex( $i );
-                        $ext = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
-                        if ( $ext === 'shp' ) $has_shp = true;
-                        if ( $ext === 'dbf' ) $has_dbf = true;
-                        if ( $ext === 'prj' ) $has_prj = true;
-                    }
-                    
-                    $zip->close();
-                    
-                    if ( $has_shp && $has_dbf && $has_prj ) {
-                        $processing_status['file_type'] = 'shapefile';
-                        $processing_status['status'] = 'processing';
-                        
-                        // Process shapefile
-                        $result = Subsales_Shapefile_Parser::parse_shapefile( $file['tmp_name'] );
-                        
-                        if ( is_wp_error( $result ) ) {
-                            $upload_error = '❌ Shapefile parsing failed: ' . $result->get_error_message();
-                            $processing_status['status'] = 'error';
-                        } else {
-                            $addresses_parsed = $result;
-                            $count = count( $addresses_parsed );
-                            
-                            // Store addresses in database (ZIP will be assigned by Overpass in Phase 4)
-                            $inserted = 0;
-                            $skipped = 0;
-                            
-                            // Suppress duplicate key errors by using wpdb->suppress_errors()
-                            $wpdb->suppress_errors( true );
-                            
-                            foreach ( $addresses_parsed as $addr ) {
-                                // Insert into database (duplicates will fail silently)
-                                // ZIP code left NULL - will be assigned after Overpass matching in Phase 4
-                                // NOTE: We omit 'zip' from the insert since it's NULL and wpdb doesn't handle NULL well with format strings
-                                $insert_result = $wpdb->insert(
-                                    $addresses_table,
-                                    array(
-                                        'street' => $addr['street'],
-                                        'house_number' => $addr['house_number'],
-                                        'unit' => $addr['unit'],
-                                        'city' => $addr['city'],
-                                        'state' => $addr['state'],
-                                        'lat' => $addr['lat'],
-                                        'lng' => $addr['lng'],
-                                        'source' => $addr['source'],
-                                        'confidence' => $addr['confidence'],
-                                        'matched' => $addr['matched'],
-                                        'type' => $addr['type'],
-                                        'full_address' => $addr['full_address']
-                                    ),
-                                    array( '%s', '%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s', '%d', '%s', '%s' )
-                                );
-                                
-                                if ( $insert_result ) {
-                                    $inserted++;
-                                } else {
-                                    // Check if it was a duplicate (errno 1062)
-                                    if ( strpos( $wpdb->last_error, 'Duplicate entry' ) !== false ) {
-                                        $skipped++; // Duplicate address - UNIQUE constraint prevented it
-                                    } else {
-                                        // Some other error - log it
-                                        error_log( 'Address insert failed: ' . $wpdb->last_error );
-                                    }
-                                }
-                            }
-                            
-                            // Re-enable error reporting
-                            $wpdb->suppress_errors( false );
-                            
-                            $processing_status['status'] = 'complete';
-                            $processing_status['parsed'] = $count;
-                            $processing_status['inserted'] = $inserted;
-                            $processing_status['skipped'] = $skipped;
-                            
-                            $upload_message = sprintf(
-                                '✅ Shapefile processed successfully! Parsed %d addresses, inserted %d new records, skipped %d duplicates.',
-                                $count,
-                                $inserted,
-                                $skipped
-                            );
-                        }
-                    } else {
-                        $upload_error = '❌ Invalid shapefile. Must contain .shp, .dbf, and .prj files.';
-                    }
-                } else {
-                    $upload_error = '❌ Could not open ZIP file.';
-                }
-            } elseif ( $file_ext === 'csv' ) {
-                $processing_status['file_type'] = 'csv';
-                $processing_status['status'] = 'detected';
-                $upload_message = '📄 CSV file detected!';
-                
-                // TODO: Phase 8 - Process CSV file
-                $upload_error = '⚠️ CSV parsing not yet implemented. Coming in Phase 8!';
-            } else {
-                $upload_error = '❌ Invalid file type. Please upload a .zip (shapefile) or .csv file.';
-            }
-        } else {
-            $upload_error = '❌ File upload failed. Please try again.';
-        }
     }
     
     // Get database statistics
@@ -4626,64 +5511,6 @@ function subsales_address_extracts_page() {
     <div class="wrap">
         <h1>Address Extracts</h1>
         <p class="description">Upload shapefiles or CSV files to populate the address database for PWA autocomplete.</p>
-        
-        <!-- Processing Status (moved to top for visibility) -->
-        <?php if ( ! empty( $processing_status ) ) : ?>
-            <div class="subsales-card" style="margin: 20px 0; padding: 15px; background: #f0f6fc; border-left: 4px solid #0073aa;">
-                <h3 style="margin-top: 0;">⚙️ Processing Status</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>File Type:</th>
-                        <td><strong><?php echo esc_html( ucfirst( $processing_status['file_type'] ?? 'Unknown' ) ); ?></strong></td>
-                    </tr>
-                    <tr>
-                        <th>Status:</th>
-                        <td>
-                            <?php
-                            $status = $processing_status['status'] ?? 'unknown';
-                            $status_icon = array(
-                                'complete' => '✅',
-                                'processing' => '⏳',
-                                'error' => '❌',
-                                'detected' => '📄'
-                            );
-                            echo esc_html( ( $status_icon[ $status ] ?? '❓' ) . ' ' . ucfirst( $status ) );
-                            ?>
-                        </td>
-                    </tr>
-                    <?php if ( isset( $processing_status['parsed'] ) ) : ?>
-                        <tr>
-                            <th>Addresses Parsed:</th>
-                            <td><?php echo number_format( $processing_status['parsed'] ); ?></td>
-                        </tr>
-                    <?php endif; ?>
-                    <?php if ( isset( $processing_status['inserted'] ) ) : ?>
-                        <tr>
-                            <th>New Records Inserted:</th>
-                            <td><strong style="color: #0a0;"><?php echo number_format( $processing_status['inserted'] ); ?></strong></td>
-                        </tr>
-                    <?php endif; ?>
-                    <?php if ( isset( $processing_status['skipped'] ) ) : ?>
-                        <tr>
-                            <th>Duplicates Skipped:</th>
-                            <td style="color: #666;"><?php echo number_format( $processing_status['skipped'] ); ?></td>
-                        </tr>
-                    <?php endif; ?>
-                </table>
-            </div>
-        <?php endif; ?>
-        
-        <?php if ( $upload_message ) : ?>
-            <div class="notice notice-success">
-                <p><?php echo esc_html( $upload_message ); ?></p>
-            </div>
-        <?php endif; ?>
-        
-        <?php if ( $upload_error ) : ?>
-            <div class="notice notice-error">
-                <p><?php echo esc_html( $upload_error ); ?></p>
-            </div>
-        <?php endif; ?>
         
         <!-- Overpass Matching Results -->
         <?php if ( $matching_result ) : ?>
@@ -6504,9 +7331,9 @@ function order_sync_main_page() {
                     ?>
                     <?php
                     // Get configured ZIP codes
-                    $served_zips = get_option( 'subsales_served_zips', '' );
+                    $served_zips = subsales_get_served_zips();
                     $zips_configured = ! empty( $served_zips );
-                    $zip_array = $zips_configured ? array_map( 'trim', explode( ',', $served_zips ) ) : array();
+                    $zip_array = $served_zips;
                     ?>
                     <div class="postbox subsales-box">
                         <div class="postbox-header">
@@ -6940,7 +7767,7 @@ function order_sync_settings_page() {
                     $valid_zips[] = $zip;
                 }
             }
-            update_option( 'subsales_served_zipcodes', array_unique( $valid_zips ) );
+            update_option( 'subsales_served_zips', array_unique( $valid_zips ) );
             echo '<div class="notice notice-success"><p>ZIP codes saved! (' . count( $valid_zips ) . ' valid ZIP codes)</p></div>';
         }
     }
@@ -6971,8 +7798,57 @@ function order_sync_settings_page() {
         if ( ! current_user_can( 'manage_options' ) ) {
             echo '<div class="notice notice-error"><p>Insufficient permissions to clear data.</p></div>';
         } else {
-            order_sync_clear_data();
-            echo '<div class="notice notice-success"><p>All plugin data has been cleared.</p></div>';
+            global $wpdb;
+            $cleared = array();
+            
+            // Check which items were selected
+            if ( isset( $_POST['clear_orders'] ) && $_POST['clear_orders'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_orders';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Orders';
+                }
+            }
+            
+            if ( isset( $_POST['clear_teams'] ) && $_POST['clear_teams'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Teams';
+                }
+            }
+            
+            if ( isset( $_POST['clear_members'] ) && $_POST['clear_members'] === '1' ) {
+                $members_table = $wpdb->prefix . 'ss_team_members';
+                $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$members_table}'" ) === $members_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$members_table}" );
+                }
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$user_teams_table}'" ) === $user_teams_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$user_teams_table}" );
+                }
+                $cleared[] = 'Team Members';
+            }
+            
+            if ( isset( $_POST['clear_addresses'] ) && $_POST['clear_addresses'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_addresses';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Addresses';
+                }
+            }
+            
+            if ( isset( $_POST['clear_settings'] ) && $_POST['clear_settings'] === '1' ) {
+                order_sync_clear_settings();
+                $cleared[] = 'Settings';
+            }
+            
+            if ( ! empty( $cleared ) ) {
+                $items = implode( ', ', $cleared );
+                echo '<div class="notice notice-success"><p><strong>✅ Data cleared successfully:</strong> ' . esc_html( $items ) . '</p></div>';
+            } else {
+                echo '<div class="notice notice-warning"><p><strong>⚠️ No items selected.</strong> Please select at least one item to clear.</p></div>';
+            }
         }
     }
 
@@ -7314,537 +8190,318 @@ function order_sync_settings_page() {
 
                 <div id="tab-address_extracts" class="subsales-tab-panel">
                     <h2 style="margin-top:18px">📍 Address Management</h2>
-                    <p>Configure your service area ZIP codes and manage address data for offline access in the mobile app.</p>
+                    <p>Manage your service area configuration, upload address data, and generate JSON extracts for the PWA.</p>
                     
                     <?php
-                    // Handle ZIP list save
-                    if ( isset( $_POST['subsales_zip_list'] ) && check_admin_referer( 'subsales_zip_list_save', 'subsales_zip_list_nonce' ) ) {
-                        $raw = sanitize_text_field( wp_unslash( $_POST['subsales_zip_list'] ) );
-                        $parts = preg_split( '/[\,\s]+/', $raw );
-                        $zips = array();
-                        foreach ( $parts as $p ) {
-                            $pz = preg_replace( '/[^0-9]/', '', $p );
-                            if ( strlen( $pz ) === 5 ) $zips[] = $pz;
-                        }
-                        // Save to BOTH options for backward compatibility
-                        update_option( 'subsales_served_zips', $zips );
-                        update_option( 'subsales_served_zipcodes', $zips );
-                        subsales_update_zip_index();
-                        echo '<div class="updated"><p><strong>✓ ZIP codes saved successfully.</strong> ' . count( $zips ) . ' ZIP code' . ( count( $zips ) !== 1 ? 's' : '' ) . ' configured.</p></div>';
-                    }
+                    // Include the modern dashboard
+                    include plugin_dir_path( __FILE__ ) . 'admin/address-management-dashboard.php';
                     ?>
-                    
-                    <!-- Service Area ZIP Configuration -->
-                    <div style="background:#fff;border:1px solid #ccd0d4;border-left:4px solid #2271b1;padding:20px;margin:20px 0;border-radius:4px">
-                        <h3 style="margin-top:0">🗺️ Service Area Configuration</h3>
-                        
-                        <?php
-                        // Get configured ZIPs from either storage format
-                        $configured_zips = get_option( 'subsales_served_zipcodes', array() );
-                        if ( empty( $configured_zips ) ) {
-                            $configured_zips = get_option( 'subsales_served_zips', array() );
-                        }
-                        
-                        // Ensure it's an array (backward compatibility for old string format)
-                        if ( ! is_array( $configured_zips ) ) {
-                            if ( is_string( $configured_zips ) && ! empty( $configured_zips ) ) {
-                                $configured_zips = array_filter( array_map( 'trim', explode( ',', $configured_zips ) ) );
-                            } else {
-                                $configured_zips = array();
-                            }
-                        }
-                        
-                        $has_google_api = ! empty( get_option( 'order_sync_google_maps_api_key', '' ) );
-                        ?>
-                        
-                        <form method="post" action="">
-                            <?php wp_nonce_field( 'subsales_zip_list_save', 'subsales_zip_list_nonce' ); ?>
-                            <table class="form-table">
-                                <tr>
-                                    <th scope="row">
-                                        <label for="subsales_zip_list">Served ZIP Codes</label>
-                                    </th>
-                                    <td>
-                                        <input type="text" id="subsales_zip_list" name="subsales_zip_list" value="<?php echo esc_attr( implode( ',', $configured_zips ) ); ?>" class="large-text" placeholder="06479,06489,06467" />
-                                        <p class="description">Enter comma-separated 5-digit ZIP codes (e.g., 06479, 06489, 06467).</p>
-                                        
-                                        <?php if ( ! empty( $configured_zips ) ) : ?>
-                                            <div style="margin-top:12px;padding:12px;background:#f0f0f1;border-left:4px solid #2271b1;border-radius:4px">
-                                                <strong>✓ Currently serving <?php echo count( $configured_zips ); ?> ZIP code<?php echo count( $configured_zips ) !== 1 ? 's' : ''; ?>:</strong>
-                                                <div style="margin-top:8px;font-family:monospace;font-size:13px;color:#666">
-                                                    <?php echo esc_html( implode( ', ', $configured_zips ) ); ?>
-                                                </div>
-                                            </div>
-                                        <?php else : ?>
-                                            <div style="margin-top:12px;padding:12px;background:#fcf8e3;border-left:4px solid #d97706;border-radius:4px">
-                                                <strong>⚠️ No ZIP codes configured</strong>
-                                                <p style="margin:8px 0 0">Configure your service area to enable address extraction and Overpass matching.</p>
-                                            </div>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                                <tr>
-                                    <th scope="row">Google Maps API</th>
-                                    <td>
-                                        <div style="padding:12px;background:<?php echo $has_google_api ? '#d1fae5' : '#fee2e2'; ?>;border-left:4px solid <?php echo $has_google_api ? '#059669' : '#dc2626'; ?>;border-radius:4px">
-                                            <?php if ( $has_google_api ) : ?>
-                                                <strong style="color:#059669">✓ API key configured</strong>
-                                                <p style="margin:8px 0 0;color:#065f46;font-size:13px">ZIP boundaries will be geocoded dynamically for accurate Overpass matching.</p>
-                                            <?php else : ?>
-                                                <strong style="color:#dc2626">⚠️ API key not configured</strong>
-                                                <p style="margin:8px 0 0;color:#991b1b;font-size:13px">Configure Google Maps API key in Overall Settings to enable dynamic geocoding and improve address matching accuracy.</p>
-                                            <?php endif; ?>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </table>
-                            <p class="submit">
-                                <button type="submit" class="button button-primary">Save ZIP Codes</button>
-                            </p>
-                        </form>
-                    </div>
-                    
-                    <hr class="subsales-workflow-divider" />
-                    
-                    <!-- Database Statistics -->
-                    <?php
-                    global $wpdb;
-                    $addresses_table = $wpdb->prefix . 'ss_addresses';
-                    
-                    // Get database statistics
-                    $total_addresses = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table}" );
-                    $residential_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE type = 'residential'" );
-                    $commercial_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE type = 'commercial'" );
-                    $matched_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE matched = 1" );
-                    $high_confidence_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE confidence = 'high'" );
-                    $with_zip_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE zip IS NOT NULL AND zip != ''" );
-                    
-                    // Get Overpass statistics
-                    $stats = Subsales_Overpass_Matcher::get_statistics();
-                    $unmatched = $stats['total'] - $stats['matched'];
-                    ?>
-                    
-                    <div class="subsales-workflow-section">
-                        <h3>📊 Database Statistics</h3>
-                        <p>Current address database status and matching progress.</p>
-                        
-                        <div class="subsales-stats-grid">
-                        <div class="subsales-card">
-                            <h4>📊 Database Summary</h4>
-                            <?php if ( $total_addresses === 0 ) : ?>
-                                <div class="subsales-stats-zero-state">
-                                    <p>
-                                        <strong>No addresses uploaded yet</strong><br>
-                                        <span>Upload a shapefile or CSV below to get started</span>
-                                    </p>
-                                </div>
-                            <?php else : ?>
-                            <table class="form-table">
-                                <tr>
-                                    <th>Total Addresses:</th>
-                                    <td><strong><?php echo number_format( $total_addresses ); ?></strong></td>
-                                </tr>
-                                <tr>
-                                    <th>With ZIP Codes:</th>
-                                    <td><?php echo number_format( $with_zip_count ); ?> (<?php echo round( ( $with_zip_count / $total_addresses ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>Matched to Overpass:</th>
-                                    <td><?php echo number_format( $matched_count ); ?> (<?php echo round( ( $matched_count / $total_addresses ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>High Confidence:</th>
-                                    <td><?php echo number_format( $high_confidence_count ); ?> (<?php echo round( ( $high_confidence_count / $total_addresses ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>Residential:</th>
-                                    <td><?php echo number_format( $residential_count ); ?> (<?php echo round( ( $residential_count / $total_addresses ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>Commercial:</th>
-                                    <td><?php echo number_format( $commercial_count ); ?> (<?php echo round( ( $commercial_count / $total_addresses ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>Last Updated:</th>
-                                    <td><?php echo date( 'M j, Y g:i A' ); ?></td>
-                                </tr>
-                            </table>
-                            <?php endif; ?>
-                        </div>
-                        
-                        <div class="subsales-card">
-                            <h4>🗺️ Overpass Matching Status</h4>
-                            <?php if ( $stats['total'] === 0 ) : ?>
-                                <div class="subsales-stats-zero-state">
-                                    <p>
-                                        <strong>No addresses to match</strong><br>
-                                        <span>Upload addresses first, then use Overpass to geocode them</span>
-                                    </p>
-                                </div>
-                            <?php else : ?>
-                            <table class="form-table">
-                                <tr>
-                                    <th>Total Addresses:</th>
-                                    <td><strong><?php echo number_format( $stats['total'] ); ?></strong></td>
-                                </tr>
-                                <tr>
-                                    <th>Matched to OSM:</th>
-                                    <td><?php echo number_format( $stats['matched'] ); ?> (<?php echo round( ( $stats['matched'] / $stats['total'] ) * 100 ); ?>%)</td>
-                                </tr>
-                                <tr>
-                                    <th>Unmatched:</th>
-                                    <td><strong class="subsales-error-text"><?php echo number_format( $unmatched ); ?></strong></td>
-                                </tr>
-                                <tr>
-                                    <th>High Confidence:</th>
-                                    <td><?php echo number_format( $stats['high_confidence'] ); ?></td>
-                                </tr>
-                                <tr>
-                                    <th>Medium Confidence:</th>
-                                    <td><?php echo number_format( $stats['medium_confidence'] ); ?></td>
-                                </tr>
-                                <tr>
-                                    <th>With ZIP Codes:</th>
-                                    <td><?php echo number_format( $stats['with_zip'] ); ?> (<?php echo round( ( $stats['with_zip'] / $stats['total'] ) * 100 ); ?>%)</td>
-                                </tr>
-                            </table>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    </div>
-                    
-                    <hr class="subsales-workflow-divider" />
-                    
-                    <!-- Upload Address Data -->
-                    <div class="subsales-workflow-section">
-                        <h3>📤 Upload Address Data</h3>
-                        <p>Upload shapefiles or CSV files to populate the address database.</p>
-
-
-                        <?php
-                        // Get source breakdown from database
-                        $source_breakdown = $wpdb->get_results(
-                            "SELECT source, COUNT(*) as count FROM {$addresses_table} GROUP BY source ORDER BY count DESC",
-                            ARRAY_A
-                        );
-                        ?>
-                        
-                        <div class="subsales-card">
-                            <h4>📁 Upload File</h4>
-                            <form method="post" action="" enctype="multipart/form-data">
-                                <?php wp_nonce_field( 'subsales_upload_address_file' ); ?>
-                                
-                                <p>
-                                    <label for="address_file"><strong>Select File:</strong></label><br>
-                                    <input type="file" name="address_file" id="address_file" accept=".zip,.csv" required />
-                                </p>
-                                
-                                <p class="description">
-                                    <strong>Supported formats:</strong><br>
-                                    • <strong>.zip</strong> - Shapefile archive (must contain .shp, .dbf, .prj files)<br>
-                                    • <strong>.csv</strong> - Address list with columns: street, city, state, zip, lat, lng
-                                </p>
-                                
-                                <p>
-                                    <button type="submit" name="upload_file" class="button button-primary">
-                                        📤 Upload and Process
-                                    </button>
-                                </p>
-                            </form>
-                        </div>
-                        
-                        <?php if ( ! empty( $source_breakdown ) && $total_addresses > 0 ) : ?>
-                        <div class="subsales-card">
-                            <h4>📦 Current Data Sources</h4>
-                            <table class="wp-list-table widefat striped">
-                                <thead>
-                                    <tr>
-                                        <th>Source</th>
-                                        <th style="text-align: right;">Addresses</th>
-                                        <th style="text-align: right;">Percentage</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ( $source_breakdown as $row ) : ?>
-                                        <tr>
-                                            <td><?php echo esc_html( ucfirst( $row['source'] ) ); ?></td>
-                                            <td style="text-align: right;"><?php echo number_format( $row['count'] ); ?></td>
-                                            <td style="text-align: right;"><?php echo $total_addresses > 0 ? round( ( $row['count'] / $total_addresses ) * 100 ) : 0; ?>%</td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                        <?php endif; ?>
-                    
-                    <!-- Processing Actions -->
-                    <div class="subsales-workflow-section">
-                        <h3>🔧 Processing Actions</h3>
-                        <p>Match addresses with OpenStreetMap, generate extracts, and manage data.</p>
-                        
-                        <div class="subsales-card">
-                            <h4>Available Data Sources</h4>
-                            <p>
-                                <label><input type="checkbox" checked disabled /> <strong>OpenStreetMap</strong> - Live API with structured address data (~3,000+ per ZIP)</label><br/>
-                                <label><input type="checkbox" <?php checked( $total_addresses > 0 ); ?> disabled /> <strong>Uploaded Data</strong> - <?php echo $total_addresses > 0 ? number_format( $total_addresses ) . ' addresses from your uploads' : 'Not available (upload data first)'; ?></label>
-                            </p>
-                            <p class="description">
-                                Both sources will be combined and deduplicated automatically. OpenStreetMap is always queried; uploaded data is included if available.
-                            </p>
-                        </div>
-
-                        <div class="subsales-card">
-                            <h4>Actions</h4>
-                                <p>
-                                    <button id="subsales-match-addresses-btn" class="button button-large button-primary" type="button" <?php echo ( $total_addresses === 0 ) ? 'disabled title="Upload addresses first"' : ''; ?>>Match Addresses with Overpass</button>
-                                    <button id="subsales-generate-btn" class="button button-large" type="button">Generate Extracts</button>
-                                    <button id="subsales-refresh-index-btn" class="button" type="button">Refresh ZIP Index</button>
-                                </p>
-                                <?php if ( $total_addresses === 0 ) : ?>
-                                    <div style="padding:15px;background:#fff3cd;border-left:4px solid #ffc107;margin:10px 0">
-                                        <p style="margin:0;font-size:13px">
-                                            <strong>⚠️ No addresses in database</strong><br>
-                                            Upload a shapefile or CSV above to enable Overpass matching.
-                                        </p>
-                                    </div>
-                                <?php endif; ?>
-                                <p class="description">
-                                    <strong>Match with Overpass:</strong> Auto-matches uploaded addresses with OpenStreetMap to assign ZIP codes (processes in batches automatically).<br/>
-                                    <strong>Generate Extracts:</strong> Creates JSON files for each ZIP code containing all addresses.<br/>
-                                    <strong>Refresh ZIP Index:</strong> Scans the uploads directory and updates the PWA's ZIP index file.
-                                </p>
-                                <div id="subsales-generate-log" style="margin-top:12px;white-space:pre-wrap;background:#f8f8f8;border:1px solid #eaeaea;padding:8px;display:none"></div>
-                                <div id="subsales-match-log" style="margin-top:12px;white-space:pre-wrap;background:#f8f8f8;border:1px solid #eaeaea;padding:8px;display:none"></div>
-                        </div>
-                        
-                        <div class="subsales-card">
-                            <h4>Existing Extracts</h4>
-                            <div id="subsales-zip-status">
-                                <?php
-                                $upload = wp_upload_dir(); 
-                                $base = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
-                                if ( is_dir( $base ) ) {
-                                    $files = scandir( $base );
-                                    $json_files = array_filter( $files, function( $f ) use ( $base ) {
-                                        return is_file( $base . '/' . $f ) && substr( $f, -5 ) === '.json' && preg_match( '/^\d{5}\.json$/', $f );
-                                    } );
-                                    
-                                    if ( ! empty( $json_files ) ) {
-                                        echo '<table class="widefat" style="margin-top:12px">';
-                                        echo '<thead><tr><th>ZIP Code</th><th>File Size</th><th>Actions</th></tr></thead>';
-                                        echo '<tbody>';
-                                        foreach ( $json_files as $f ) {
-                                            $path = $base . '/' . $f;
-                                            $url = trailingslashit( $upload['baseurl'] ) . 'subsales-zipdata/' . rawurlencode( $f );
-                                            $size = size_format( filesize( $path ) );
-                                            $zip_code = basename( $f, '.json' );
-                                            echo '<tr>';
-                                            echo '<td><strong>' . esc_html( $zip_code ) . '</strong></td>';
-                                            echo '<td>' . esc_html( $size ) . ' <a href="' . esc_url( $url ) . '" target="_blank" style="text-decoration:none">📄</a></td>';
-                                            echo '<td><button type="button" class="button button-small subsales-delete-zip" data-zip="' . esc_attr( $zip_code ) . '">Delete</button></td>';
-                                            echo '</tr>';
-                                        }
-                                        echo '</tbody></table>';
-                                    } else {
-                                        echo '<p>No extracts generated yet. Click "Generate Extracts" above.</p>';
-                                    }
-                                } else {
-                                    echo '<p>No extracts generated yet. Click "Generate Extracts" above.</p>';
-                                }
-                                ?>
-                            </div>
-
-                            <h4 style="margin-top: 30px;">Generation History</h4>
-                            <?php
-                            $logs = subsales_get_generation_logs( 10 );
-                            if ( empty( $logs ) ) {
-                                echo '<p>No generation history yet.</p>';
-                            } else {
-                                foreach ( $logs as $log ) {
-                                    $summary = isset( $log['summary'] ) ? $log['summary'] : array();
-                                    $timestamp = isset( $log['timestamp'] ) ? $log['timestamp'] : 'Unknown';
-                                    $user = isset( $log['user'] ) ? $log['user'] : 'Unknown';
-                                    $total_zips = isset( $summary['total_zips'] ) ? $summary['total_zips'] : 0;
-                                    $successful = isset( $summary['successful'] ) ? $summary['successful'] : 0;
-                                    $failed = isset( $summary['failed'] ) ? $summary['failed'] : 0;
-                                    $total_addresses = isset( $summary['total_addresses'] ) ? $summary['total_addresses'] : 0;
-                                    $duration = isset( $summary['duration_seconds'] ) ? $summary['duration_seconds'] : 0;
-                                    
-                                    echo '<details style="margin-bottom:12px;border:1px solid #ddd;padding:12px;background:#fff;border-radius:4px">';
-                                    echo '<summary style="cursor:pointer;font-weight:600">';
-                                    echo '<span style="color:#2271b1">📅 ' . esc_html( $timestamp ) . '</span> ';
-                                    echo '— ' . number_format( $total_addresses ) . ' addresses from ' . esc_html( $total_zips ) . ' ZIP(s) ';
-                                    echo '(' . esc_html( $duration ) . 's)';
-                                    if ( $failed > 0 ) {
-                                        echo ' <span style="color:#d63638">⚠️ ' . esc_html( $failed ) . ' failed</span>';
-                                    }
-                                    echo '</summary>';
-                                    
-                                    echo '<div style="margin-top:12px;padding-left:12px">';
-                                    echo '<p><strong>User:</strong> ' . esc_html( $user ) . '</p>';
-                                    
-                                    if ( isset( $log['results'] ) && is_array( $log['results'] ) ) {
-                                        echo '<table class="widefat" style="margin-top:8px">';
-                                        echo '<thead><tr><th>ZIP</th><th>Addresses</th><th>Sources</th><th>Duplicates</th><th>Duration</th><th>Status</th></tr></thead>';
-                                        echo '<tbody>';
-                                        
-                                        foreach ( $log['results'] as $zip => $result ) {
-                                            $count = isset( $result['count'] ) ? $result['count'] : 0;
-                                            $zip_duration = isset( $result['duration'] ) ? $result['duration'] : 0;
-                                            $has_error = isset( $result['error'] );
-                                            $sources_info = isset( $result['sources'] ) ? $result['sources'] : array();
-                                            $duplicates = isset( $result['duplicates_removed'] ) ? $result['duplicates_removed'] : 0;
-                                            
-                                            echo '<tr>';
-                                            echo '<td><strong>' . esc_html( $zip ) . '</strong></td>';
-                                            echo '<td>' . number_format( $count ) . '</td>';
-                                            echo '<td>';
-                                            if ( ! empty( $sources_info ) ) {
-                                                $parts = array();
-                                                foreach ( $sources_info as $src => $cnt ) {
-                                                    $parts[] = strtoupper( $src ) . ': ' . number_format( $cnt );
-                                                }
-                                                echo esc_html( implode( ', ', $parts ) );
-                                            } else {
-                                                echo '—';
-                                            }
-                                            echo '</td>';
-                                            echo '<td>' . number_format( $duplicates ) . '</td>';
-                                            echo '<td>' . esc_html( $zip_duration ) . 's</td>';
-                                            echo '<td style="color:' . ( $has_error ? '#d63638' : '#00a32a' ) . '">';
-                                            echo $has_error ? '❌' : '✅';
-                                            echo '</td>';
-                                            echo '</tr>';
-                                        }
-                                        
-                                        echo '</tbody></table>';
-                                    }
-                                    
-                                    echo '</div>';
-                                    echo '</details>';
-                                }
-                            }
-                            ?>
-                        </div>
-                    </div>
-                    
                 </div>
 
                 <div id="tab-backup_restore" class="subsales-tab-panel">
-            <h2 style="margin-top:18px">Backup / Restore</h2>
-            <p>Export orders or site settings for backup, and import CSV backups here to restore.</p>
-            <table class="form-table">
-                <tr>
-                    <th scope="row">Export</th>
-                    <td>
-                        <?php $export_nonce = wp_create_nonce( 'subsales_export_nonce' ); ?>
-                        <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_orders&_wpnonce=' . $export_nonce ) ); ?>">Export Orders (CSV)</a>
-                        <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_settings&_wpnonce=' . $export_nonce ) ); ?>">Export Settings (CSV)</a>
-                        <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup_combined&_wpnonce=' . $export_nonce ) ); ?>">Export Combined Backup (ZIP)</a>
-                        <p class="description">Orders CSV includes order_data (JSON) column. Settings CSV is key,value pairs.</p>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">Import</th>
-                    <td>
-                        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data" style="margin-bottom:12px">
-                            <?php wp_nonce_field( 'subsales_import_nonce' ); ?>
-                            <input type="hidden" name="action" value="subsales_import_backup" />
-                            <label>Backup file <input type="file" name="backup_file" accept="text/csv,text/plain,application/zip,.zip" required /></label>
-                            <p style="margin-top:8px">
-                                <label><input type="checkbox" name="import_update_existing" value="1" /> Update existing orders by order_id when present (otherwise skip)</label>
+            <h2 style="margin-top:18px">💾 Backup & Restore</h2>
+            <p>Export all plugin data for backup or migrate to another WordPress site. Import previously exported backups to restore data.</p>
+            
+            <!-- Export Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📤 Export Data</h3>
+                <?php $export_nonce = wp_create_nonce( 'subsales_export_nonce' ); ?>
+                
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+                    <a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup_combined&_wpnonce=' . $export_nonce ) ); ?>">
+                        📦 Export Complete Backup (ZIP)
+                    </a>
+                </div>
+                
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; font-weight: 600;">Individual Exports</summary>
+                    <div style="padding: 15px; margin-top: 10px; background: #f6f7f7; border-radius: 4px;">
+                        <p style="margin-top: 0;">Export individual components separately:</p>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_orders&_wpnonce=' . $export_nonce ) ); ?>">Orders (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_teams&_wpnonce=' . $export_nonce ) ); ?>">Teams (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_members&_wpnonce=' . $export_nonce ) ); ?>">Members (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_addresses&_wpnonce=' . $export_nonce ) ); ?>">Addresses (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_settings&_wpnonce=' . $export_nonce ) ); ?>">Settings (CSV)</a>
+                        </div>
+                    </div>
+                </details>
+                
+                <div style="background: #e7f3ff; border-left: 4px solid #0071a1; padding: 12px; margin-top: 15px;">
+                    <p style="margin: 0;"><strong>💡 Tip:</strong> The complete backup ZIP includes all orders, teams, members, addresses, and settings. Perfect for site migrations or scheduled backups.</p>
+                </div>
+            </div>
+            
+            <!-- Import Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📥 Import Data</h3>
+                
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                    <?php wp_nonce_field( 'subsales_import_nonce' ); ?>
+                    <input type="hidden" name="action" value="subsales_import_backup" />
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Backup File</th>
+                            <td>
+                                <input type="file" name="backup_file" accept="text/csv,text/plain,application/zip,.zip" required style="margin-bottom: 10px;" />
+                                <p class="description">Upload a ZIP backup (complete) or individual CSV file</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Import Options</th>
+                            <td>
+                                <label style="display: block; margin-bottom: 10px;">
+                                    <input type="checkbox" name="import_update_existing" value="1" />
+                                    Update existing records (match by ID) - otherwise skip duplicates
+                                </label>
+                                <p class="description" style="margin: 8px 0 0 0; padding: 8px; background: #e7f7e7; border-left: 3px solid #46b450;">
+                                    <strong>🗺️ Auto-Geocoding Enabled:</strong> Addresses without lat/lng coordinates will be automatically geocoded using Google Maps API. 
+                                    ZIP codes will be validated against coordinates and auto-corrected if mismatched.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <button type="submit" class="button button-primary button-large">Import Backup</button>
+                    </p>
+                </form>
+            </div>
+            
+            <!-- Destructive Restore Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">⚠️ Advanced: Full Restore (Destructive)</h3>
+                <p><strong>Warning:</strong> This will clear existing data before importing. Only use this when restoring from a known good backup.</p>
+                
+                <details>
+                    <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">Show Restore Options</summary>
+                    <div style="padding: 15px; margin-top: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                        <form id="subsales-destructive-restore" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                            <?php wp_nonce_field( 'subsales_restore_nonce' ); ?>
+                            <input type="hidden" name="action" value="subsales_restore_and_import" />
+                            
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row">Backup File</th>
+                                    <td><input type="file" name="backup_file" accept="application/zip,.zip,text/csv,text/plain" required /></td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Clear Before Import</th>
+                                    <td>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="both" checked />
+                                            <strong>Everything</strong> - Clear all orders, teams, members, addresses, and settings
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="data" />
+                                            <strong>Data Only</strong> - Clear orders, teams, members, and addresses (keep settings)
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="settings" />
+                                            <strong>Settings Only</strong> - Clear settings (keep data)
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Confirmation</th>
+                                    <td>
+                                        <label style="font-weight: 600;">
+                                            <input type="checkbox" id="confirm_clear_restore" />
+                                            I understand this will permanently delete the selected data before importing
+                                        </label>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p class="submit">
+                                <button id="subsales-restore-btn" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>⚠️ Restore from Backup</button>
                             </p>
-                            <p><button type="submit" class="button button-primary">Upload and Import</button></p>
                         </form>
-
-                        <!-- Destructive restore: clear plugin data then import (hidden in Advanced details) -->
-                        <details style="margin-top:12px">
-                            <summary style="font-weight:700; cursor:pointer">Advanced: Restore (clear then import)</summary>
-                            <div style="padding:12px;border:1px solid #eee;margin-top:8px;background:#fff">
-                                <form id="subsales-destructive-restore" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
-                                    <?php wp_nonce_field( 'subsales_restore_nonce' ); ?>
-                                    <input type="hidden" name="action" value="subsales_restore_and_import" />
-                                    <label>Backup file <input type="file" name="backup_file" accept="application/zip,.zip,text/csv,text/plain" required /></label>
-                                    <p style="margin-top:8px">Choose what you want to <strong>clear before importing</strong>. You may still import both orders and settings if your ZIP contains both files — the clear step only affects the parts you select.</p>
-                                    <p style="margin-top:6px">
-                                        <label style="margin-right:12px"><input type="radio" name="restore_target" value="both" checked /> Clear orders and settings</label>
-                                        <label style="margin-right:12px"><input type="radio" name="restore_target" value="orders" /> Clear orders only</label>
-                                        <label style="margin-right:12px"><input type="radio" name="restore_target" value="settings" /> Clear settings only</label>
-                                    </p>
-                                    <p style="margin-top:8px"><label style="font-weight:600"><input type="checkbox" id="confirm_clear_restore" /> I understand this will permanently delete the selected plugin data before importing.</label></p>
-                                    <p><button id="subsales-restore-btn" type="submit" class="button button-large button-danger" disabled>Restore (clear then import)</button></p>
-                                </form>
-                                <script>
-                                (function(){
-                                    var chk = document.getElementById('confirm_clear_restore');
-                                    var btn = document.getElementById('subsales-restore-btn');
-                                    var form = document.getElementById('subsales-destructive-restore');
-                                    var radios = form ? form.querySelectorAll('input[name="restore_target"]') : null;
-                                    if ( chk && btn ) {
-                                        chk.addEventListener('change', function(){ btn.disabled = !chk.checked; });
+                        
+                        <script>
+                        (function(){
+                            var chk = document.getElementById('confirm_clear_restore');
+                            var btn = document.getElementById('subsales-restore-btn');
+                            var form = document.getElementById('subsales-destructive-restore');
+                            var radios = form ? form.querySelectorAll('input[name="restore_target"]') : null;
+                            
+                            if ( chk && btn ) {
+                                chk.addEventListener('change', function(){ btn.disabled = !chk.checked; });
+                            }
+                            
+                            if ( form ) {
+                                form.addEventListener('submit', function(e){
+                                    if ( ! chk.checked ) {
+                                        e.preventDefault();
+                                        alert('Please confirm the destructive restore by checking the box.');
+                                        return false;
                                     }
-                                    if ( form ) {
-                                        form.addEventListener('submit', function(e){
-                                            if ( ! chk.checked ) { e.preventDefault(); alert('Please confirm the destructive restore by checking the box.'); return false; }
-                                            // determine selected target to customize confirmation
-                                            var sel = 'both';
-                                            if ( radios ) {
-                                                radios.forEach(function(r){ if ( r.checked ) sel = r.value; });
-                                            }
-                                            var msg = 'This will permanently delete the selected plugin data before importing. Are you sure?';
-                                            if ( sel === 'both' ) msg = 'This will permanently delete ALL plugin data (orders, teams, members, and plugin settings) before importing. Are you sure?';
-                                            if ( sel === 'orders' ) msg = 'This will permanently delete ALL orders, teams, and team members before importing. It will NOT remove settings. Are you sure?';
-                                            if ( sel === 'settings' ) msg = 'This will permanently delete plugin settings (options) before importing. It will NOT remove orders or teams. Are you sure?';
-                                            if ( ! confirm(msg) ) { e.preventDefault(); return false; }
-                                        });
+                                    
+                                    var sel = 'both';
+                                    if ( radios ) {
+                                        radios.forEach(function(r){ if ( r.checked ) sel = r.value; });
                                     }
-                                })();
-                                </script>
-                            </div>
-                        </details>
-                        <p class="description">Imported settings will call update_option(key,value). Imported orders will be inserted into the orders table; existing order_id values are skipped unless 'Update existing' is checked. You may upload a single combined ZIP (created by "Export Combined Backup (ZIP)") which contains both <code>orders.csv</code> and <code>settings.csv</code>.</p>
-                    </td>
-                </tr>
-            </table>
-        
-        
-        <!-- Data Deletion Settings -->
-        <a id="data_deletion"></a>
-        <form method="post" action="" style="margin-top:18px; padding: 20px; background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px;">
-            <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
-            <h3 style="margin-top: 0;">🗑️ Plugin Deletion Data Settings</h3>
-            <p>Choose what happens to your data when you delete this plugin:</p>
+                                    
+                                    var msg = 'This will permanently delete the selected plugin data before importing. Are you sure?';
+                                    if ( sel === 'both' ) {
+                                        msg = '⚠️ PERMANENT ACTION\n\nThis will delete ALL plugin data (orders, teams, members, addresses, and settings) before importing.\n\nThis cannot be undone.\n\nAre you absolutely sure?';
+                                    } else if ( sel === 'data' ) {
+                                        msg = 'This will permanently delete ALL orders, teams, members, and addresses before importing. Settings will be preserved. Are you sure?';
+                                    } else if ( sel === 'settings' ) {
+                                        msg = 'This will permanently delete all plugin settings before importing. Data (orders, teams, etc.) will be preserved. Are you sure?';
+                                    }
+                                    
+                                    if ( ! confirm(msg) ) {
+                                        e.preventDefault();
+                                        return false;
+                                    }
+                                });
+                            }
+                        })();
+                        </script>
+                    </div>
+                </details>
+            </div>
             
-            <?php $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 'yes' ); ?>
-            
-            <label style="display: block; margin: 15px 0; padding: 15px; background: #f6f7f7; border-radius: 4px; cursor: pointer;">
-                <input type="radio" name="subsales_delete_on_uninstall" value="yes" <?php checked( $delete_on_uninstall, 'yes' ); ?>>
-                <strong>Delete all data when plugin is deleted</strong>
-                <span style="display: block; margin-left: 24px; margin-top: 5px; color: #646970;">
-                    Completely removes orders, teams, settings, and uploaded files
-                </span>
-            </label>
-            
-            <label style="display: block; margin: 15px 0; padding: 15px; background: #f6f7f7; border-radius: 4px; cursor: pointer;">
-                <input type="radio" name="subsales_delete_on_uninstall" value="no" <?php checked( $delete_on_uninstall, 'no' ); ?>>
-                <strong>Keep data safe (recommended for testing)</strong>
-                <span style="display: block; margin-left: 24px; margin-top: 5px; color: #646970;">
-                    Preserves all data even after plugin deletion - you can reinstall later without losing data
-                </span>
-            </label>
-            
-            <p style="margin-top: 20px;">
-                <button type="submit" name="save_deletion_settings" class="button button-primary">Save Deletion Settings</button>
-            </p>
-        </form>
-        
-        <!-- Clear data form -->
-            <a id="remove_migration"></a>
-            <form method="post" action="" style="margin-top:18px">
-                <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
-                <p><strong>Danger zone:</strong> Use the button below to permanently remove all plugin data (orders, teams, team members). This will TRUNCATE those tables but leave plugin files intact.</p>
-                <p><button name="clear_data" class="button button-large button-secondary" onclick="return confirm('Permanently clear all plugin data? This cannot be undone.');">Clear plugin data now</button></p>
-            </form>
+            <!-- Clear data form -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px; margin-top: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">🗑️ Clear Data (Danger Zone)</h3>
+                <p><strong>Warning:</strong> Select what you want to permanently delete. This action cannot be undone.</p>
+                
+                <form id="subsales-clear-data-form" method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
+                    
+                    <div style="background: #f6f7f7; border: 1px solid #c3c4c7; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <p style="margin: 0 0 10px 0; font-weight: 600;">Select data to clear:</p>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_orders" value="1" class="subsales-clear-checkbox" />
+                            <strong>Orders</strong> - All order data and customer information
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_teams" value="1" class="subsales-clear-checkbox" />
+                            <strong>Teams</strong> - All teams and access codes
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_members" value="1" class="subsales-clear-checkbox" />
+                            <strong>Team Members</strong> - All users and team assignments
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_addresses" value="1" class="subsales-clear-checkbox" />
+                            <strong>Addresses</strong> - All address data and geocoding results
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_settings" value="1" class="subsales-clear-checkbox" />
+                            <strong>Settings</strong> - All plugin configuration and options
+                        </label>
+                        
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <label style="cursor: pointer; font-weight: 600;">
+                                <input type="checkbox" id="subsales-select-all-clear" />
+                                Select All
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="subsales-clear-warning" style="background: #fcf0f1; border: 1px solid #d63638; padding: 12px; margin: 15px 0; border-radius: 4px; display: none;">
+                        <p style="margin: 0; color: #d63638;"><strong>⚠️ Warning:</strong> <span id="subsales-clear-warning-text">Please select at least one item to clear.</span></p>
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #646970; margin: 10px 0;">
+                        <strong>Note:</strong> This does NOT delete plugin files, ZIP extracts, or database tables (only truncates/clears their data).
+                    </p>
+                    
+                    <p>
+                        <button id="subsales-clear-data-btn" name="clear_data" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>Clear Selected Data</button>
+                    </p>
+                </form>
+                
+                <script>
+                (function(){
+                    var form = document.getElementById('subsales-clear-data-form');
+                    var checkboxes = document.querySelectorAll('.subsales-clear-checkbox');
+                    var selectAllCheckbox = document.getElementById('subsales-select-all-clear');
+                    var clearBtn = document.getElementById('subsales-clear-data-btn');
+                    var warningBox = document.getElementById('subsales-clear-warning');
+                    var warningText = document.getElementById('subsales-clear-warning-text');
+                    
+                    function updateWarningAndButton() {
+                        var selected = [];
+                        checkboxes.forEach(function(cb) {
+                            if (cb.checked) {
+                                var label = cb.parentElement.querySelector('strong');
+                                if (label) selected.push(label.textContent);
+                            }
+                        });
+                        
+                        if (selected.length === 0) {
+                            clearBtn.disabled = true;
+                            warningBox.style.display = 'none';
+                        } else {
+                            clearBtn.disabled = false;
+                            warningBox.style.display = 'block';
+                            
+                            var itemsList = selected.join(', ');
+                            warningText.textContent = 'You are about to permanently delete: ' + itemsList + '. This cannot be undone.';
+                        }
+                    }
+                    
+                    // Wire up checkboxes
+                    checkboxes.forEach(function(cb) {
+                        cb.addEventListener('change', updateWarningAndButton);
+                    });
+                    
+                    // Wire up select all
+                    if (selectAllCheckbox) {
+                        selectAllCheckbox.addEventListener('change', function() {
+                            checkboxes.forEach(function(cb) {
+                                cb.checked = selectAllCheckbox.checked;
+                            });
+                            updateWarningAndButton();
+                        });
+                    }
+                    
+                    // Form submission confirmation
+                    if (form) {
+                        form.addEventListener('submit', function(e) {
+                            var selected = [];
+                            checkboxes.forEach(function(cb) {
+                                if (cb.checked) {
+                                    var label = cb.parentElement.querySelector('strong');
+                                    if (label) selected.push(label.textContent);
+                                }
+                            });
+                            
+                            if (selected.length === 0) {
+                                e.preventDefault();
+                                alert('Please select at least one item to clear.');
+                                return false;
+                            }
+                            
+                            var itemsList = selected.join(', ');
+                            var msg = '⚠️ PERMANENT ACTION\n\n';
+                            msg += 'This will permanently delete the following:\n';
+                            msg += '• ' + selected.join('\n• ') + '\n\n';
+                            msg += 'This cannot be undone.\n\n';
+                            msg += 'Are you absolutely sure?';
+                            
+                            if (!confirm(msg)) {
+                                e.preventDefault();
+                                return false;
+                            }
+                        });
+                    }
+                    
+                    // Initial state
+                    updateWarningAndButton();
+                })();
+                </script>
+            </div>
                 </div>
 
                 <div id="tab-system_info" class="subsales-tab-panel">
@@ -9274,6 +9931,14 @@ function order_sync_orders_page() {
     <div class="wrap">
         <h1>Orders</h1>
 
+        <!-- Quick Search -->
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
+            <label for="subsales-quick-search" style="font-weight: 600; margin-right: 10px;">🔍 Quick Search:</label>
+            <input type="text" id="subsales-quick-search" placeholder="Search by customer name, address, or phone..." style="width: 400px; padding: 6px 12px;" />
+            <button id="subsales-clear-search" class="button" style="margin-left: 8px;">Clear</button>
+            <span id="subsales-search-results" style="margin-left: 15px; color: #666; font-style: italic;"></span>
+        </div>
+
         <form id="subsales-orders-filter" class="subsales-orders-filter" onsubmit="return false;">
             <input type="hidden" name="action" value="subsales_fetch_orders" />
             <?php wp_nonce_field( 'subsales_orders_nonce', 'subsales_orders_nonce_field' ); ?>
@@ -9381,7 +10046,7 @@ function order_sync_orders_page() {
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td colspan="4" style="text-align:right">Page totals:</td>
+                        <td colspan="5" style="text-align:right">Page totals:</td>
                         <?php foreach ( $products_conf as $pcol ) : ?>
                             <td id="subsales-page-prod-<?php echo esc_attr( $pcol['id'] ); ?>" style="text-align:center">0</td>
                         <?php endforeach; ?>
@@ -9391,7 +10056,7 @@ function order_sync_orders_page() {
                         <td></td>
                     </tr>
                     <tr>
-                        <td colspan="4" style="text-align:right">Cash:</td>
+                        <td colspan="5" style="text-align:right">Cash:</td>
                         <?php foreach ( $products_conf as $pcol ) : ?>
                             <td></td>
                         <?php endforeach; ?>
@@ -9401,7 +10066,7 @@ function order_sync_orders_page() {
                         <td></td>
                     </tr>
                     <tr>
-                        <td colspan="4" style="text-align:right">Check:</td>
+                        <td colspan="5" style="text-align:right">Check:</td>
                         <?php foreach ( $products_conf as $pcol ) : ?>
                             <td></td>
                         <?php endforeach; ?>
@@ -9836,6 +10501,76 @@ function order_sync_orders_page() {
         // Make functions globally available
         window.handleCheckboxChange = handleCheckboxChange;
         window.handleSelectAllChange = handleSelectAllChange;
+
+        // Quick Search functionality
+        let searchTimeout = null;
+        const searchInput = document.getElementById('subsales-quick-search');
+        const clearSearchBtn = document.getElementById('subsales-clear-search');
+        const searchResults = document.getElementById('subsales-search-results');
+        
+        function performSearch() {
+            const searchTerm = searchInput.value.trim();
+            
+            if (searchTerm.length === 0) {
+                searchResults.textContent = '';
+                fetchPage(1);
+                return;
+            }
+            
+            if (searchTerm.length < 2) {
+                searchResults.textContent = 'Enter at least 2 characters to search';
+                return;
+            }
+            
+            searchResults.textContent = 'Searching...';
+            
+            const form = document.getElementById('subsales-orders-filter');
+            const fd = serializeForm(form);
+            fd.append('page', 1);
+            fd.append('search_query', searchTerm);
+            
+            fetch(ajaxUrl, { method: 'POST', body: fd })
+                .then(resp => resp.json())
+                .then(data => {
+                    if (data && data.success) {
+                        const payload = data.data;
+                        renderRows(payload.orders);
+                        renderMeta(payload.total_count, payload.page, payload.pages);
+                        renderTotals(payload.totals);
+                        renderPagination(payload.page, payload.pages);
+                        
+                        const count = payload.total_count || 0;
+                        searchResults.textContent = count + ' result' + (count !== 1 ? 's' : '') + ' found';
+                    } else {
+                        searchResults.textContent = 'Search failed';
+                    }
+                })
+                .catch(error => {
+                    console.error('Search error:', error);
+                    searchResults.textContent = 'Search error';
+                });
+        }
+        
+        // Debounced search as user types
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(performSearch, 500);
+        });
+        
+        // Search on Enter key
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                clearTimeout(searchTimeout);
+                performSearch();
+            }
+        });
+        
+        // Clear search button
+        clearSearchBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            searchResults.textContent = '';
+            fetchPage(1);
+        });
 
         // Load first page on open
         fetchPage(1);

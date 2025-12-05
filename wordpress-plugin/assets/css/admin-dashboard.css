@@ -200,6 +200,267 @@
 .subsales-stats-zero-state{
   padding: 20px;
   text-align: center;
+  color: #646970;
+}
+
+/* Modern Dashboard Cards for Address Management */
+.subsales-address-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin: 30px 0;
+}
+
+@media (max-width: 1200px) {
+  .subsales-address-dashboard {
+    grid-template-columns: 1fr;
+  }
+}
+
+.subsales-status-card {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.subsales-status-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+}
+
+.subsales-card-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.subsales-card-header.config {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.subsales-card-header.upload {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.subsales-card-header.process {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.subsales-card-icon {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.subsales-card-title h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  border: none;
+  padding: 0;
+}
+
+.subsales-card-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.subsales-card-body {
+  padding: 24px;
+}
+
+.subsales-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.subsales-status-badge.ready {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.subsales-status-badge.in-progress {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.subsales-status-badge.complete {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.subsales-status-badge.warning {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.subsales-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.subsales-stat-row:last-child {
+  border-bottom: none;
+}
+
+.subsales-stat-label {
+  color: #646970;
+  font-size: 14px;
+}
+
+.subsales-stat-value {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1d2327;
+}
+
+.subsales-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.subsales-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  transition: width 0.3s ease;
+}
+
+.subsales-card-actions {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.subsales-card-actions .button {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.subsales-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #646970;
+}
+
+.subsales-empty-state-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.subsales-empty-state h4 {
+  margin: 0 0 8px;
+  color: #1d2327;
+  border: none;
+  padding: 0;
+}
+
+.subsales-empty-state p {
+  margin: 0 0 20px;
+  font-size: 14px;
+}
+
+/* Compact inline edit for ZIP codes */
+.subsales-zip-inline-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.subsales-zip-inline-edit input {
+  flex: 1;
+  margin: 0;
+}
+
+.subsales-zip-display {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.subsales-zip-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d2327;
+}
+
+/* Modal/Drawer for logs */
+.subsales-log-modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 600px;
+  background: #fff;
+  box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+  z-index: 100000;
+  overflow-y: auto;
+}
+
+.subsales-log-modal.open {
+  display: block;
+}
+
+.subsales-log-modal-header {
+  padding: 20px;
+  background: #f7f7f7;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.subsales-log-modal-body {
+  padding: 20px;
+}
+
+.subsales-modal-overlay {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 99999;
+}
+
+.subsales-modal-overlay.open {
+  display: block;
+}
+  padding: 20px;
+  text-align: center;
   background: #f0f6fc;
   border: 1px dashed #0073aa;
   border-radius: 4px;
