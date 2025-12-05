@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.55
+ * Version: 2.0.0.56
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.55' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.56' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -7404,14 +7404,18 @@ function order_sync_main_page() {
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales/Donations</h2></div>
                         <div class="inside">
-                            <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
-                            <p class="subsales-address-data-label" style="margin: 4px 0 0 0; font-size: 13px; color: #666; text-align: center;">
-                                Product Sales
-                            </p>
-                            <p class="stat-value" style="font-size: 24px; margin-top: 8px;"><?php echo '$' . number_format( (float) $donations_total, 2 ); ?></p>
-                            <p class="subsales-address-data-label" style="margin: 4px 0 0 0; font-size: 13px; color: #666; text-align: center;">
-                                Donations
-                            </p>
+                            <div style="margin-bottom: 16px;">
+                                <p class="subsales-address-data-label" style="margin: 0 0 4px 0; font-size: 12px; color: #666; text-align: center;">
+                                    Product Sales
+                                </p>
+                                <p class="stat-value" style="font-size: 28px; margin: 0;"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
+                            </div>
+                            <div>
+                                <p class="subsales-address-data-label" style="margin: 0 0 4px 0; font-size: 12px; color: #666; text-align: center;">
+                                    Donations
+                                </p>
+                                <p class="stat-value" style="font-size: 28px; margin: 0;"><?php echo '$' . number_format( (float) $donations_total, 2 ); ?></p>
+                            </div>
                         </div>
                     </div>
                     <div class="postbox subsales-box">
