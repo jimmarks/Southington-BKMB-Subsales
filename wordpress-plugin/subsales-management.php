@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.54
+ * Version: 2.0.0.55
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.54' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.55' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -7249,8 +7249,9 @@ function order_sync_main_page() {
                 })();
                 </script>
                 <?php
-                // Compute financial summary (sales, cash, checks) by scanning existing orders
-                $sales_total = 0.0;
+                // Compute financial summary (product sales, donations, cash, checks) by scanning existing orders
+                $product_sales_total = 0.0;
+                $donations_total = 0.0;
                 $cash_total = 0.0;
                 $check_total = 0.0;
                 $rows_fin = $wpdb->get_results( "SELECT order_data FROM {$orders_table}", ARRAY_A );
@@ -7259,12 +7260,13 @@ function order_sync_main_page() {
                     foreach ( $rows_fin as $rf ) {
                         $od = json_decode( $rf['order_data'], true );
                         if ( ! is_array( $od ) ) continue;
-                        $order_total = 0.0;
+                        $order_product_total = 0.0;
+                        $order_donation = 0.0;
                         if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
                             foreach ( $od['products'] as $pr ) {
                                 $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
                                 $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
-                                if ( $qty > 0 ) $order_total += $qty * $price;
+                                if ( $qty > 0 ) $order_product_total += $qty * $price;
                             }
                         } else {
                             if ( is_array( $conf_prods_for_fin ) ) {
@@ -7273,13 +7275,15 @@ function order_sync_main_page() {
                                     $price = isset( $p['price'] ) ? floatval( $p['price'] ) : 0.0;
                                     $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
                                     foreach ( $labels as $k ) {
-                                        if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_total += $q * $price; break; }
+                                        if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_product_total += $q * $price; break; }
                                     }
                                 }
                             }
                         }
-                        if ( isset( $od['donationAmount'] ) ) $order_total += floatval( $od['donationAmount'] );
-                        $sales_total += $order_total;
+                        if ( isset( $od['donationAmount'] ) ) $order_donation = floatval( $od['donationAmount'] );
+                        $product_sales_total += $order_product_total;
+                        $donations_total += $order_donation;
+                        $order_total = $order_product_total + $order_donation;
                         $payment = '';
                         if ( isset( $od['paymentMethod'] ) && ! empty( $od['paymentMethod'] ) ) $payment = strtolower( $od['paymentMethod'] );
                         else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
@@ -7398,9 +7402,16 @@ function order_sync_main_page() {
                         </div>
                     </div>
                     <div class="postbox subsales-box">
-                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales</h2></div>
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales/Donations</h2></div>
                         <div class="inside">
-                            <p class="stat-value"><?php echo '$' . number_format( (float) $sales_total, 2 ); ?></p>
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
+                            <p class="subsales-address-data-label" style="margin: 4px 0 0 0; font-size: 13px; color: #666; text-align: center;">
+                                Product Sales
+                            </p>
+                            <p class="stat-value" style="font-size: 24px; margin-top: 8px;"><?php echo '$' . number_format( (float) $donations_total, 2 ); ?></p>
+                            <p class="subsales-address-data-label" style="margin: 4px 0 0 0; font-size: 13px; color: #666; text-align: center;">
+                                Donations
+                            </p>
                         </div>
                     </div>
                     <div class="postbox subsales-box">
