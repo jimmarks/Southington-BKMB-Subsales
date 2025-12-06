@@ -3,12 +3,12 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.96
+ * Version: 2.0.0.99
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
- * Tested up to: 6.4
- * Requires PHP: 7.4
+ * Tested up to: 6.9
+ * Requires PHP: 8.1
  * License: MIT
  * License URI: https://opensource.org/licenses/MIT
  * Text Domain: subsales-management
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.96' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.99' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -1155,6 +1155,16 @@ function order_sync_admin_menu() {
         'manage_options',
         'subsales-pwa-sessions',
         'subsales_pwa_sessions_page'
+    );
+    
+    // Hidden page for manifest viewer (not shown in menu)
+    add_submenu_page(
+        null, // Hidden from menu
+        'Delivery Manifest',
+        'Delivery Manifest',
+        'manage_options',
+        'subsales-manifest-viewer',
+        'subsales_manifest_viewer_page'
     );
 }
 
@@ -3114,11 +3124,11 @@ function order_sync_fetch_orders_ajax() {
                 $entered_by_name = $user_row->name;
             }
         }
-        // Normalize created_at to site-local timezone for display.
-        // Orders are stored in GMT, convert to local time for display.
+        // Normalize created_at to site-local timezone for display and timestamp calculations.
+        // Stored DB values may be in GMT/UTC; use get_date_from_gmt() to convert to site local time.
         $created_gmt = isset( $r['created_at'] ) ? $r['created_at'] : null;
         if ( $created_gmt ) {
-            // Convert from GMT to local time using WordPress timezone
+            // get_date_from_gmt returns a formatted date string in the site's timezone
             $created_local_str = get_date_from_gmt( $created_gmt );
             $created_ts = strtotime( $created_local_str );
             $created_formatted = date_i18n( 'M j, Y g:i A', $created_ts );
@@ -3771,17 +3781,17 @@ function order_sync_handle_generate_delivery_pdf() {
         $total_qty = array_sum( array_values( $products_map ) );
         if ( $total_qty <= 0 ) continue;
 
-        $address = isset( $od['address'] ) ? $od['address'] : '';
-        $unitFloorApt = isset( $od['unitFloorApt'] ) ? $od['unitFloorApt'] : '';
+        $address = isset( $od['address'] ) ? (string) $od['address'] : '';
+        $unitFloorApt = isset( $od['unitFloorApt'] ) ? (string) $od['unitFloorApt'] : '';
         if ( ! empty( $unitFloorApt ) ) {
             $address .= ', ' . $unitFloorApt;
         }
         
         if ( empty( $address ) ) continue;
 
-        $customer = isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['customerName'] ) ? $od['customerName'] : '' );
-        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['phone'] ) ? $od['phone'] : '' );
-        $notes = isset( $od['notes'] ) ? $od['notes'] : '';
+        $customer = isset( $od['customer'] ) ? (string) $od['customer'] : ( isset( $od['customerName'] ) ? (string) $od['customerName'] : '' );
+        $phone = isset( $od['cellNumber'] ) ? (string) $od['cellNumber'] : ( isset( $od['phone'] ) ? (string) $od['phone'] : '' );
+        $notes = isset( $od['notes'] ) ? (string) $od['notes'] : '';
 
         // Geocode address
         $coords = order_sync_geocode_address( $address );
@@ -3813,8 +3823,8 @@ function order_sync_handle_generate_delivery_pdf() {
         exit;
     }
 
-    // Generate HTML manifests for each individual
-    $html_files = array();
+    // Generate combined HTML manifest for all individuals
+    $all_manifests = array();
     
     foreach ( $by_individual as $individual_id => $data ) {
         $individual_name = $data['name'];
@@ -3823,40 +3833,22 @@ function order_sync_handle_generate_delivery_pdf() {
         // Optimize route using nearest-neighbor algorithm
         $optimized_orders = order_sync_optimize_route( $orders, $start_coords );
 
-        // Generate HTML for printing
-        $html_content = order_sync_generate_manifest_html( $individual_name, $optimized_orders, $start_address, $configured_products, $delivery_date );
-        
-        $filename = 'manifest-' . sanitize_file_name( $individual_name ) . '-' . date('Ymd') . '.html';
-        $html_files[ $filename ] = $html_content;
+        $all_manifests[] = array(
+            'name' => $individual_name,
+            'orders' => $optimized_orders
+        );
     }
 
-    // If single individual, show HTML page directly
-    if ( count( $html_files ) === 1 ) {
-        $content = array_values( $html_files )[0];
-        
-        header( 'Content-Type: text/html; charset=UTF-8' );
-        echo $content;
-        exit;
-    }
-
-    // Multiple individuals - create ZIP
-    $zipname = sys_get_temp_dir() . '/manifests-' . time() . '.zip';
-    $za = new ZipArchive();
-    if ( $za->open( $zipname, ZipArchive::CREATE | ZipArchive::OVERWRITE ) !== true ) {
-        wp_die( 'Could not create zip' );
-    }
-
-    foreach ( $html_files as $filename => $content ) {
-        $za->addFromString( $filename, $content );
-    }
-    $za->close();
-
-    // Send ZIP
-    header( 'Content-Type: application/zip' );
-    header( 'Content-Disposition: attachment; filename="delivery-manifests-' . date('Ymd_His') . '.zip"' );
-    header( 'Content-Length: ' . filesize( $zipname ) );
-    readfile( $zipname );
-    @unlink( $zipname );
+    // Generate combined HTML document
+    $combined_html = order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date );
+    
+    // Store HTML in transient for retrieval
+    $transient_key = 'subsales_manifest_' . md5( current_time( 'mysql' ) . wp_get_current_user()->ID );
+    set_transient( $transient_key, $combined_html, 300 ); // 5 minutes expiry
+    
+    // Redirect to viewer page
+    $viewer_url = add_query_arg( 'manifest_key', $transient_key, admin_url( 'admin.php?page=subsales-manifest-viewer' ) );
+    wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&manifest_url=' . urlencode( $viewer_url ) ) );
     exit;
 }
 
@@ -3921,8 +3913,177 @@ function order_sync_haversine_distance( $lat1, $lon1, $lat2, $lon2 ) {
     return $earth_radius * $c;
 }
 
-// Helper: Generate HTML manifest for printing
-function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products, $delivery_date = '' ) {
+// Helper: Generate combined HTML manifest for all individuals
+function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '' ) {
+    // Determine display date
+    $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
+    
+    // Build HTML with print-optimized CSS
+    $html = '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Manifests - ' . $display_date . '</title>
+    <style>
+        @media print {
+            @page { margin: 0.5in 0.5in 0.75in 0.5in; }
+            .page-break { page-break-after: always; }
+            .manifest-section { page-break-before: always; }
+            .manifest-section:first-child { page-break-before: auto; }
+            .delivery-stop { page-break-inside: avoid; }
+        }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; position: relative; }
+        h1 { font-size: 24pt; margin: 0 0 10px 0; }
+        h2 { font-size: 18pt; margin: 20px 0 10px 0; }
+        .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
+        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; background: #f9f9f9; }
+        .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
+        .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
+        .customer { font-size: 11pt; margin: 3px 0; }
+        .products { margin: 8px 0; }
+        .products-table { width: 100%; border-collapse: collapse; margin: 5px 0; }
+        .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
+        .products-table th { background: #e0e0e0; font-weight: bold; }
+        .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
+        .packing-page { margin-bottom: 40px; }
+        .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
+        .packing-table th, .packing-table td { border: 2px solid #000; padding: 12px; text-align: left; }
+        .packing-table th { background: #e0e0e0; font-weight: bold; }
+        .footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 20px; border-top: 1px solid #333; font-size: 10pt; background: white; }
+        .footer-line { margin: 2px 0; }
+        @media print {
+            .footer { position: fixed; bottom: 0.25in; }
+        }
+    </style>
+</head>
+<body>';
+
+    // Generate manifest for each individual
+    $manifest_index = 0;
+    foreach ( $all_manifests as $manifest ) {
+        $individual_name = $manifest['name'];
+        $orders = $manifest['orders'];
+        
+        // Calculate product totals for this individual's packing list
+        $product_totals = array();
+        foreach ( $configured_products as $p ) {
+            $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
+        }
+
+        foreach ( $orders as $order ) {
+            foreach ( $order['products_map'] as $pid => $qty ) {
+                if ( isset( $product_totals[ $pid ] ) ) {
+                    $product_totals[ $pid ]['qty'] += $qty;
+                }
+            }
+        }
+
+        // Calculate total pages for this seller: 2 packing lists + delivery manifest pages
+        $total_pages = 2 + count( $orders );
+        $current_page = 1;
+
+        // Add section break for new seller (except first one)
+        if ( $manifest_index > 0 ) {
+            $html .= '<div class="manifest-section"></div>';
+        }
+        
+        // FIRST PACKING LIST
+        $html .= '<div class="packing-page">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
+        foreach ( $product_totals as $pt ) {
+            if ( $pt['qty'] > 0 ) {
+                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
+            }
+        }
+        $html .= '</tbody></table>';
+        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '</div>';
+        $html .= '<div class="page-break"></div>';
+        $current_page++;
+        
+        // SECOND PACKING LIST (duplicate)
+        $html .= '<div class="packing-page">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
+        foreach ( $product_totals as $pt ) {
+            if ( $pt['qty'] > 0 ) {
+                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
+            }
+        }
+        $html .= '</tbody></table>';
+        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '</div>';
+        $html .= '<div class="page-break"></div>';
+        $current_page++;
+
+        // DELIVERY MANIFEST
+        $html .= '<div>';
+        $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( (string) $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
+        $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+
+        // Delivery stops
+        $stop_num = 1;
+        foreach ( $orders as $order ) {
+            $html .= '<div class="delivery-stop">';
+            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
+            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            
+            if ( ! empty( $order['customer'] ) ) {
+                $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+            
+            if ( ! empty( $order['phone'] ) ) {
+                $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+
+            // Products for this stop
+            $html .= '<div class="products"><strong>Products:</strong>';
+            $html .= '<table class="products-table">';
+            $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
+            $has_products = false;
+            foreach ( $order['products_map'] as $pid => $qty ) {
+                if ( $qty > 0 ) {
+                    $product_name = '';
+                    foreach ( $configured_products as $p ) {
+                        if ( $p['id'] === $pid ) {
+                            $product_name = $p['name'];
+                            break;
+                        }
+                    }
+                    $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
+                    $has_products = true;
+                }
+            }
+            if ( ! $has_products ) {
+                $html .= '<tr><td colspan="2">No products</td></tr>';
+            }
+            $html .= '</tbody></table></div>';
+
+            if ( ! empty( $order['notes'] ) ) {
+                $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+
+            $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+            $html .= '</div>';
+            $stop_num++;
+            $current_page++;
+        }
+        $html .= '</div>'; // end delivery manifest
+        $manifest_index++;
+    }
+    
+    $html .= '</body></html>';
+
+    return $html;
+}
+
+// Helper: Generate HTML manifest for printing (legacy - kept for compatibility)
+function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products ) {
     
     // Calculate product totals for packing list
     $product_totals = array();
@@ -3938,11 +4099,8 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
         }
     }
 
-    // Calculate total pages: 2 for packing lists + number of delivery stops
-    $total_pages = 2 + count( $orders );
-    
-    // Determine display date
-    $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
+    // Calculate total pages: 1 for packing list + number of delivery stops
+    $total_pages = 1 + count( $orders );
     
     // Build HTML content with print-optimized CSS
     $html = '<!DOCTYPE html>
@@ -3950,20 +4108,15 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delivery Manifest - ' . esc_html( $individual_name ) . '</title>
+    <title>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</title>
     <style>
-        /* Print-optimized styles */
         @media print {
-            @page { 
-                margin: 0.5in 0.5in 1in 0.5in; 
-                size: letter portrait;
-            }
-            body { margin: 0; }
-            .no-print { display: none !important; }
-            .manifest-section { page-break-after: always; }
-            .manifest-section:last-child { page-break-after: auto; }
+            @page { margin: 0.5in; }
+            .no-print { display: none; }
+            .delivery-stop { page-break-after: always; }
+            .delivery-stop:last-child { page-break-after: auto; }
         }
-        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; font-size: 12pt; }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0; font-size: 12pt; }
         h1 { font-size: 24pt; margin: 0 0 10px 0; }
         h2 { font-size: 18pt; margin: 20px 0 10px 0; }
         .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
@@ -3983,15 +4136,12 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
         .packing-table th, .packing-table td { border: 3px solid #000; padding: 15px; text-align: left; }
         .packing-table th { background: #f0f0f0; font-weight: bold; }
         .packing-table .total-row { font-weight: bold; background: #d0d0d0; font-size: 24pt; }
-        .footer { position: fixed; bottom: 0; left: 0.5in; right: 0.5in; height: 0.6in; font-size: 10pt; border-top: 1px solid #999; padding-top: 10px; }
-        .footer-left { float: left; width: 50%; text-align: left; }
-        .footer-right { float: right; width: 50%; text-align: right; }
     </style>
 </head>
 <body>';
 
-    // First Packing List (PAGE 1)
-    $html .= '<div class="manifest-page packing-list">';
+    // Packing List (FIRST PAGE)
+    $html .= '<div class="packing-list">';
     $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
     $html .= '<table class="packing-table">';
     $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
@@ -4007,56 +4157,29 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
     
     $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
     $html .= '</tbody></table>';
-    $html .= '<div class="footer">';
-    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
-    $html .= '<div class="footer-right">Page 1 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
-    $html .= '</div>';
-    $html .= '</div>';
-    
-    // Second Packing List (PAGE 2)
-    $html .= '<div class="manifest-page packing-list">';
-    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-    $html .= '<table class="packing-table">';
-    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
-    $html .= '<tbody>';
-    
-    foreach ( $product_totals as $pid => $data ) {
-        if ( $data['qty'] > 0 ) {
-            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
-        }
-    }
-    
-    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
-    $html .= '</tbody></table>';
-    $html .= '<div class="footer">';
-    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
-    $html .= '<div class="footer-right">Page 2 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
-    $html .= '</div>';
+    $html .= '<div class="page-number">Page 1 of ' . $total_pages . '</div>';
     $html .= '</div>';
 
     // Delivery Manifest (SUBSEQUENT PAGES)
-    $html .= '<div class="manifest-page">';
+    $html .= '<div class="manifest-section">';
     $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
     $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
-    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . date('F j, Y') . '</div>';
 
-    $html .= '</div>'; // Close delivery manifest header page
-    
-    // Delivery stops - each on its own page
+    // Delivery stops
     $stop_num = 1;
-    $page_num = 3; // Start at page 3 (two packing lists are pages 1-2)
+    $page_num = 2; // Start at page 2 (packing list is page 1)
     foreach ( $orders as $order ) {
-        $html .= '<div class="manifest-page">';
         $html .= '<div class="delivery-stop">';
         $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
-        $html .= '<div class="address">' . htmlspecialchars( $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+        $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';;
         
         if ( ! empty( $order['customer'] ) ) {
-            $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         }
         
         if ( ! empty( $order['phone'] ) ) {
-            $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         }
 
         // Products for this stop
@@ -4073,7 +4196,7 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
                         break;
                     }
                 }
-                $html .= '<tr><td>' . htmlspecialchars( $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
+                $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
                 $has_products = true;
             }
         }
@@ -4083,21 +4206,18 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
         $html .= '</tbody></table></div>';
 
         if ( ! empty( $order['notes'] ) ) {
-            $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         }
 
-        $html .= '</div>'; // Close delivery-stop
-        $html .= '<div class="footer">';
-        $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
-        $html .= '<div class="footer-right">Page ' . $page_num . ' of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '<div class="page-number">Page ' . $page_num . ' of ' . $total_pages . '</div>';
         $html .= '</div>';
-        $html .= '</div>'; // Close manifest-page
         $stop_num++;
         $page_num++;
     }
+    $html .= '</div>';
     
     $html .= '</body></html>';
-    
+
     return $html;
 }
 
@@ -4658,27 +4778,12 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
     }
     
-    // Legacy auth: X-Team-Name + X-Access-Code
-    $team_name = $request->get_header( 'X-Team-Name' );
-    $access_code = $request->get_header( 'X-Access-Code' );
-    
-    if ( ! empty( $team_name ) || ! empty( $access_code ) ) {
-        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-        if ( $team ) {
-            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
-            return true;
-        }
-        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
-        return false;
-    }
-    
-    // User-based auth: X-User-ID + X-Team-ID (Phase 4)
+    // User-based auth: X-User-ID (with optional X-Team-ID)
     $user_id = $request->get_header( 'X-User-ID' );
     $team_id = $request->get_header( 'X-Team-ID' );
     
-    if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
+    if ( ! empty( $user_id ) ) {
         $members_table = $wpdb->prefix . 'ss_team_members';
-        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
         
         // Verify user exists
         $user = $wpdb->get_row( $wpdb->prepare(
@@ -4691,19 +4796,40 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
             return false;
         }
         
-        // Verify user belongs to the team
-        $assignment = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-            intval( $user_id ),
-            intval( $team_id )
-        ));
-        
-        if ( $assignment ) {
-            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
-            return true;
+        // If team_id is provided and not -1 (individual mode), verify user belongs to team
+        if ( ! empty( $team_id ) && $team_id !== '-1' ) {
+            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+            $assignment = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+                intval( $user_id ),
+                intval( $team_id )
+            ));
+            
+            if ( $assignment ) {
+                error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
+                return true;
+            }
+            
+            error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
+            return false;
         }
         
-        error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
+        // Individual mode (team_id is -1 or empty) - user exists, allow access
+        error_log( 'Subsales: perm_check individual mode ok user_id=' . $user_id );
+        return true;
+    }
+    
+    // Legacy Team auth: X-Team-Name + X-Access-Code (both required)
+    $team_name = $request->get_header( 'X-Team-Name' );
+    $access_code = $request->get_header( 'X-Access-Code' );
+    
+    if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
+        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+        if ( $team ) {
+            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+            return true;
+        }
+        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
         return false;
     }
     
@@ -5930,7 +6056,7 @@ function order_sync_delivery_page() {
             <p class="submit"><button class="button">Generate Administrative CSV</button></p>
         </form>
 
-        <!-- Driver manifests workflow: individual-based routing and PDF generation -->
+        <!-- Driver manifests workflow: individual-based routing and HTML generation -->
         <h2 style="margin-top:18px">Generate Individual Delivery Manifests</h2>
         <p class="description">Generate optimized delivery routes for each team member based on their orders. Creates individual PDF manifests with packing lists.</p>
         <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
@@ -5949,8 +6075,4919 @@ function order_sync_delivery_page() {
                 </tr>
             </table>
             <p class="submit">
-                <button type="submit" class="button button-primary">Generate Individual Manifests (PDF)</button>
+                <button type="submit" class="button button-primary">Generate Individual Manifests (HTML)</button>
             </p>
         </form>
 
-        <div id="subsales_preview_modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rg
+        <div id="subsales_preview_modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:99999;">
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:90%; max-width:1000px; height:80%; background:#fff; border-radius:6px; overflow:hidden;">
+                <div style="padding:8px; background:#f5f5f5; border-bottom:1px solid #e5e5e5; display:flex; align-items:center; justify-content:space-between;">
+                    <strong>Route preview</strong>
+                    <div>
+                        <button id="subsales_preview_close" class="button">Close</button>
+                    </div>
+                </div>
+                <div id="subsales_preview_map" style="width:100%; height:calc(100% - 44px);"></div>
+            </div>
+        </div>
+
+        <script>
+        (function(){
+            const ajaxUrl = ajaxurl;
+            const previewNonce = <?php echo json_encode( wp_create_nonce( 'subsales_delivery_preview' ) ); ?>;
+            const previewBtn = document.getElementById('sdm_preview_btn');
+            const modal = document.getElementById('subsales_preview_modal');
+            const closeBtn = document.getElementById('subsales_preview_close');
+            let mapInstance = null;
+            let googleApiLoaded = false;
+
+            function loadGoogleMaps(key){
+                return new Promise(function(resolve,reject){
+                    if ( window.google && window.google.maps ) return resolve(window.google.maps);
+                    const s = document.createElement('script');
+                    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key);
+                    s.async = true; s.defer = true;
+                    s.onload = function(){ googleApiLoaded = true; resolve(window.google.maps); };
+                    s.onerror = function(){ reject(new Error('Failed to load Google Maps')); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            function buildColor(i){
+                const palette = ['#1E90FF','#FF4500','#32CD32','#FFD700','#8A2BE2','#FF1493','#00CED1','#FF8C00','#00BFFF','#228B22'];
+                return palette[i % palette.length];
+            }
+
+            function renderPreview(data){
+                const products = data.products || [];
+                const drivers = data.drivers || {};
+                const apiKey = data.api_key || '';
+                if ( ! apiKey ) { alert('No Google Maps API key configured in Settings → Overall.'); return; }
+                loadGoogleMaps(apiKey).then(function(gmaps){
+                    modal.style.display = 'block';
+                    // create map
+                    if ( mapInstance ) { /* reuse center */ }
+                    const mapDiv = document.getElementById('subsales_preview_map');
+                    mapDiv.innerHTML = '';
+                    mapInstance = new gmaps.Map(mapDiv, { zoom: 12, center: { lat: 41.0, lng: -73.0 } });
+                    const bounds = new gmaps.LatLngBounds();
+                    Object.keys(drivers).forEach(function(dk, idx){
+                        const rows = drivers[dk];
+                        const path = [];
+                        rows.forEach(function(r, ridx){
+                            if ( r.lat && r.lng ) {
+                                const pos = { lat: parseFloat(r.lat), lng: parseFloat(r.lng) };
+                                path.push(pos);
+                                const marker = new gmaps.Marker({ position: pos, map: mapInstance, title: r.address_raw, label: String(idx+1) });
+                                bounds.extend(pos);
+                            }
+                        });
+                        if ( path.length > 0 ) {
+                            const poly = new gmaps.Polyline({ path: path, geodesic: true, strokeColor: buildColor(idx), strokeOpacity: 0.8, strokeWeight: 3 });
+                            poly.setMap(mapInstance);
+                        }
+                    });
+                    if ( ! bounds.isEmpty() ) mapInstance.fitBounds(bounds);
+                }).catch(function(err){ alert('Map load error: ' + err.message); });
+            }
+
+            previewBtn && previewBtn.addEventListener('click', function(){
+                const fd = new FormData();
+                fd.append('action','subsales_delivery_preview');
+                fd.append('_ajax_nonce', previewNonce);
+                fd.append('start_address', document.getElementById('sdm_start_address').value || '');
+                fd.append('delivery_date', document.getElementById('sdm_delivery_date').value || '');
+                fd.append('driver_count', document.getElementById('sdm_driver_count').value || '2');
+                fetch(ajaxUrl, { method:'POST', body: fd }).then(r=>r.json()).then(function(j){
+                    if ( ! j || ! j.success ) { alert('Preview error: ' + (j && j.data ? j.data : 'Unknown')); return; }
+                    renderPreview(j.data);
+                }).catch(function(e){ alert('Fetch error: ' + e.message); });
+            });
+            closeBtn && closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
+        })();
+        </script>
+
+        <h2 style="margin-top:24px">Geocoding & limits</h2>
+        <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
+        
+        <?php if ( isset( $_GET['manifest_url'] ) ): ?>
+        <script>
+        (function() {
+            const manifestUrl = <?php echo json_encode( esc_url_raw( $_GET['manifest_url'] ) ); ?>;
+            window.open(manifestUrl, '_blank');
+        })();
+        </script>
+        <?php endif; ?>
+    </div>
+    <?php
+}
+
+// Manifest viewer page (hidden, accessed via transient key)
+function subsales_manifest_viewer_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Insufficient permissions' );
+    }
+    
+    $manifest_key = isset( $_GET['manifest_key'] ) ? sanitize_text_field( $_GET['manifest_key'] ) : '';
+    
+    if ( empty( $manifest_key ) ) {
+        wp_die( 'No manifest key provided' );
+    }
+    
+    $html = get_transient( $manifest_key );
+    
+    if ( $html === false ) {
+        wp_die( 'Manifest not found or expired. Please generate a new manifest.' );
+    }
+    
+    // Delete transient after retrieval for security
+    delete_transient( $manifest_key );
+    
+    // Output the HTML directly (not wrapped in WordPress admin)
+    echo $html;
+    exit;
+}
+
+// Handle generate delivery export (admin POST)
+add_action( 'admin_post_subsales_generate_delivery', 'order_sync_handle_generate_delivery' );
+function order_sync_handle_generate_delivery() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( $_POST['_wpnonce'], 'subsales_generate_delivery' ) ) wp_die( 'Invalid nonce' );
+
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_orders';
+
+    // Delivery date is optional; when omitted export ALL orders.
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
+    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( $_POST['start_address'] ) : '';
+    update_option( 'order_sync_delivery_start_address', $start_address );
+    $driver_count = isset( $_POST['driver_count'] ) ? max(1, intval( $_POST['driver_count'] )) : 2;
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        // No date supplied: export all orders
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // Build orders list, group by normalized address
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+
+        // build products_map like other code
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            // fallback legacy fields
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) {
+                            if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                            $products_map[ $pid ] += $q;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // skip donations / orders with no product quantities
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue;
+
+        // extract fields
+        $team_name = '';
+        if ( ! empty( $r['team_id'] ) ) {
+            $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", intval( $r['team_id'] ) ) );
+            $team_name = $t ? $t->name : '';
+        }
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue; // skip if no address
+
+        // products string
+        $prod_strs = array();
+        foreach ( $products_map as $pid => $q ) {
+            if ( $q > 0 ) {
+                // find product name
+                $pname = $pid;
+                foreach ( $configured_products as $pconf ) { if ( $pconf['id'] === $pid ) { $pname = $pconf['name']; break; } }
+                $prod_strs[] = $pname . ' × ' . intval( $q );
+            }
+        }
+
+        $entry = array(
+            'order_id' => $r['order_id'],
+            'team' => $team_name,
+            'seller' => $seller,
+            'address_raw' => $address_raw,
+            'address_norm' => $addr_norm,
+            'products_map' => $products_map,
+            'products_str' => implode('; ', $prod_strs),
+            'customer' => $customer,
+            'phone' => $phone,
+            'total_qty' => $total_qty,
+        );
+
+        // combine by normalized address
+        if ( ! isset( $by_address[ $addr_norm ] ) ) {
+            $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'orders' => array() );
+        }
+        $by_address[ $addr_norm ]['orders'][] = $entry;
+    }
+
+    // build flattened list of manifest rows: combine duplicate addresses into single row with aggregated product counts and order ids
+    $manifest_rows = array();
+    foreach ( $by_address as $addr_norm => $group ) {
+        $combined_products = array();
+        foreach ( $configured_products as $p ) { $combined_products[ $p['id'] ] = 0; }
+        $order_ids = array();
+        $team = '';
+        $seller = '';
+        $customer = '';
+        $phone = '';
+        foreach ( $group['orders'] as $o ) {
+            $order_ids[] = $o['order_id'];
+            foreach ( $o['products_map'] as $pid => $q ) { if ( ! isset( $combined_products[ $pid ] ) ) $combined_products[ $pid ] = 0; $combined_products[ $pid ] += intval( $q ); }
+            // keep first non-empty team/seller/customer/phone as representative (driver manifest will include order ids)
+            if ( empty( $team ) && ! empty( $o['team'] ) ) $team = $o['team'];
+            if ( empty( $seller ) && ! empty( $o['seller'] ) ) $seller = $o['seller'];
+            if ( empty( $customer ) && ! empty( $o['customer'] ) ) $customer = $o['customer'];
+            if ( empty( $phone ) && ! empty( $o['phone'] ) ) $phone = $o['phone'];
+        }
+        // build products string
+        $prod_list = array();
+        foreach ( $combined_products as $pid => $q ) {
+            if ( $q > 0 ) {
+                $pname = $pid;
+                foreach ( $configured_products as $pconf ) { if ( $pconf['id'] === $pid ) { $pname = $pconf['name']; break; } }
+                $prod_list[] = $pname . ' × ' . intval( $q );
+            }
+        }
+
+        $manifest_rows[] = array(
+            'address_raw' => $group['address_raw'],
+            'address_norm' => $addr_norm,
+            'products_map' => $combined_products,
+            'products_str' => implode('; ', $prod_list),
+            'order_ids' => $order_ids,
+            'team' => $team,
+            'seller' => $seller,
+            'customer' => $customer,
+            'phone' => $phone,
+        );
+    }
+
+    // Assign to drivers evenly by order count (user requested even distribution by orders).
+    // Use a greedy assignment: sort manifest rows by descending order count and assign each row
+    // to the driver that currently has the fewest assigned orders. This balances number of
+    // orders per driver even when some addresses represent multiple orders.
+    $drivers = array();
+    $driver_counts = array();
+    for ( $i = 1; $i <= $driver_count; $i++ ) { $drivers[ $i ] = array(); $driver_counts[ $i ] = 0; }
+
+    // sort manifest rows by descending number of orders at that address
+    usort( $manifest_rows, function( $a, $b ) {
+        $ca = isset( $a['order_ids'] ) ? count( $a['order_ids'] ) : 0;
+        $cb = isset( $b['order_ids'] ) ? count( $b['order_ids'] ) : 0;
+        return $cb - $ca;
+    } );
+
+    foreach ( $manifest_rows as $mr ) {
+        $count_here = isset( $mr['order_ids'] ) ? count( $mr['order_ids'] ) : 1;
+        // find driver with minimum assigned orders
+        $min_driver = null;
+        $min_count = null;
+        foreach ( $driver_counts as $dnum => $cnt ) {
+            if ( $min_driver === null || $cnt < $min_count ) { $min_driver = $dnum; $min_count = $cnt; }
+        }
+        $drivers[ $min_driver ][] = $mr;
+        $driver_counts[ $min_driver ] += $count_here;
+    }
+
+    // If no orders were found or no manifest rows after filtering, redirect back with a notice
+    if ( empty( $rows ) ) {
+        $msg = rawurlencode( 'No orders found for ' . $delivery_date );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+    if ( empty( $manifest_rows ) ) {
+        $msg = rawurlencode( 'No valid product orders found for ' . $delivery_date . '. Check products configuration and order data.' );
+        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
+        exit;
+    }
+
+    // Stream CSV: single CSV with Driver column and per-product columns
+    $filename = 'delivery_manifest_' . ( $delivery_date ? $delivery_date : 'all' ) . '_' . date('Ymd_His') . '.csv';
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+    $out = fopen( 'php://output', 'w' );
+    // header row: Driver, Address, <product columns...>, Customer, Phone, Seller
+    $headers = array( 'Driver', 'Address' );
+    foreach ( $configured_products as $pcol ) { $headers[] = $pcol['name']; }
+    $headers = array_merge( $headers, array( 'Customer Name', 'Phone', 'Seller' ) );
+    fputcsv( $out, $headers );
+
+    foreach ( $drivers as $dnum => $drows ) {
+        foreach ( $drows as $r ) {
+            $row = array();
+            $row[] = $dnum;
+            $row[] = $r['address_raw'];
+            // product columns
+            foreach ( $configured_products as $pcol ) {
+                $pid = $pcol['id'];
+                $row[] = isset( $r['products_map'][ $pid ] ) ? intval( $r['products_map'][ $pid ] ) : 0;
+            }
+            $row[] = $r['customer'];
+            $row[] = $r['phone'];
+            $row[] = $r['seller'];
+            fputcsv( $out, $row );
+        }
+    }
+    fclose( $out );
+    exit;
+}
+
+// System Logs page - view all logging activity with filters
+function subsales_logs_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    
+    global $wpdb;
+    $logs_table = $wpdb->prefix . 'ss_logs';
+    
+    // Handle debug mode toggle via AJAX (handled separately)
+    $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
+    $debug_started = get_option( 'subsales_debug_logging_started', 0 );
+    $debug_remaining = 0;
+    if ( $debug_enabled && $debug_started ) {
+        $elapsed = time() - $debug_started;
+        $debug_remaining = max( 0, ( 24 * 3600 ) - $elapsed );
+    }
+    
+    // Get filter parameters
+    $level_filter = isset( $_GET['level'] ) ? sanitize_text_field( $_GET['level'] ) : 'all';
+    $category_filter = isset( $_GET['category'] ) ? sanitize_text_field( $_GET['category'] ) : 'all';
+    $source_filter = isset( $_GET['source'] ) ? sanitize_text_field( $_GET['source'] ) : 'all';
+    $date_filter = isset( $_GET['date_range'] ) ? sanitize_text_field( $_GET['date_range'] ) : 'today';
+    $search_query = isset( $_GET['search'] ) ? sanitize_text_field( $_GET['search'] ) : '';
+    
+    // Show debug logs by default when debug mode is active, or when explicitly requested
+    // User can uncheck the box to hide them
+    $show_debug_default = $debug_enabled ? '1' : '0';
+    $show_debug = isset( $_GET['show_debug'] ) ? ( $_GET['show_debug'] === '1' ) : ( $show_debug_default === '1' );
+    
+    // Build WHERE clause
+    $where = array( '1=1' );
+    
+    if ( $level_filter !== 'all' ) {
+        $where[] = $wpdb->prepare( 'log_level = %s', strtoupper( $level_filter ) );
+    }
+    
+    if ( $category_filter !== 'all' ) {
+        $where[] = $wpdb->prepare( 'category = %s', $category_filter );
+    }
+    
+    if ( $source_filter !== 'all' ) {
+        $where[] = $wpdb->prepare( 'source = %s', $source_filter );
+    }
+    
+    // Date range filter
+    switch ( $date_filter ) {
+        case 'hour':
+            $where[] = "created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)";
+            break;
+        case 'today':
+            $where[] = "DATE(created_at) = CURDATE()";
+            break;
+        case 'week':
+            $where[] = "created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+            break;
+    }
+    
+    // Debug filter
+    if ( ! $show_debug ) {
+        $where[] = "is_debug = 0";
+    }
+    
+    // Search filter
+    if ( ! empty( $search_query ) ) {
+        $where[] = $wpdb->prepare( 'message LIKE %s', '%' . $wpdb->esc_like( $search_query ) . '%' );
+    }
+    
+    $where_sql = implode( ' AND ', $where );
+    
+    // Pagination
+    $per_page = 500;
+    $page = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    $offset = ( $page - 1 ) * $per_page;
+    
+    // Get total count
+    $total_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$logs_table} WHERE {$where_sql}" );
+    
+    // Get logs
+    $logs = $wpdb->get_results(
+        "SELECT * FROM {$logs_table} 
+         WHERE {$where_sql} 
+         ORDER BY created_at DESC 
+         LIMIT {$per_page} OFFSET {$offset}",
+        ARRAY_A
+    );
+    
+    $total_pages = ceil( $total_count / $per_page );
+    
+    ?>
+    <div class="wrap subsales-logs-page">
+        <h1>System Logs</h1>
+        
+        <!-- Debug Diagnostics -->
+        <?php if ( isset( $_GET['diagnostics'] ) && $_GET['diagnostics'] === '1' ): ?>
+        <div class="notice notice-info" style="padding: 20px; margin: 20px 0;">
+            <h2>🔍 Debug System Diagnostics</h2>
+            
+            <h3>Option Values:</h3>
+            <table class="wp-list-table widefat" style="margin: 10px 0;">
+                <tr>
+                    <td><strong>subsales_debug_logging_enabled</strong></td>
+                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_enabled', 'NOT SET' ) ); ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>subsales_debug_logging_started</strong></td>
+                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_started', 'NOT SET' ) ); ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>Current Time</strong></td>
+                    <td><code><?php echo time(); ?></code> (<?php echo date( 'Y-m-d H:i:s', time() ); ?>)</td>
+                </tr>
+                <tr>
+                    <td><strong>Started Time</strong></td>
+                    <td><code><?php echo $debug_started; ?></code> 
+                        <?php if ( $debug_started ): ?>
+                            (<?php echo date( 'Y-m-d H:i:s', $debug_started ); ?>)
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>Elapsed Seconds</strong></td>
+                    <td><code><?php echo $debug_started ? ( time() - $debug_started ) : 'N/A'; ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>Remaining Seconds</strong></td>
+                    <td><code><?php echo $debug_remaining; ?></code></td>
+                </tr>
+            </table>
+            
+            <h3>Calculated Values:</h3>
+            <pre><?php
+                echo "debug_enabled: " . var_export( $debug_enabled, true ) . "\n";
+                echo "debug_started: " . var_export( $debug_started, true ) . "\n";
+                echo "debug_remaining: " . var_export( $debug_remaining, true ) . "\n";
+                echo "24 hours in seconds: 86400\n";
+                if ( $debug_started ) {
+                    echo "Should expire at: " . date( 'Y-m-d H:i:s', $debug_started + 86400 ) . "\n";
+                }
+            ?></pre>
+            
+            <h3>Test Log Entry:</h3>
+            <?php
+                // Write a test log with DEBUG level
+                $test_time = time();
+                Subsales_Database::log( 'DEBUG', 'system', 'Diagnostics test log entry at ' . date('Y-m-d H:i:s', $test_time), array(
+                    'test_id' => $test_time,
+                    'debug_enabled' => $debug_enabled,
+                    'debug_started' => $debug_started
+                ), 'diagnostics' );
+                echo '<p style="color: green;">✓ Test DEBUG log written at ' . date('Y-m-d H:i:s', $test_time) . '</p>';
+            ?>
+            
+            <h3>Recent Logs from Database:</h3>
+            <?php
+                global $wpdb;
+                $logs_table = $wpdb->prefix . 'ss_logs';
+                $recent_logs = $wpdb->get_results( "SELECT * FROM {$logs_table} ORDER BY created_at DESC LIMIT 5", ARRAY_A );
+                echo '<pre>';
+                print_r( $recent_logs );
+                echo '</pre>';
+            ?>
+            
+            <p><a href="?page=subsales-logs" class="button">Back to Logs (without diagnostics)</a></p>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Debug Mode Toggle -->
+        <div class="subsales-debug-toggle" style="background: #fff; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; border: 1px solid #ddd; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; padding: 15px; margin: 20px 0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>Debug Logging:</strong> 
+                    <span id="debug-status"><?php echo $debug_enabled ? 'ACTIVE' : 'Disabled'; ?></span>
+                    <?php if ( $debug_enabled && $debug_remaining > 0 ): ?>
+                        <span id="debug-timer" style="margin-left: 10px; font-family: monospace;">
+                            (<?php echo gmdate( 'H:i:s', $debug_remaining ); ?> remaining)
+                        </span>
+                    <?php endif; ?>
+                    <a href="?page=subsales-logs&diagnostics=1" class="button button-small" style="margin-left: 15px;">Run Diagnostics</a>
+                </div>
+                <button id="toggle-debug-btn" class="button button-<?php echo $debug_enabled ? 'secondary' : 'primary'; ?>">
+                    <?php echo $debug_enabled ? 'Disable Debug Mode' : 'Enable Debug Mode'; ?>
+                </button>
+            </div>
+            <?php if ( $debug_enabled ): ?>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #856404;">
+                    ⚠️ Debug mode generates high volume logs. It will automatically disable after 24 hours.
+                </p>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Filters -->
+        <form method="get" action="" style="background: #fff; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
+            <input type="hidden" name="page" value="subsales-logs">
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 10px;">
+                <div>
+                    <label>Log Level:</label>
+                    <select name="level">
+                        <option value="all" <?php selected( $level_filter, 'all' ); ?>>All Levels</option>
+                        <option value="debug" <?php selected( $level_filter, 'debug' ); ?>>DEBUG</option>
+                        <option value="info" <?php selected( $level_filter, 'info' ); ?>>INFO</option>
+                        <option value="warning" <?php selected( $level_filter, 'warning' ); ?>>WARNING</option>
+                        <option value="error" <?php selected( $level_filter, 'error' ); ?>>ERROR</option>
+                        <option value="critical" <?php selected( $level_filter, 'critical' ); ?>>CRITICAL</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label>Category:</label>
+                    <select name="category">
+                        <option value="all" <?php selected( $category_filter, 'all' ); ?>>All Categories</option>
+                        <option value="auth" <?php selected( $category_filter, 'auth' ); ?>>Authentication</option>
+                        <option value="orders" <?php selected( $category_filter, 'orders' ); ?>>Orders</option>
+                        <option value="sync" <?php selected( $category_filter, 'sync' ); ?>>Sync</option>
+                        <option value="api" <?php selected( $category_filter, 'api' ); ?>>API</option>
+                        <option value="zip" <?php selected( $category_filter, 'zip' ); ?>>ZIP Extracts</option>
+                        <option value="system" <?php selected( $category_filter, 'system' ); ?>>System</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label>Source:</label>
+                    <select name="source">
+                        <option value="all" <?php selected( $source_filter, 'all' ); ?>>All Sources</option>
+                        <option value="admin" <?php selected( $source_filter, 'admin' ); ?>>Admin</option>
+                        <option value="pwa" <?php selected( $source_filter, 'pwa' ); ?>>PWA</option>
+                        <option value="api" <?php selected( $source_filter, 'api' ); ?>>API</option>
+                        <option value="cron" <?php selected( $source_filter, 'cron' ); ?>>Cron</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label>Time Range:</label>
+                    <select name="date_range">
+                        <option value="hour" <?php selected( $date_filter, 'hour' ); ?>>Last Hour</option>
+                        <option value="today" <?php selected( $date_filter, 'today' ); ?>>Today</option>
+                        <option value="week" <?php selected( $date_filter, 'week' ); ?>>Last 7 Days</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label>
+                        <input type="checkbox" name="show_debug" value="1" <?php checked( $show_debug ); ?>>
+                        Include DEBUG Logs
+                    </label>
+                    <?php if ( $debug_enabled ): ?>
+                        <br><small style="color: #28a745;">✓ Debug mode active - DEBUG logs shown by default</small>
+                    <?php else: ?>
+                        <br><small style="color: #6c757d;">Debug mode off - check to view old DEBUG logs</small>
+                    <?php endif; ?>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; align-items: flex-end;">
+                <div style="flex: 1;">
+                    <label>Search Message:</label>
+                    <input type="text" name="search" value="<?php echo esc_attr( $search_query ); ?>" style="width: 100%;" placeholder="Search log messages...">
+                </div>
+                
+                <button type="submit" class="button button-primary">Apply Filters</button>
+                <a href="?page=subsales-logs" class="button">Reset</a>
+                <button type="button" id="download-logs-btn" class="button">Download Current View</button>
+                <label style="margin-left: 15px;">
+                    <input type="checkbox" id="auto-refresh-toggle" checked> Auto-refresh (5s)
+                </label>
+            </div>
+        </form>
+        
+        <!-- Logs Table -->
+        <div class="logs-container">
+            <p><strong><?php echo number_format( $total_count ); ?></strong> log entries found</p>
+            
+            <table class="wp-list-table widefat fixed striped" id="logs-table">
+                <thead>
+                    <tr>
+                        <th style="width: 140px;">Time</th>
+                        <th style="width: 80px;">Level</th>
+                        <th style="width: 100px;">Category</th>
+                        <th style="width: 80px;">Source</th>
+                        <th style="width: 120px;">User</th>
+                        <th>Message</th>
+                        <th style="width: 60px;">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ( empty( $logs ) ): ?>
+                        <tr><td colspan="7" style="text-align: center; padding: 40px;">No logs found matching your filters.</td></tr>
+                    <?php else: ?>
+                        <?php foreach ( $logs as $log ): 
+                            $level_class = 'log-level-' . strtolower( $log['log_level'] );
+                            $has_context = ! empty( $log['context_json'] );
+                        ?>
+                            <tr class="<?php echo esc_attr( $level_class ); ?>">
+                                <td><?php echo esc_html( $log['created_at'] ); ?></td>
+                                <td><span class="log-badge log-badge-<?php echo esc_attr( strtolower( $log['log_level'] ) ); ?>"><?php echo esc_html( $log['log_level'] ); ?></span></td>
+                                <td><?php echo esc_html( $log['category'] ); ?></td>
+                                <td><?php echo esc_html( $log['source'] ); ?></td>
+                                <td><?php echo $log['user_name'] ? esc_html( $log['user_name'] ) : '-'; ?></td>
+                                <td><?php echo esc_html( $log['message'] ); ?></td>
+                                <td>
+                                    <?php if ( $has_context ): ?>
+                                        <button class="button button-small view-context-btn" data-context="<?php echo esc_attr( $log['context_json'] ); ?>">View</button>
+                                    <?php else: ?>
+                                        -
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+            
+            <!-- Pagination -->
+            <?php if ( $total_pages > 1 ): ?>
+                <div class="tablenav" style="margin-top: 20px;">
+                    <div class="tablenav-pages">
+                        <?php
+                        $page_links = paginate_links( array(
+                            'base' => add_query_arg( 'paged', '%#%' ),
+                            'format' => '',
+                            'prev_text' => '&laquo; Previous',
+                            'next_text' => 'Next &raquo;',
+                            'total' => $total_pages,
+                            'current' => $page
+                        ) );
+                        echo $page_links;
+                        ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Context Modal -->
+        <div id="context-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100000; align-items: center; justify-content: center;">
+            <div style="background: #fff; padding: 20px; border-radius: 4px; max-width: 800px; max-height: 80vh; overflow: auto;">
+                <h2>Log Context Details</h2>
+                <pre id="context-content" style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto;"></pre>
+                <button class="button" id="close-context-modal">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+        .log-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .log-badge-debug { background: #6c757d; color: #fff; }
+        .log-badge-info { background: #0d6efd; color: #fff; }
+        .log-badge-warning { background: #ffc107; color: #000; }
+        .log-badge-error { background: #dc3545; color: #fff; }
+        .log-badge-critical { background: #6f2232; color: #fff; }
+        
+        .log-level-error td { background-color: #fff5f5; }
+        .log-level-critical td { background-color: #ffe6e6; }
+        .log-level-warning td { background-color: #fffbf0; }
+    </style>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        // Debug toggle
+        $('#toggle-debug-btn').on('click', function() {
+            const btn = $(this);
+            btn.prop('disabled', true).text('Processing...');
+            
+            $.post(ajaxurl, {
+                action: 'subsales_toggle_debug',
+                nonce: '<?php echo wp_create_nonce( 'subsales_debug_toggle' ); ?>'
+            }, function(response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + (response.data || 'Unknown error'));
+                    btn.prop('disabled', false);
+                }
+            });
+        });
+        
+        // View context modal
+        $('.view-context-btn').on('click', function() {
+            const context = $(this).data('context');
+            try {
+                const formatted = JSON.stringify(JSON.parse(context), null, 2);
+                $('#context-content').text(formatted);
+            } catch(e) {
+                $('#context-content').text(context);
+            }
+            $('#context-modal').css('display', 'flex');
+        });
+        
+        $('#close-context-modal, #context-modal').on('click', function(e) {
+            if (e.target === this) {
+                $('#context-modal').hide();
+            }
+        });
+        
+        // Download logs
+        $('#download-logs-btn').on('click', function() {
+            const params = new URLSearchParams(window.location.search);
+            params.set('download', '1');
+            window.location.href = '?' + params.toString();
+        });
+        
+        // Auto-refresh
+        let refreshInterval = null;
+        let refreshCountdown = 5;
+        
+        function startAutoRefresh() {
+            if (refreshInterval) return;
+            refreshInterval = setInterval(function() {
+                if (refreshCountdown <= 0) {
+                    location.reload();
+                } else {
+                    refreshCountdown--;
+                }
+            }, 1000);
+        }
+        
+        function stopAutoRefresh() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+                refreshCountdown = 5;
+            }
+        }
+        
+        $('#auto-refresh-toggle').on('change', function() {
+            if ($(this).is(':checked')) {
+                startAutoRefresh();
+            } else {
+                stopAutoRefresh();
+            }
+        });
+        
+        // Start auto-refresh by default
+        if ($('#auto-refresh-toggle').is(':checked')) {
+            startAutoRefresh();
+        }
+        
+        // Update debug timer
+        <?php if ( $debug_enabled && $debug_remaining > 0 ): ?>
+        let remaining = <?php echo $debug_remaining; ?>;
+        setInterval(function() {
+            if (remaining > 0) {
+                remaining--;
+                const hours = Math.floor(remaining / 3600);
+                const mins = Math.floor((remaining % 3600) / 60);
+                const secs = remaining % 60;
+                $('#debug-timer').text('(' + 
+                    String(hours).padStart(2, '0') + ':' + 
+                    String(mins).padStart(2, '0') + ':' + 
+                    String(secs).padStart(2, '0') + ' remaining)');
+            }
+        }, 1000);
+        <?php endif; ?>
+    });
+    </script>
+    <?php
+}
+
+/**
+ * PWA Sessions Admin Page
+ * Shows active and historical PWA client sessions with real-time monitoring
+ */
+function subsales_pwa_sessions_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    
+    // Get active sessions
+    $active_sessions = Subsales_Database::get_active_pwa_sessions( 50 );
+    $active_count = count( $active_sessions );
+    
+    // DEBUG: Output raw query result for troubleshooting
+    if ( current_user_can( 'manage_options' ) ) {
+        error_log( 'PWA Sessions Debug - Active Sessions Count: ' . $active_count );
+        error_log( 'PWA Sessions Debug - Active Sessions Data: ' . print_r( $active_sessions, true ) );
+    }
+    
+    // Get filter parameters
+    $status_filter = isset( $_GET['status'] ) ? sanitize_text_field( $_GET['status'] ) : 'active';
+    $team_filter = isset( $_GET['team_id'] ) ? intval( $_GET['team_id'] ) : null;
+    
+    // Get all sessions with pagination
+    $per_page = 50;
+    $page = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    $offset = ( $page - 1 ) * $per_page;
+    
+    $sessions = Subsales_Database::get_pwa_sessions( array(
+        'status' => $status_filter === 'all' ? 'all' : $status_filter,
+        'team_id' => $team_filter,
+        'limit' => $per_page,
+        'offset' => $offset
+    ) );
+    
+    // Get available teams for filter
+    global $wpdb;
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $teams = $wpdb->get_results( "SELECT id, name FROM {$teams_table} ORDER BY name", ARRAY_A );
+    
+    ?>
+    <div class="wrap subsales-pwa-sessions-page">
+        <h1>
+            <span class="dashicons dashicons-smartphone" style="font-size: 32px; width: 32px; height: 32px;"></span>
+            App Client Sessions
+        </h1>
+        
+        <?php if ( isset( $_GET['debug'] ) && $_GET['debug'] === '1' ): ?>
+        <div class="notice notice-info" style="padding: 15px; margin: 20px 0;">
+            <h3>Database Debug Information</h3>
+            <?php
+            $table_name = $wpdb->prefix . 'subsales_pwa_sessions';
+            
+            // Show all sessions
+            $all_sessions = $wpdb->get_results( "SELECT session_id, user_name, team_name, login_at, last_heartbeat, logout_at, status FROM {$table_name} ORDER BY last_heartbeat DESC LIMIT 10", ARRAY_A );
+            echo '<h4>Last 10 Sessions (Raw from DB):</h4>';
+            echo '<pre>' . print_r( $all_sessions, true ) . '</pre>';
+            
+            // Show the exact query being used
+            $query = $wpdb->prepare(
+                "SELECT * FROM {$table_name} 
+                 WHERE logout_at IS NULL
+                 AND last_heartbeat >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+                 ORDER BY last_heartbeat DESC
+                 LIMIT %d",
+                50
+            );
+            echo '<h4>Active Sessions Query:</h4>';
+            echo '<pre>' . $query . '</pre>';
+            
+            // Show current server time
+            $now = $wpdb->get_var( "SELECT NOW()" );
+            echo '<h4>Database Server Time:</h4>';
+            echo '<pre>' . $now . '</pre>';
+            
+            // Show 5 minutes ago
+            $five_min_ago = $wpdb->get_var( "SELECT DATE_SUB(NOW(), INTERVAL 5 MINUTE)" );
+            echo '<h4>5 Minutes Ago (cutoff time):</h4>';
+            echo '<pre>' . $five_min_ago . '</pre>';
+            ?>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Active Sessions Summary -->
+        <div class="pwa-sessions-summary" style="background: <?php echo $active_count > 0 ? '#d4edda' : '#fff3cd'; ?>; border-left: 4px solid <?php echo $active_count > 0 ? '#28a745' : '#ffc107'; ?>; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h2 style="margin: 0 0 10px 0;">
+                        <span class="dashicons dashicons-yes-alt" style="color: <?php echo $active_count > 0 ? '#28a745' : '#ffc107'; ?>;"></span>
+                        <strong><?php echo $active_count; ?></strong> Active Session<?php echo $active_count === 1 ? '' : 's'; ?>
+                    </h2>
+                    <p style="margin: 0; font-size: 13px; color: #666;">
+                        Sessions with heartbeat in the last 5 minutes. Auto-refreshes every 10 seconds.
+                    </p>
+                </div>
+                <button id="refresh-sessions-btn" class="button button-primary">
+                    <span class="dashicons dashicons-update"></span> Refresh Now
+                </button>
+            </div>
+        </div>
+        
+        <!-- Filters -->
+        <form method="get" action="" style="background: #fff; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
+            <input type="hidden" name="page" value="subsales-pwa-sessions">
+            
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                <div>
+                    <label>Status:</label>
+                    <select name="status">
+                        <option value="all" <?php selected( $status_filter, 'all' ); ?>>All</option>
+                        <option value="active" <?php selected( $status_filter, 'active' ); ?>>Active</option>
+                        <option value="idle" <?php selected( $status_filter, 'idle' ); ?>>Idle</option>
+                        <option value="ended" <?php selected( $status_filter, 'ended' ); ?>>Ended</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label>Team:</label>
+                    <select name="team_id">
+                        <option value="">All Teams</option>
+                        <?php foreach ( $teams as $team ): ?>
+                        <option value="<?php echo intval( $team['id'] ); ?>" <?php selected( $team_filter, intval( $team['id'] ) ); ?>>
+                            <?php echo esc_html( $team['name'] ); ?>
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div style="display: flex; gap: 10px; align-items: flex-end;">
+                    <button type="submit" class="button button-primary">Apply Filters</button>
+                    <a href="?page=subsales-pwa-sessions" class="button">Reset</a>
+                </div>
+            </div>
+        </form>
+        
+        <!-- Sessions History Table -->
+        <h2>Session History</h2>
+        <table class="wp-list-table widefat fixed striped">
+            <thead>
+                <tr>
+                    <th style="width: 120px;">Session ID</th>
+                    <th style="width: 150px;">User/Team</th>
+                    <th style="width: 120px;">Login</th>
+                    <th style="width: 120px;">Last Heartbeat</th>
+                    <th style="width: 120px;">Logout</th>
+                    <th style="width: 80px;">Duration</th>
+                    <th style="width: 80px;">Status</th>
+                    <th>User Agent</th>
+                    <th style="width: 100px;">IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if ( empty( $sessions ) ): ?>
+                    <tr><td colspan="9" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
+                <?php else: ?>
+                    <?php foreach ( $sessions as $session ): 
+                        $login_time = strtotime( $session['login_at'] );
+                        $logout_time = $session['logout_at'] ? strtotime( $session['logout_at'] ) : null;
+                        $current_time = current_time( 'timestamp' );
+                        $duration = $logout_time ? ( $logout_time - $login_time ) : ( $current_time - $login_time );
+                        
+                        // Calculate real-time status based on last heartbeat
+                        $last_heartbeat = strtotime( $session['last_heartbeat'] );
+                        $minutes_since_heartbeat = ( $current_time - $last_heartbeat ) / 60;
+                        
+                        if ( $session['status'] === 'ended' || $logout_time ) {
+                            $display_status = 'ended';
+                        } elseif ( $minutes_since_heartbeat <= 5 ) {
+                            $display_status = 'active';
+                        } else {
+                            $display_status = 'idle';
+                        }
+                        
+                        $status_colors = array(
+                            'active' => '#28a745',
+                            'idle' => '#ffc107',
+                            'ended' => '#6c757d'
+                        );
+                        $status_color = isset( $status_colors[ $display_status ] ) ? $status_colors[ $display_status ] : '#ccc';
+                    ?>
+                    <tr>
+                        <td><small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small></td>
+                        <td>
+                            <strong><?php echo esc_html( $session['user_name'] ?: '(Unknown)' ); ?></strong><br>
+                            <small style="color: #666;"><?php echo esc_html( $session['team_name'] ?: 'No Team' ); ?></small>
+                        </td>
+                        <td><?php echo date( 'M j, g:i a', $login_time ); ?></td>
+                        <td><?php echo date( 'M j, g:i a', strtotime( $session['last_heartbeat'] ) ); ?></td>
+                        <td><?php echo $logout_time ? date( 'M j, g:i a', $logout_time ) : '—'; ?></td>
+                        <td><?php echo gmdate( 'H:i:s', $duration ); ?></td>
+                        <td>
+                            <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?php echo $status_color; ?>; margin-right: 5px;"></span>
+                            <?php echo esc_html( ucfirst( $display_status ) ); ?>
+                        </td>
+                        <td>
+                            <small style="font-family: monospace; font-size: 11px;">
+                                <?php 
+                                $ua = $session['user_agent'];
+                                if ( preg_match( '/(iPhone|iPad|Android|Windows|Mac|Linux)/i', $ua, $matches ) ) {
+                                    echo esc_html( $matches[1] );
+                                } else {
+                                    echo esc_html( substr( $ua, 0, 30 ) . '...' );
+                                }
+                                ?>
+                            </small>
+                        </td>
+                        <td><small><?php echo esc_html( $session['ip_address'] ); ?></small></td>
+                    </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+        
+        <p style="margin-top: 20px; color: #666; font-style: italic;">
+            💡 <strong>Tip:</strong> Sessions are automatically marked as "idle" after 5 minutes of no heartbeat. 
+            Active sessions send a heartbeat every 30 seconds from the app.
+        </p>
+    </div>
+    
+    <style>
+        .pwa-sessions-summary h2 .dashicons {
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+        #refresh-sessions-btn .dashicons {
+            vertical-align: middle;
+            margin-right: 5px;
+        }
+    </style>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        // Auto-refresh active sessions every 10 seconds
+        let autoRefreshInterval = setInterval(function() {
+            location.reload();
+        }, 10000);
+        
+        // Manual refresh button
+        $('#refresh-sessions-btn').on('click', function() {
+            location.reload();
+        });
+        
+        // Stop auto-refresh when user interacts with filters
+        $('select, input').on('focus', function() {
+            clearInterval(autoRefreshInterval);
+            console.log('Auto-refresh paused while editing filters');
+        });
+    });
+    </script>
+    <?php
+}
+
+// Main dashboard page
+function order_sync_main_page() {
+    // Check user capabilities
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    
+    ?>
+    <div class="wrap">
+        <h1>Subsales Management</h1>
+        
+        <!-- Sales Mode Toggle and Active Users -->
+        <!-- OPTION 1: Compact Inline Toggle (DEFAULT - UNCOMMENT TO USE) -->
+        <div class="subsales-mode-controls subsales-option-1" style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 30px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <strong style="font-size: 14px;">Sales Mode:</strong>
+                <label class="subsales-toggle-switch">
+                    <input type="checkbox" id="salesModeToggle" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'user' ); ?> />
+                    <span class="subsales-toggle-slider"></span>
+                    <span class="subsales-toggle-label-left">Team</span>
+                    <span class="subsales-toggle-label-right">Individual</span>
+                </label>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
+                <strong style="font-size: 14px;">Active Users:</strong>
+                <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
+            </div>
+        </div>
+        
+        <style>
+        /* OPTION 1: Compact Inline Toggle Styles */
+        .subsales-option-1 .subsales-toggle-switch {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            width: 140px;
+            height: 24px;
+        }
+        .subsales-option-1 .subsales-toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .subsales-option-1 .subsales-toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 38px;
+            right: 60px;
+            bottom: 0;
+            background-color: #ddd;
+            transition: .3s;
+            border-radius: 12px;
+        }
+        .subsales-option-1 .subsales-toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        .subsales-option-1 input:checked + .subsales-toggle-slider {
+            background-color: #2271b1;
+        }
+        .subsales-option-1 input:checked + .subsales-toggle-slider:before {
+            transform: translateX(17px);
+        }
+        .subsales-option-1 .subsales-toggle-label-left,
+        .subsales-option-1 .subsales-toggle-label-right {
+            position: absolute;
+            font-size: 12px;
+            font-weight: 500;
+            z-index: 1;
+            user-select: none;
+        }
+        .subsales-option-1 .subsales-toggle-label-left {
+            left: 0;
+            color: #2c3338;
+        }
+        .subsales-option-1 .subsales-toggle-label-right {
+            right: 0;
+            color: #787c82;
+        }
+        .subsales-option-1 input:checked ~ .subsales-toggle-label-left {
+            color: #787c82;
+        }
+        .subsales-option-1 input:checked ~ .subsales-toggle-label-right {
+            color: #2c3338;
+        }
+        
+        /* Common styles */
+        .subsales-chip {
+            display: inline-block;
+        }
+        #activeUsersPopup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff;
+            border: 1px solid #ccd0d4;
+            border-radius: 4px;
+            padding: 20px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 999999;
+        }
+        #activeUsersOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 999998;
+        }
+        </style>
+        
+        <script>
+        (function($) {
+            // Toggle switch handler
+            $('#salesModeToggle').on('change', function() {
+                const mode = this.checked ? 'user' : 'legacy';
+                updateSalesMode(mode);
+            });
+            
+            // Common update function
+            function updateSalesMode(mode) {
+                const modeName = mode === 'user' ? 'Individual' : 'Team';
+                
+                $.post(ajaxurl, {
+                    action: 'subsales_update_sales_mode',
+                    mode: mode,
+                    nonce: '<?php echo wp_create_nonce( 'subsales_sales_mode' ); ?>'
+                }, function(response) {
+                    if (response.success) {
+                        $('<div class="notice notice-success is-dismissible"><p>Sales mode changed to <strong>' + modeName + '</strong></p></div>')
+                            .insertAfter('.wrap h1')
+                            .delay(3000)
+                            .fadeOut(function() { $(this).remove(); });
+                    } else {
+                        alert('Failed to update sales mode: ' + (response.data || 'Unknown error'));
+                        // Revert to previous state
+                        location.reload();
+                    }
+                });
+            }
+            
+            // Active users - click to view App Sessions page
+            $('#activeUserCount').on('click', function() {
+                window.location.href = 'admin.php?page=subsales-pwa-sessions';
+            });
+            
+            // Update active user count with real data
+            function updateActiveUserCount() {
+                $.ajax({
+                    url: ajaxurl,
+                    method: 'POST',
+                    data: {
+                        action: 'subsales_get_active_sessions_count',
+                        nonce: '<?php echo wp_create_nonce( 'subsales_active_sessions' ); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success && typeof response.data.count !== 'undefined') {
+                            $('#activeUserCount').text(response.data.count);
+                        }
+                    }
+                });
+            }
+            
+            updateActiveUserCount();
+            // Refresh count every 30 seconds
+            setInterval(updateActiveUserCount, 30000);
+        })(jQuery);
+        </script>
+        
+        <div class="subsales-compact-toggle-wrap">
+            <button id="subsales-compact-toggle" class="button">Compact view</button>
+            <span class="description">Toggle compact/comfortable dashboard spacing (stored in your browser).</span>
+        </div>
+      
+        <?php
+        global $wpdb;
+        $orders_table = $wpdb->prefix . 'ss_orders';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        
+        $order_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$orders_table}" );
+        $team_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table}" );
+        $member_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table}" );
+        ?>
+        
+        <?php
+        // Enqueue admin dashboard CSS
+        // The stylesheet is registered/enqueued via admin hook; ensure it's available on this page.
+        ?>
+
+        <div class="dashboard-widgets-wrap">
+            <div class="metabox-holder subsales-dashboard-grid">
+                <script>
+                (function(){
+                    var key = 'subsales_compact';
+                    function getRoot(){ return document.querySelector('.metabox-holder.subsales-dashboard-grid') || document.querySelector('.subsales-dashboard-grid'); }
+                    function applyState(state){ var root = getRoot(); if(!root) return; if(state){ root.classList.add('subsales-compact'); } else { root.classList.remove('subsales-compact'); } var btn = document.getElementById('subsales-compact-toggle'); if(btn) btn.textContent = state ? 'Comfortable view' : 'Compact view'; }
+                    // init from storage
+                    try{ var stored = localStorage.getItem(key) === '1'; applyState(stored); }catch(e){}
+                    document.addEventListener('DOMContentLoaded', function(){ var btn = document.getElementById('subsales-compact-toggle'); if(!btn) return; btn.addEventListener('click', function(){ try{ var cur = localStorage.getItem(key) === '1'; var next = !cur; localStorage.setItem(key, next ? '1' : '0'); applyState(next); }catch(e){} }); });
+                })();
+                </script>
+                <?php
+                // Compute financial summary (product sales, donations, cash, checks) by scanning existing orders
+                $product_sales_total = 0.0;
+                $donations_total = 0.0;
+                $cash_total = 0.0;
+                $check_total = 0.0;
+                $rows_fin = $wpdb->get_results( "SELECT order_data FROM {$orders_table}", ARRAY_A );
+                if ( $rows_fin ) {
+                    $conf_prods_for_fin = order_sync_get_products_config();
+                    foreach ( $rows_fin as $rf ) {
+                        $od = json_decode( $rf['order_data'], true );
+                        if ( ! is_array( $od ) ) continue;
+                        $order_product_total = 0.0;
+                        $order_donation = 0.0;
+                        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                            foreach ( $od['products'] as $pr ) {
+                                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                                $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
+                                if ( $qty > 0 ) $order_product_total += $qty * $price;
+                            }
+                        } else {
+                            if ( is_array( $conf_prods_for_fin ) ) {
+                                foreach ( $conf_prods_for_fin as $p ) {
+                                    $pid = $p['id'];
+                                    $price = isset( $p['price'] ) ? floatval( $p['price'] ) : 0.0;
+                                    $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                                    foreach ( $labels as $k ) {
+                                        if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_product_total += $q * $price; break; }
+                                    }
+                                }
+                            }
+                        }
+                        if ( isset( $od['donationAmount'] ) ) $order_donation = floatval( $od['donationAmount'] );
+                        $product_sales_total += $order_product_total;
+                        $donations_total += $order_donation;
+                        $order_total = $order_product_total + $order_donation;
+                        $payment = '';
+                        if ( isset( $od['paymentMethod'] ) && ! empty( $od['paymentMethod'] ) ) $payment = strtolower( $od['paymentMethod'] );
+                        else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
+                        else if ( ! empty( $od['payCash'] ) || ! empty( $od['pay_cash'] ) ) $payment = 'cash';
+                        if ( $payment === 'check' ) $check_total += $order_total;
+                        elseif ( $payment === 'cash' ) $cash_total += $order_total;
+                    }
+                }
+                ?>
+                <!-- Row 1: Orders, Teams, Members, Address -->
+                <div class="subsales-top-row">
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo intval( $order_count ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-groups" aria-hidden="true"></span> Teams</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo intval( $team_count ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-admin-users" aria-hidden="true"></span> Members</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo intval( $member_count ); ?></p>
+                        </div>
+                    </div>
+                    <?php
+                    // ZIP Data Status Widget
+                    $upload = wp_upload_dir();
+                    $zipdata_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/';
+                    $zip_files = is_dir( $zipdata_dir ) ? glob( $zipdata_dir . '*.json' ) : array();
+                    $zip_count = is_array( $zip_files ) ? count( $zip_files ) : 0;
+                    $newest_time = 0;
+                    if ( is_array( $zip_files ) && ! empty( $zip_files ) ) {
+                        foreach ( $zip_files as $file ) {
+                            $mtime = filemtime( $file );
+                            if ( $mtime > $newest_time ) $newest_time = $mtime;
+                        }
+                    }
+                    $six_months_ago = strtotime( '-6 months' );
+                    $needs_refresh = ( $zip_count > 0 && $newest_time > 0 && $newest_time < $six_months_ago );
+                    $age_text = '';
+                    if ( $newest_time > 0 ) {
+                        $age_days = floor( ( time() - $newest_time ) / 86400 );
+                        if ( $age_days < 30 ) {
+                            $age_text = $age_days . ' day' . ( $age_days != 1 ? 's' : '' ) . ' old';
+                        } else {
+                            $age_months = floor( $age_days / 30 );
+                            $age_text = $age_months . ' month' . ( $age_months != 1 ? 's' : '' ) . ' old';
+                        }
+                    }
+                    ?>
+                    <?php
+                    // Get configured ZIP codes
+                    $served_zips = subsales_get_served_zips();
+                    $zips_configured = ! empty( $served_zips );
+                    $zip_array = $served_zips;
+                    ?>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header">
+                            <h2>
+                                <span class="ss-icon dashicons dashicons-location-alt" aria-hidden="true"></span> 
+                                Address Data
+                            </h2>
+                        </div>
+                        <div class="inside subsales-address-data-inside<?php echo $age_text ? ' has-age' : ''; ?>">
+                            <?php if ( ! $zips_configured ) : ?>
+                                <p class="subsales-address-data-warning">
+                                    <span class="dashicons dashicons-warning"></span>
+                                    No ZIP codes configured
+                                </p>
+                                <p class="subsales-address-data-action">
+                                    <a href="<?php echo admin_url( 'admin.php?page=subsales-settings#tab-address_extracts' ); ?>" class="button button-small button-primary">
+                                        Configure ZIPs
+                                    </a>
+                                </p>
+                            <?php elseif ( $zip_count === 0 ) : ?>
+                                <p class="subsales-address-data-warning">
+                                    <span class="dashicons dashicons-info"></span>
+                                    <?php echo count( $zip_array ); ?> ZIP<?php echo count( $zip_array ) != 1 ? 's' : ''; ?> configured
+                                </p>
+                                <p class="subsales-address-data-label" style="margin: 4px 0; font-size: 12px; color: #666;">
+                                    No data files generated yet
+                                </p>
+                                <p class="subsales-address-data-action">
+                                    <a href="<?php echo admin_url( 'admin.php?page=subsales-settings#tab-address_extracts' ); ?>" class="button button-small button-primary">
+                                        Generate Data
+                                    </a>
+                                </p>
+                            <?php else : ?>
+                                <p class="stat-value subsales-address-data-count"><?php echo intval( $zip_count ); ?></p>
+                                <p class="subsales-address-data-label">
+                                    ZIP code<?php echo $zip_count != 1 ? 's' : ''; ?> loaded
+                                </p>
+                                <?php if ( $age_text ) : ?>
+                                    <div class="subsales-address-data-age-bar<?php echo $needs_refresh ? ' needs-refresh' : ''; ?>">
+                                        <?php if ( $needs_refresh ) : ?>
+                                            <span class="dashicons dashicons-warning"></span>
+                                        <?php endif; ?>
+                                        <?php echo esc_html( $age_text ); ?>
+                                    </div>
+                                <?php endif; ?>
+                                <p class="subsales-address-data-action">
+                                    <a href="<?php echo admin_url( 'admin.php?page=subsales-settings#tab-address_extracts' ); ?>" class="button button-small">
+                                        <?php echo $needs_refresh ? 'Regenerate' : 'Manage'; ?>
+                                    </a>
+                                </p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Row 2: Sales, Donations, Cash, Checks -->
+                <div class="subsales-financial-row">
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-heart" aria-hidden="true"></span> Donations</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $donations_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-money" aria-hidden="true"></span> Cash</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $cash_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon subsales-checkbook-icon" aria-hidden="true">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true">
+                                <rect x="1" y="4" width="22" height="14" rx="2" />
+                                <path d="M4 8h16" />
+                                <path d="M6 14l3 3 8-8" />
+                            </svg>
+                        </span> Checks</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo '$' . number_format( (float) $check_total, 2 ); ?></p>
+                        </div>
+                    </div>
+                </div>
+
+                <?php
+                // Compute aggregate totals from configured products. New orders include a `products` array in order_data.
+                $products_conf = order_sync_get_products_config();
+                // initialize totals
+                $product_totals = array();
+                foreach ( $products_conf as $p ) {
+                    $product_totals[ $p['id'] ] = 0;
+                }
+                // Scan orders and sum quantities from order_data.products if present
+                $rows = $wpdb->get_results( "SELECT order_data FROM {$orders_table}", ARRAY_A );
+                if ( $rows ) {
+                    foreach ( $rows as $r ) {
+                        $od = json_decode( $r['order_data'], true );
+                        if ( is_array( $od ) ) {
+                            // If new structured `products` array exists, prefer it
+                            if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                                foreach ( $od['products'] as $op ) {
+                                    if ( isset( $op['id'] ) && isset( $op['qty'] ) ) {
+                                        $pid = $op['id'];
+                                        $qty = intval( $op['qty'] );
+                                        if ( isset( $product_totals[ $pid ] ) ) $product_totals[ $pid ] += $qty;
+                                    }
+                                }
+                            } else {
+                                // fallback: try to match legacy qty fields (e.g., turkeyQty -> turkey) when product id equals the legacy key minus 'Qty'
+                                foreach ( $products_conf as $p ) {
+                                    $pid = $p['id'];
+                                    // try pid + 'Qty' or pid + '_qty' variants
+                                    $k1 = $pid . 'Qty'; $k2 = $pid . '_qty';
+                                    if ( isset( $od[ $k1 ] ) ) $product_totals[ $pid ] += intval( $od[ $k1 ] );
+                                    elseif ( isset( $od[ $k2 ] ) ) $product_totals[ $pid ] += intval( $od[ $k2 ] );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Render a postbox for each configured product (visible or not)
+                if ( ! empty( $products_conf ) ) {
+                    echo '<div class="subsales-second-row">';
+                    foreach ( $products_conf as $p ) {
+                        $title = esc_html( $p['name'] );
+                        $total = isset( $product_totals[ $p['id'] ] ) ? intval( $product_totals[ $p['id'] ] ) : 0;
+                        ?>
+                        <div class="postbox">
+                            <div class="postbox-header"><h2><?php echo $title; ?></h2></div>
+                            <div class="inside">
+                                <p style="font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center;">
+                                    <?php echo $total; ?>
+                                </p>
+                            </div>
+                        </div>
+                        <?php
+                    }
+                    echo '</div>';
+                }
+                ?>
+            </div>
+        </div>
+        
+        <div style="margin-top: 30px;">
+            <h2>Quick Actions</h2>
+            <p>
+                <a href="<?php echo admin_url( 'admin.php?page=subsales-settings' ); ?>" class="button button-primary">Configure Settings</a>
+                <a href="<?php echo admin_url( 'admin.php?page=subsales-teams' ); ?>" class="button">Manage Teams</a>
+                <a href="<?php echo admin_url( 'admin.php?page=subsales-orders' ); ?>" class="button">View Orders</a>
+            </p>
+        </div>
+    </div>
+    <?php
+}
+
+// AJAX preview for delivery routes (admin only)
+add_action( 'wp_ajax_subsales_delivery_preview', 'order_sync_ajax_delivery_preview' );
+function order_sync_ajax_delivery_preview() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Insufficient permissions' );
+    }
+    check_ajax_referer( 'subsales_delivery_preview', '_ajax_nonce' );
+
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'ss_orders';
+    $driver_count = isset( $_POST['driver_count'] ) ? max(1, intval( $_POST['driver_count'] ) ) : 2;
+    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( wp_unslash( $_POST['start_address'] ) ) : '';
+
+    // allow optional delivery_date filter (YYYY-MM-DD)
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( wp_unslash( $_POST['delivery_date'] ) ) : '';
+    if ( $delivery_date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $delivery_date) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+    }
+    if ( ! $rows ) {
+        wp_send_json_error( 'No orders found' );
+    }
+
+    $configured_products = order_sync_get_products_config();
+
+    // group by normalized address
+    $by_address = array();
+    foreach ( $rows as $r ) {
+        $od = json_decode( $r['order_data'], true );
+        if ( ! is_array( $od ) ) $od = array();
+
+        $products_map = array();
+        foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                if ( $qty > 0 && $pid ) {
+                    if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                    $products_map[ $pid ] += $qty;
+                }
+            }
+        } else {
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                foreach ( $labels as $k ) {
+                    if ( isset( $od[ $k ] ) ) {
+                        $q = intval( $od[ $k ] );
+                        if ( $q > 0 ) {
+                            if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                            $products_map[ $pid ] += $q;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        $total_qty = array_sum( array_values( $products_map ) );
+        if ( $total_qty <= 0 ) continue;
+
+        $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+        $addr_norm = order_sync_normalize_address( $address_raw );
+        if ( empty( $addr_norm ) ) continue;
+
+        $team_name = '';
+        if ( ! empty( $r['team_id'] ) ) {
+            $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", intval( $r['team_id'] ) ) );
+            $team_name = $t ? $t->name : '';
+        }
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
+
+        $entry = array(
+            'order_id' => $r['order_id'],
+            'team' => $team_name,
+            'seller' => $seller,
+            'address_raw' => $address_raw,
+            'address_norm' => $addr_norm,
+            'products_map' => $products_map,
+            'customer' => $customer,
+            'phone' => $phone,
+            'total_qty' => $total_qty,
+        );
+
+        if ( ! isset( $by_address[ $addr_norm ] ) ) {
+            $by_address[ $addr_norm ] = array( 'address_raw' => $address_raw, 'orders' => array() );
+        }
+        $by_address[ $addr_norm ]['orders'][] = $entry;
+    }
+
+    if ( empty( $by_address ) ) wp_send_json_error( 'No valid product orders found' );
+
+    // Build manifest rows aggregated per address
+    $manifest_rows = array();
+    foreach ( $by_address as $addr_norm => $group ) {
+        $combined_products = array();
+        foreach ( $configured_products as $p ) { $combined_products[ $p['id'] ] = 0; }
+        $order_ids = array();
+        $team = '';
+        $seller = '';
+        $customer = '';
+        $phone = '';
+        foreach ( $group['orders'] as $o ) {
+            $order_ids[] = $o['order_id'];
+            foreach ( $o['products_map'] as $pid => $q ) { if ( ! isset( $combined_products[ $pid ] ) ) $combined_products[ $pid ] = 0; $combined_products[ $pid ] += intval( $q ); }
+            if ( empty( $team ) && ! empty( $o['team'] ) ) $team = $o['team'];
+            if ( empty( $seller ) && ! empty( $o['seller'] ) ) $seller = $o['seller'];
+            if ( empty( $customer ) && ! empty( $o['customer'] ) ) $customer = $o['customer'];
+            if ( empty( $phone ) && ! empty( $o['phone'] ) ) $phone = $o['phone'];
+        }
+
+        $manifest_rows[] = array(
+            'address_raw' => $group['address_raw'],
+            'address_norm' => $addr_norm,
+            'products_map' => $combined_products,
+            'order_ids' => $order_ids,
+            'team' => $team,
+            'seller' => $seller,
+            'customer' => $customer,
+            'phone' => $phone,
+        );
+    }
+
+    // Assign to drivers using same greedy algorithm
+    $drivers = array(); $driver_counts = array();
+    for ( $i = 1; $i <= $driver_count; $i++ ) { $drivers[ $i ] = array(); $driver_counts[ $i ] = 0; }
+    usort( $manifest_rows, function( $a, $b ) {
+        $ca = isset( $a['order_ids'] ) ? count( $a['order_ids'] ) : 0;
+        $cb = isset( $b['order_ids'] ) ? count( $b['order_ids'] ) : 0;
+        return $cb - $ca;
+    } );
+    foreach ( $manifest_rows as $mr ) {
+        $count_here = isset( $mr['order_ids'] ) ? count( $mr['order_ids'] ) : 1;
+        $min_driver = null; $min_count = null;
+        foreach ( $driver_counts as $dnum => $cnt ) { if ( $min_driver === null || $cnt < $min_count ) { $min_driver = $dnum; $min_count = $cnt; } }
+        $drivers[ $min_driver ][] = $mr;
+        $driver_counts[ $min_driver ] += $count_here;
+    }
+
+    // Geocode addresses (use cache helper) and prepare payload
+    $payload_drivers = array();
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    foreach ( $drivers as $dnum => $rows_driver ) {
+        $payload_drivers[ $dnum ] = array();
+        foreach ( $rows_driver as $r ) {
+            $geo = order_sync_geocode_address( $r['address_raw'] );
+            $lat = $geo && isset( $geo['lat'] ) ? $geo['lat'] : null;
+            $lng = $geo && isset( $geo['lng'] ) ? $geo['lng'] : null;
+            $payload_drivers[ $dnum ][] = array_merge( $r, array( 'lat' => $lat, 'lng' => $lng ) );
+        }
+    }
+
+    $result = array( 'drivers' => $payload_drivers, 'api_key' => $api_key, 'products' => $configured_products, 'start_address' => $start_address );
+    wp_send_json_success( $result );
+}
+// Admin settings page
+// Enqueue admin styles for the plugin dashboard (register at global scope)
+add_action('admin_enqueue_scripts', 'subsales_enqueue_admin_assets');
+function subsales_enqueue_admin_assets($hook){
+    // Only load on our plugin pages (basic guard: check for our page slug in $_GET)
+    $load = false;
+    if ( isset($_GET['page']) && strpos($_GET['page'], 'subsales') === 0 ) $load = true;
+    if ( ! $load ) return;
+    
+    // Enqueue jQuery for AJAX and DOM manipulation
+    wp_enqueue_script('jquery');
+    
+    $css_path = plugin_dir_path(__FILE__) . 'assets/css/admin-dashboard.css';
+    $css_url = plugin_dir_url( __FILE__ ) . 'assets/css/admin-dashboard.css';
+    if ( file_exists( $css_path ) ) {
+        wp_enqueue_style( 'subsales-admin-dashboard', $css_url, array('dashicons'), filemtime( $css_path ) );
+    }
+}
+
+// Admin settings page
+function order_sync_settings_page() {
+    // Check user capabilities
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    // Handle per-panel form submission
+    if ( isset( $_POST['save_overall'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $api_key = isset( $_POST['api_key'] ) ? sanitize_text_field( $_POST['api_key'] ) : '';
+        $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
+        $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
+        $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
+        $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
+
+        $old_slug = get_option( 'order_sync_portal_slug', '' );
+        update_option( 'order_sync_google_maps_api_key', $api_key );
+        update_option( 'order_sync_interval', $sync_interval );
+        update_option( 'order_sync_portal_slug', $portal_slug );
+        update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'order_sync_login_mode', $login_mode );
+
+        if ( $portal_slug !== $old_slug ) {
+            order_sync_ensure_pwa_page( $portal_slug );
+            flush_rewrite_rules();
+        }
+
+        echo '<div class="notice notice-success"><p>Overall settings saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_branding'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $branding = isset( $_POST['subsales_branding'] ) ? sanitize_text_field( $_POST['subsales_branding'] ) : '';
+        $style_variant = isset( $_POST['style_variant'] ) ? sanitize_text_field( $_POST['style_variant'] ) : 'default';
+        $primary_color = isset( $_POST['primary_color'] ) ? sanitize_text_field( $_POST['primary_color'] ) : '#2d6cdf';
+        $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
+
+        update_option( 'subsales_branding', $branding );
+        update_option( 'order_sync_style_variant', $style_variant );
+        update_option( 'order_sync_primary_color', $primary_color );
+        update_option( 'subsales_header_image', $header_image );
+
+        echo '<div class="notice notice-success"><p>Branding saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_products'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        // Handle products: repeatable fields product_name[], product_price[], product_visible[], product_id[]
+        if ( isset( $_POST['product_name'] ) && is_array( $_POST['product_name'] ) ) {
+            $names = $_POST['product_name'];
+            $prices = isset( $_POST['product_price'] ) && is_array( $_POST['product_price'] ) ? $_POST['product_price'] : array();
+            $visibles = isset( $_POST['product_visible'] ) && is_array( $_POST['product_visible'] ) ? $_POST['product_visible'] : array();
+            $ids = isset( $_POST['product_id'] ) && is_array( $_POST['product_id'] ) ? $_POST['product_id'] : array();
+            $products = array();
+            $count = 0;
+            for ( $i = 0; $i < count( $names ) && $count < 10; $i++ ) {
+                $name = sanitize_text_field( $names[ $i ] );
+                if ( empty( $name ) ) continue;
+                $price_raw = isset( $prices[ $i ] ) ? $prices[ $i ] : '0';
+                $price = floatval( preg_replace( '/[^0-9.\\-]/', '', $price_raw ) );
+                $price = round( $price, 2 );
+                $id = isset( $ids[ $i ] ) ? sanitize_title( $ids[ $i ] ) : sanitize_title( $name );
+                if ( empty( $id ) ) $id = 'p' . time() . $i;
+                $suffix = 1;
+                $base_id = $id;
+                while ( in_array( $id, array_column( $products, 'id' ) ) ) { $id = $base_id . '-' . $suffix; $suffix++; }
+                $visible = in_array( (string)$i, $visibles, true ) || in_array( $id, $visibles, true ) || ( isset( $visibles[ $i ] ) && $visibles[ $i ] );
+                $products[] = array( 'id' => $id, 'name' => $name, 'price' => number_format( $price, 2, '.', '' ), 'visible' => $visible ? 1 : 0 );
+                $count++;
+            }
+            update_option( 'order_sync_products', wp_json_encode( $products ) );
+            echo '<div class="notice notice-success"><p>Products saved!</p></div>';
+        }
+    }
+
+    if ( isset( $_POST['save_zipcodes'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        // Handle ZIP codes configuration
+        if ( isset( $_POST['zipcode_list'] ) ) {
+            $zipcode_input = sanitize_textarea_field( $_POST['zipcode_list'] );
+            // Parse comma or newline separated ZIPs
+            $zipcodes = preg_split( '/[,\s\n]+/', $zipcode_input, -1, PREG_SPLIT_NO_EMPTY );
+            // Validate and clean ZIPs
+            $valid_zips = array();
+            foreach ( $zipcodes as $zip ) {
+                $zip = trim( $zip );
+                if ( preg_match( '/^\d{5}$/', $zip ) ) {
+                    $valid_zips[] = $zip;
+                }
+            }
+            update_option( 'subsales_served_zips', array_unique( $valid_zips ) );
+            echo '<div class="notice notice-success"><p>ZIP codes saved! (' . count( $valid_zips ) . ' valid ZIP codes)</p></div>';
+        }
+    }
+    
+    if ( isset( $_POST['save_deletion_settings'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $delete_on_uninstall = isset( $_POST['subsales_delete_on_uninstall'] ) ? sanitize_text_field( $_POST['subsales_delete_on_uninstall'] ) : 'yes';
+        
+        if ( $delete_on_uninstall !== 'yes' && $delete_on_uninstall !== 'no' ) {
+            $delete_on_uninstall = 'yes'; // Default to safe option
+        }
+        
+        update_option( 'subsales_delete_on_uninstall', $delete_on_uninstall );
+        delete_transient( 'subsales_show_deletion_prompt' ); // Clear any pending prompt
+        
+        subsales_log( 'INFO', 'system', 'Data deletion preference updated', array( 'choice' => $delete_on_uninstall ), 'admin' );
+        
+        if ( $delete_on_uninstall === 'yes' ) {
+            echo '<div class="notice notice-warning"><p><strong>⚠️ Data deletion enabled.</strong> All plugin data will be permanently deleted when you delete this plugin.</p></div>';
+        } else {
+            echo '<div class="notice notice-success"><p><strong>✅ Data preservation enabled.</strong> Your data will be kept safe even if you delete the plugin.</p></div>';
+        }
+    }
+
+    // Handle clear data action (danger zone)
+    if ( isset( $_POST['clear_data'] ) ) {
+        check_admin_referer( 'order_sync_clear_nonce' );
+        if ( ! current_user_can( 'manage_options' ) ) {
+            echo '<div class="notice notice-error"><p>Insufficient permissions to clear data.</p></div>';
+        } else {
+            global $wpdb;
+            $cleared = array();
+            
+            // Check which items were selected
+            if ( isset( $_POST['clear_orders'] ) && $_POST['clear_orders'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_orders';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Orders';
+                }
+            }
+            
+            if ( isset( $_POST['clear_teams'] ) && $_POST['clear_teams'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Teams';
+                }
+            }
+            
+            if ( isset( $_POST['clear_members'] ) && $_POST['clear_members'] === '1' ) {
+                $members_table = $wpdb->prefix . 'ss_team_members';
+                $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$members_table}'" ) === $members_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$members_table}" );
+                }
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$user_teams_table}'" ) === $user_teams_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$user_teams_table}" );
+                }
+                $cleared[] = 'Team Members';
+            }
+            
+            if ( isset( $_POST['clear_addresses'] ) && $_POST['clear_addresses'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_addresses';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Addresses';
+                }
+            }
+            
+            if ( isset( $_POST['clear_settings'] ) && $_POST['clear_settings'] === '1' ) {
+                order_sync_clear_settings();
+                $cleared[] = 'Settings';
+            }
+            
+            if ( ! empty( $cleared ) ) {
+                $items = implode( ', ', $cleared );
+                echo '<div class="notice notice-success"><p><strong>✅ Data cleared successfully:</strong> ' . esc_html( $items ) . '</p></div>';
+            } else {
+                echo '<div class="notice notice-warning"><p><strong>⚠️ No items selected.</strong> Please select at least one item to clear.</p></div>';
+            }
+        }
+    }
+
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    $sync_interval = get_option( 'order_sync_interval', 300 );
+    $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
+    $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 0 );
+    $branding = get_option( 'subsales_branding', 'Subsales' );
+    $style_variant = get_option( 'order_sync_style_variant', 'default' );
+    $primary_color = get_option( 'order_sync_primary_color', '#2d6cdf' );
+    $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
+    $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
+    $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
+    ?>
+    <div class="wrap">
+        <h1>Subsales Settings</h1>
+        
+        <h2 class="nav-tab-wrapper">
+            <a href="#tab-overall" class="nav-tab nav-tab-active" data-target="#tab-overall">Overall Settings</a>
+            <a href="#tab-branding" class="nav-tab" data-target="#tab-branding">Branding / Look &amp; Feel</a>
+            <a href="#tab-products" class="nav-tab" data-target="#tab-products">Products</a>
+            <a href="#tab-address_extracts" class="nav-tab" data-target="#tab-address_extracts">Address Management</a>
+            <a href="#tab-backup_restore" class="nav-tab" data-target="#tab-backup_restore">Backup / Restore</a>
+            <a href="#tab-system_info" class="nav-tab" data-target="#tab-system_info">System Info</a>
+        </h2>
+        
+        <style>
+        .subsales-tab-panel { display: none; margin-top: 20px; }
+        .subsales-tab-panel.active { display: block; }
+        </style>
+        
+        <script>
+        (function($) {
+            $(document).ready(function() {
+                function showPanel(target) {
+                    $('.subsales-tab-panel').removeClass('active');
+                    $(target).addClass('active');
+                    $('.nav-tab').removeClass('nav-tab-active');
+                    $('.nav-tab[data-target="' + target + '"]').addClass('nav-tab-active');
+                }
+                
+                $('.nav-tab').on('click', function(e) {
+                    e.preventDefault();
+                    var target = $(this).data('target');
+                    showPanel(target);
+                    if (history && history.replaceState) {
+                        history.replaceState(null, null, target);
+                    }
+                });
+                
+                // Initialize from hash or show first panel
+                var hash = window.location.hash;
+                if (hash && $(hash).length) {
+                    showPanel(hash);
+                } else {
+                    showPanel('#tab-overall');
+                }
+            });
+        })(jQuery);
+        </script>
+    <?php if ( ! empty( $_GET['subsales_import_result'] ) ) :
+            $raw = sanitize_text_field( wp_unslash( $_GET['subsales_import_result'] ) );
+            // decode if it was rawurlencoded
+            $raw = rawurldecode( $raw );
+        ?>
+            <div class="notice notice-success"><p><strong>Import result:</strong> <?php echo esc_html( $raw ); ?></p></div>
+        <?php endif; ?>
+        
+        
+        <!-- Main Settings Panels -->
+            <div class="subsales-tab-panels">
+                <div id="tab-overall" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="overall" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Google Maps API Key</th>
+                            <td>
+                                <input type="text" id="mapsApiKey" name="api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" />
+                                <p class="description">Enter your Google Maps API key. This will be shared with mobile clients after login for map functionality.</p>
+                                <p class="description">Need a key? <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Create a Google Maps API key</a> in Google Cloud Console (enable Maps JavaScript / Geocoding APIs).</p>
+                                <p>
+                                    <button type="button" id="test_maps_key_btn" class="button">Test key</button>
+                                    <span id="maps_test_status" style="margin-left:12px; font-weight:600"></span>
+                                </p>
+                                <div id="maps_test_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
+                                <script>
+                                (function(){
+                                    const ajaxUrl = ajaxurl;
+                                    const nonce = <?php echo json_encode( wp_create_nonce( 'subsales_test_maps_key' ) ); ?>;
+                                    function setStatus(s){ document.getElementById('maps_test_status').textContent = s; }
+                                    document.getElementById('test_maps_key_btn').addEventListener('click', function(){
+                                        const key = document.getElementById('mapsApiKey').value || '';
+                                        const fd = new FormData();
+                                        fd.append('action','subsales_test_maps_key');
+                                        fd.append('nonce', nonce);
+                                        fd.append('key', key);
+                                        const out = document.getElementById('maps_test_output'); out.style.display='block'; out.textContent='Testing...'; setStatus('Testing...');
+                                        fetch(ajaxUrl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+                                            if (!j) { out.textContent = 'No response'; setStatus('Error'); return; }
+                                            if (!j.success) {
+                                                out.textContent = 'Error: ' + (j.data || 'Unknown'); setStatus('Invalid'); return;
+                                            }
+                                            const d = j.data;
+                                            out.textContent = JSON.stringify(d, null, 2);
+                                            setStatus(d.status || 'OK');
+                                        }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; setStatus('Error'); });
+                                    });
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Sync Interval (seconds)</th>
+                            <td>
+                                <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
+                                <p class="description">How often to sync orders (minimum 60 seconds).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Portal Slug</th>
+                            <td>
+                                <input type="text" name="portal_slug" value="<?php echo esc_attr( $portal_slug ); ?>" class="regular-text" />
+                                <p class="description">The public slug (URL path) where the PWA will be available. Default: <code>subsales-portal</code>.</p>
+                                <p class="description">Portal URL: <strong><?php echo esc_url( $portal_url ); ?></strong></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Default session duration</th>
+                            <td>
+                                <select name="session_duration">
+                                    <option value="120000" <?php selected( 120000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 minutes (Test)</option>
+                                    <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
+                                    <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                                </select>
+                                <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Login Mode</th>
+                            <td>
+                                <fieldset>
+                                    <label style="display: block; margin-bottom: 10px;">
+                                        <input type="radio" name="login_mode" value="legacy" <?php checked( $login_mode, 'legacy' ); ?> />
+                                        <strong>Legacy Login (Team + Code)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users enter a team name and access code to login. Original authentication method.
+                                        </p>
+                                    </label>
+                                    <label style="display: block; margin-top: 10px;">
+                                        <input type="radio" name="login_mode" value="user" <?php checked( $login_mode, 'user' ); ?> />
+                                        <strong>User-Based Login (Name + Phone)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users search by name and verify with phone number, then select their team. Requires users to be created in the Teams → Users tab.
+                                        </p>
+                                    </label>
+                                </fieldset>
+                                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px;">
+                                    <strong>⚠️ Important:</strong> Changing the login mode will affect how users authenticate in the PWA.
+                                    Make sure your users know which method to use after switching.
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Overall Settings', 'primary', 'save_overall', false ); ?></p>
+                    </form>
+                </div>
+
+                <div id="tab-branding" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="branding" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Branding / Group name</th>
+                            <td>
+                                <input type="text" name="subsales_branding" value="<?php echo esc_attr( $branding ); ?>" class="regular-text" />
+                                <p class="description">Optional branding string that will be shown in the PWA header and admin pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Header image</th>
+                            <td>
+                                <input type="hidden" id="subsales_header_image" name="subsales_header_image" value="<?php echo esc_attr( $header_image_id ); ?>" />
+                                <div id="subsales_header_preview" style="margin-bottom:8px;<?php echo $header_image_url ? '' : 'display:none;'; ?>">
+                                    <?php if ( $header_image_url ): ?>
+                                        <img src="<?php echo esc_url( $header_image_url ); ?>" style="max-width:200px;height:auto;border:1px solid #ddd;padding:4px;background:#fff" />
+                                    <?php endif; ?>
+                                </div>
+                                <button type="button" class="button" id="subsales_header_select">Select image</button>
+                                <button type="button" class="button" id="subsales_header_remove" <?php echo $header_image_url ? '' : 'style="display:none;"'; ?>>Remove image</button>
+                                <p class="description">Optional header image that will be shown in the PWA header on mobile clients.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Style options</th>
+                            <td>
+                                <p class="description">Choose a visual style for the PWA. Samples are shown below; primary color can be customized.</p>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="default" <?php checked( $style_variant, 'default' ); ?> /> Default</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="flat" <?php checked( $style_variant, 'flat' ); ?> /> Flat</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
+                                </div>
+                                <div id="branding_samples" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Button sample</div>
+                                        <button id="branding_button_sample" class="subsales-branding-button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
+                                    </div>
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Header sample</div>
+                                        <div id="branding_header_sample" class="subsales-branding-header" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
+                                    </div>
+                                </div>
+                                <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
+                                <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
+                                <script>
+                                (function(){
+                                    function applyBrandingVariant(variant){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(!btn || !hdr) return;
+                                        // remove existing variant classes
+                                        btn.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        hdr.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        var cls = 'branding-variant-' + (variant || 'default');
+                                        btn.classList.add(cls);
+                                        hdr.classList.add(cls);
+                                    }
+                                    function applyPrimaryColor(color){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(btn) btn.style.background = color;
+                                        if(hdr) hdr.style.background = color;
+                                    }
+                                    // wire radio buttons
+                                    var radios = document.querySelectorAll('input[name="style_variant"]');
+                                    radios.forEach(function(r){ r.addEventListener('change', function(e){ applyBrandingVariant(e.target.value); }); });
+                                    // wire color input
+                                    var colorInput = document.querySelector('input[name="primary_color"]');
+                                    if(colorInput){ colorInput.addEventListener('input', function(e){ applyPrimaryColor(e.target.value); }); }
+                                    // initialize on load
+                                    var sel = document.querySelector('input[name="style_variant"]:checked');
+                                    if(sel) applyBrandingVariant(sel.value);
+                                    if(colorInput) applyPrimaryColor(colorInput.value);
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Branding', 'primary', 'save_branding', false ); ?></p>
+                    </form>
+                </div>
+                
+                <?php
+                // Products configuration (repeatable control)
+                $configured_products = order_sync_get_products_config();
+                ?>
+                <div id="tab-products" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="products" />
+                    <table class="form-table">
+                        <tr>
+                            <td>
+                                <div id="products_repeatable">
+                                    <table id="products_table" class="widefat subsales-products-table">
+                                <thead><tr><th class="col-name">Name</th><th class="col-price">Price (USD)</th><th class="col-visible">Visible</th><th class="col-actions">Actions</th></tr></thead>
+                                <tbody>
+                                <?php if ( ! empty( $configured_products ) ) : ?>
+                                    <?php foreach ( $configured_products as $idx => $p ) : ?>
+                                        <tr data-index="<?php echo intval( $idx ); ?>">
+                                            <td>
+                                                <input type="text" name="product_name[]" class="regular-text product-name" value="<?php echo esc_attr( $p['name'] ?? '' ); ?>" />
+                                                <input type="hidden" name="product_id[]" class="product-id" value="<?php echo esc_attr( $p['id'] ?? '' ); ?>" />
+                                            </td>
+                                            <td><input type="text" name="product_price[]" class="regular-text product-price" value="<?php echo esc_attr( $p['price'] ?? '0.00' ); ?>" /></td>
+                                            <td class="col-center"><input type="checkbox" name="product_visible[]" value="<?php echo esc_attr( $p['id'] ?? $idx ); ?>" <?php checked( 1, intval( $p['visible'] ?? 0 ) ); ?> /></td>
+                                            <td class="col-center"><button type="button" class="button button-link remove-product">Remove</button></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                                </tbody>
+                            </table>
+                            <p><button type="button" id="add_product_btn" class="button">Add product</button> <span class="description">Max 10 products.</span></p>
+                        </div>
+                        <script>
+                        (function(){
+                            var maxProducts = 10;
+                            function slugify(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').substr(0,60); }
+                            function createRow(name, price, id, visible){
+                                var tbody = document.querySelector('#products_table tbody');
+                                if (!tbody) return null;
+                                var current = tbody.querySelectorAll('tr').length;
+                                if (current >= maxProducts) { alert('Maximum products reached ('+maxProducts+')'); return null; }
+                                var tr = document.createElement('tr');
+                                var tdName = document.createElement('td');
+                                var nameInput = document.createElement('input'); nameInput.type='text'; nameInput.name='product_name[]'; nameInput.className='regular-text product-name'; nameInput.value = name || '';
+                                var idInput = document.createElement('input'); idInput.type='hidden'; idInput.name='product_id[]'; idInput.className='product-id'; idInput.value = id || '';
+                                tdName.appendChild(nameInput); tdName.appendChild(idInput);
+
+                                var tdPrice = document.createElement('td');
+                                var priceInput = document.createElement('input'); priceInput.type='text'; priceInput.name='product_price[]'; priceInput.className='regular-text product-price'; priceInput.value = price || '0.00';
+                                tdPrice.appendChild(priceInput);
+
+                                var tdVis = document.createElement('td'); tdVis.className='col-center';
+                                var visInput = document.createElement('input'); visInput.type='checkbox'; visInput.name='product_visible[]'; visInput.checked = !!visible; visInput.value = id || '';
+                                tdVis.appendChild(visInput);
+
+                                var tdAct = document.createElement('td'); tdAct.className='col-center';
+                                var remBtn = document.createElement('button'); remBtn.type='button'; remBtn.className='button button-link remove-product'; remBtn.textContent='Remove';
+                                tdAct.appendChild(remBtn);
+
+                                tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdVis); tr.appendChild(tdAct);
+                                // wire events
+                                nameInput.addEventListener('input', function(){
+                                    var slug = slugify(nameInput.value) || ('p'+Date.now());
+                                    idInput.value = slug;
+                                    // keep the visible checkbox value in sync with id
+                                    try{ visInput.value = slug; }catch(e){}
+                                });
+                                remBtn.addEventListener('click', function(){ tr.parentNode.removeChild(tr); });
+                                tbody.appendChild(tr);
+                                return tr;
+                            }
+                            document.getElementById('add_product_btn').addEventListener('click', function(){ createRow('', '0.00', 'p' + Date.now(), true); });
+                            document.querySelectorAll('#products_table .remove-product').forEach(function(b){ b.addEventListener('click', function(){ var tr = b.closest('tr'); tr && tr.parentNode.removeChild(tr); }); });
+                        })();
+                        </script>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Products', 'primary', 'save_products', false ); ?></p>
+                    </form>
+                </div>
+
+                <div id="tab-address_extracts" class="subsales-tab-panel">
+                    <h2 style="margin-top:18px">📍 Address Management</h2>
+                    <p>Manage your service area configuration, upload address data, and generate JSON extracts for the PWA.</p>
+                    
+                    <?php
+                    // Include the modern dashboard
+                    include plugin_dir_path( __FILE__ ) . 'admin/address-management-dashboard.php';
+                    ?>
+                </div>
+
+                <div id="tab-backup_restore" class="subsales-tab-panel">
+            <h2 style="margin-top:18px">💾 Backup & Restore</h2>
+            <p>Export all plugin data for backup or migrate to another WordPress site. Import previously exported backups to restore data.</p>
+            
+            <!-- Export Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📤 Export Data</h3>
+                <?php $export_nonce = wp_create_nonce( 'subsales_export_nonce' ); ?>
+                
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+                    <a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup_combined&_wpnonce=' . $export_nonce ) ); ?>">
+                        📦 Export Complete Backup (ZIP)
+                    </a>
+                </div>
+                
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; font-weight: 600;">Individual Exports</summary>
+                    <div style="padding: 15px; margin-top: 10px; background: #f6f7f7; border-radius: 4px;">
+                        <p style="margin-top: 0;">Export individual components separately:</p>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_orders&_wpnonce=' . $export_nonce ) ); ?>">Orders (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_teams&_wpnonce=' . $export_nonce ) ); ?>">Teams (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_members&_wpnonce=' . $export_nonce ) ); ?>">Members (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_addresses&_wpnonce=' . $export_nonce ) ); ?>">Addresses (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_settings&_wpnonce=' . $export_nonce ) ); ?>">Settings (CSV)</a>
+                        </div>
+                    </div>
+                </details>
+                
+                <div style="background: #e7f3ff; border-left: 4px solid #0071a1; padding: 12px; margin-top: 15px;">
+                    <p style="margin: 0;"><strong>💡 Tip:</strong> The complete backup ZIP includes all orders, teams, members, addresses, and settings. Perfect for site migrations or scheduled backups.</p>
+                </div>
+            </div>
+            
+            <!-- Import Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📥 Import Data</h3>
+                
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                    <?php wp_nonce_field( 'subsales_import_nonce' ); ?>
+                    <input type="hidden" name="action" value="subsales_import_backup" />
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Backup File</th>
+                            <td>
+                                <input type="file" name="backup_file" accept="text/csv,text/plain,application/zip,.zip" required style="margin-bottom: 10px;" />
+                                <p class="description">Upload a ZIP backup (complete) or individual CSV file</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Import Options</th>
+                            <td>
+                                <label style="display: block; margin-bottom: 10px;">
+                                    <input type="checkbox" name="import_update_existing" value="1" />
+                                    Update existing records (match by ID) - otherwise skip duplicates
+                                </label>
+                                <p class="description" style="margin: 8px 0 0 0; padding: 8px; background: #e7f7e7; border-left: 3px solid #46b450;">
+                                    <strong>🗺️ Auto-Geocoding Enabled:</strong> Addresses without lat/lng coordinates will be automatically geocoded using Google Maps API. 
+                                    ZIP codes will be validated against coordinates and auto-corrected if mismatched.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <button type="submit" class="button button-primary button-large">Import Backup</button>
+                    </p>
+                </form>
+            </div>
+            
+            <!-- Destructive Restore Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">⚠️ Advanced: Full Restore (Destructive)</h3>
+                <p><strong>Warning:</strong> This will clear existing data before importing. Only use this when restoring from a known good backup.</p>
+                
+                <details>
+                    <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">Show Restore Options</summary>
+                    <div style="padding: 15px; margin-top: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                        <form id="subsales-destructive-restore" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                            <?php wp_nonce_field( 'subsales_restore_nonce' ); ?>
+                            <input type="hidden" name="action" value="subsales_restore_and_import" />
+                            
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row">Backup File</th>
+                                    <td><input type="file" name="backup_file" accept="application/zip,.zip,text/csv,text/plain" required /></td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Clear Before Import</th>
+                                    <td>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="both" checked />
+                                            <strong>Everything</strong> - Clear all orders, teams, members, addresses, and settings
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="data" />
+                                            <strong>Data Only</strong> - Clear orders, teams, members, and addresses (keep settings)
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="settings" />
+                                            <strong>Settings Only</strong> - Clear settings (keep data)
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Confirmation</th>
+                                    <td>
+                                        <label style="font-weight: 600;">
+                                            <input type="checkbox" id="confirm_clear_restore" />
+                                            I understand this will permanently delete the selected data before importing
+                                        </label>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p class="submit">
+                                <button id="subsales-restore-btn" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>⚠️ Restore from Backup</button>
+                            </p>
+                        </form>
+                        
+                        <script>
+                        (function(){
+                            var chk = document.getElementById('confirm_clear_restore');
+                            var btn = document.getElementById('subsales-restore-btn');
+                            var form = document.getElementById('subsales-destructive-restore');
+                            var radios = form ? form.querySelectorAll('input[name="restore_target"]') : null;
+                            
+                            if ( chk && btn ) {
+                                chk.addEventListener('change', function(){ btn.disabled = !chk.checked; });
+                            }
+                            
+                            if ( form ) {
+                                form.addEventListener('submit', function(e){
+                                    if ( ! chk.checked ) {
+                                        e.preventDefault();
+                                        alert('Please confirm the destructive restore by checking the box.');
+                                        return false;
+                                    }
+                                    
+                                    var sel = 'both';
+                                    if ( radios ) {
+                                        radios.forEach(function(r){ if ( r.checked ) sel = r.value; });
+                                    }
+                                    
+                                    var msg = 'This will permanently delete the selected plugin data before importing. Are you sure?';
+                                    if ( sel === 'both' ) {
+                                        msg = '⚠️ PERMANENT ACTION\n\nThis will delete ALL plugin data (orders, teams, members, addresses, and settings) before importing.\n\nThis cannot be undone.\n\nAre you absolutely sure?';
+                                    } else if ( sel === 'data' ) {
+                                        msg = 'This will permanently delete ALL orders, teams, members, and addresses before importing. Settings will be preserved. Are you sure?';
+                                    } else if ( sel === 'settings' ) {
+                                        msg = 'This will permanently delete all plugin settings before importing. Data (orders, teams, etc.) will be preserved. Are you sure?';
+                                    }
+                                    
+                                    if ( ! confirm(msg) ) {
+                                        e.preventDefault();
+                                        return false;
+                                    }
+                                });
+                            }
+                        })();
+                        </script>
+                    </div>
+                </details>
+            </div>
+            
+            <!-- Clear data form -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px; margin-top: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">🗑️ Clear Data (Danger Zone)</h3>
+                <p><strong>Warning:</strong> Select what you want to permanently delete. This action cannot be undone.</p>
+                
+                <form id="subsales-clear-data-form" method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
+                    
+                    <div style="background: #f6f7f7; border: 1px solid #c3c4c7; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <p style="margin: 0 0 10px 0; font-weight: 600;">Select data to clear:</p>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_orders" value="1" class="subsales-clear-checkbox" />
+                            <strong>Orders</strong> - All order data and customer information
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_teams" value="1" class="subsales-clear-checkbox" />
+                            <strong>Teams</strong> - All teams and access codes
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_members" value="1" class="subsales-clear-checkbox" />
+                            <strong>Team Members</strong> - All users and team assignments
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_addresses" value="1" class="subsales-clear-checkbox" />
+                            <strong>Addresses</strong> - All address data and geocoding results
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_settings" value="1" class="subsales-clear-checkbox" />
+                            <strong>Settings</strong> - All plugin configuration and options
+                        </label>
+                        
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <label style="cursor: pointer; font-weight: 600;">
+                                <input type="checkbox" id="subsales-select-all-clear" />
+                                Select All
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="subsales-clear-warning" style="background: #fcf0f1; border: 1px solid #d63638; padding: 12px; margin: 15px 0; border-radius: 4px; display: none;">
+                        <p style="margin: 0; color: #d63638;"><strong>⚠️ Warning:</strong> <span id="subsales-clear-warning-text">Please select at least one item to clear.</span></p>
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #646970; margin: 10px 0;">
+                        <strong>Note:</strong> This does NOT delete plugin files, ZIP extracts, or database tables (only truncates/clears their data).
+                    </p>
+                    
+                    <p>
+                        <button id="subsales-clear-data-btn" name="clear_data" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>Clear Selected Data</button>
+                    </p>
+                </form>
+                
+                <script>
+                (function(){
+                    var form = document.getElementById('subsales-clear-data-form');
+                    var checkboxes = document.querySelectorAll('.subsales-clear-checkbox');
+                    var selectAllCheckbox = document.getElementById('subsales-select-all-clear');
+                    var clearBtn = document.getElementById('subsales-clear-data-btn');
+                    var warningBox = document.getElementById('subsales-clear-warning');
+                    var warningText = document.getElementById('subsales-clear-warning-text');
+                    
+                    function updateWarningAndButton() {
+                        var selected = [];
+                        checkboxes.forEach(function(cb) {
+                            if (cb.checked) {
+                                var label = cb.parentElement.querySelector('strong');
+                                if (label) selected.push(label.textContent);
+                            }
+                        });
+                        
+                        if (selected.length === 0) {
+                            clearBtn.disabled = true;
+                            warningBox.style.display = 'none';
+                        } else {
+                            clearBtn.disabled = false;
+                            warningBox.style.display = 'block';
+                            
+                            var itemsList = selected.join(', ');
+                            warningText.textContent = 'You are about to permanently delete: ' + itemsList + '. This cannot be undone.';
+                        }
+                    }
+                    
+                    // Wire up checkboxes
+                    checkboxes.forEach(function(cb) {
+                        cb.addEventListener('change', updateWarningAndButton);
+                    });
+                    
+                    // Wire up select all
+                    if (selectAllCheckbox) {
+                        selectAllCheckbox.addEventListener('change', function() {
+                            checkboxes.forEach(function(cb) {
+                                cb.checked = selectAllCheckbox.checked;
+                            });
+                            updateWarningAndButton();
+                        });
+                    }
+                    
+                    // Form submission confirmation
+                    if (form) {
+                        form.addEventListener('submit', function(e) {
+                            var selected = [];
+                            checkboxes.forEach(function(cb) {
+                                if (cb.checked) {
+                                    var label = cb.parentElement.querySelector('strong');
+                                    if (label) selected.push(label.textContent);
+                                }
+                            });
+                            
+                            if (selected.length === 0) {
+                                e.preventDefault();
+                                alert('Please select at least one item to clear.');
+                                return false;
+                            }
+                            
+                            var itemsList = selected.join(', ');
+                            var msg = '⚠️ PERMANENT ACTION\n\n';
+                            msg += 'This will permanently delete the following:\n';
+                            msg += '• ' + selected.join('\n• ') + '\n\n';
+                            msg += 'This cannot be undone.\n\n';
+                            msg += 'Are you absolutely sure?';
+                            
+                            if (!confirm(msg)) {
+                                e.preventDefault();
+                                return false;
+                            }
+                        });
+                    }
+                    
+                    // Initial state
+                    updateWarningAndButton();
+                })();
+                </script>
+            </div>
+                </div>
+
+                <div id="tab-system_info" class="subsales-tab-panel">
+            <h2>System Information</h2>
+        <table class="form-table">
+            <tr>
+                <th scope="row">Plugin Version</th>
+                <td><?php echo esc_html( order_sync_get_plugin_version() ); ?></td>
+            </tr>
+            <tr>
+                <th scope="row">WordPress Version</th>
+                <td><?php echo get_bloginfo( 'version' ); ?></td>
+            </tr>
+            <tr>
+                <th scope="row">PHP Version</th>
+                <td><?php echo PHP_VERSION; ?></td>
+            </tr>
+            <tr>
+                <th scope="row">PhpSpreadsheet</th>
+                <td>
+                    <?php
+                    $ps_version = null;
+                    // Try Composer InstalledVersions first (if available)
+                    if ( class_exists( '\\Composer\\InstalledVersions' ) ) {
+                        try {
+                            if ( method_exists( '\\Composer\\InstalledVersions', 'getPrettyVersion' ) ) {
+                                $ps_version = \Composer\InstalledVersions::getPrettyVersion( 'phpoffice/phpspreadsheet' );
+                            }
+                        } catch ( Exception $e ) {
+                            $ps_version = null;
+                        }
+                    }
+                    // Fallback: detect presence of the main class
+                    if ( ! $ps_version && class_exists( 'PhpOffice\\PhpSpreadsheet\\Spreadsheet' ) ) {
+                        $ps_version = 'installed';
+                    }
+
+                    if ( $ps_version ) {
+                        echo esc_html( $ps_version );
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">DomPDF</th>
+                <td>
+                    <?php
+                    $dompdf_path = plugin_dir_path( __FILE__ ) . 'vendor/dompdf/autoload.inc.php';
+                    if ( file_exists( $dompdf_path ) ) {
+                        echo '<span style="color:green">Installed</span>';
+                        // Try to get version
+                        require_once $dompdf_path;
+                        if ( defined( 'Dompdf\\VERSION' ) ) {
+                            echo ' (v' . esc_html( Dompdf\VERSION ) . ')';
+                        }
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">Database Tables</th>
+                <td>
+                    <?php
+                    global $wpdb;
+                    $tables = array(
+                        $wpdb->prefix . 'ss_orders' => 'Orders',
+                        $wpdb->prefix . 'ss_teams' => 'Teams',
+                        $wpdb->prefix . 'ss_team_members' => 'Team Members',
+                        $wpdb->prefix . 'ss_user_teams' => 'User-Team Assignments'
+                    );
+                    
+                    foreach ( $tables as $table => $name ) {
+                        $exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table;
+                        echo '<span style="color: ' . ( $exists ? 'green' : 'red' ) . ';">● ' . $name . '</span><br>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">Database Schema</th>
+                <td>
+                    <p>Run this to update database constraints and fix legacy user data:</p>
+                    <form method="post" action="">
+                        <?php wp_nonce_field( 'subsales_migrate_db' ); ?>
+                        <button type="submit" name="run_db_migration" class="button button-primary">Run Database Migration</button>
+                    </form>
+                    <p class="description">This will: 1) Set default phones for users with NULL/empty phones, 2) Add NOT NULL constraint to phone, 3) Add UNIQUE constraint to phone, 4) Remove UNIQUE constraint from email.</p>
+                    <?php
+                    if ( isset( $_POST['run_db_migration'] ) ) {
+                        check_admin_referer( 'subsales_migrate_db' );
+                        if ( current_user_can( 'manage_options' ) ) {
+                            // Run the table creation function which includes migration logic
+                            order_sync_create_table();
+                            echo '<div class="notice notice-success inline" style="margin-top: 10px;"><p>Database migration completed successfully!</p></div>';
+                        }
+                    }
+                    ?>
+                </td>
+            </tr>
+        </table>
+                </div>
+    </div> <!-- .wrap -->
+    <?php
+}
+
+// ========================================
+// IMPORT/EXPORT FUNCTIONS FOR USERS & TEAMS
+// ========================================
+
+/**
+ * Export users and teams to CSV
+ */
+function subsales_export_users_teams() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Permission denied' );
+    }
+    
+    global $wpdb;
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    $export_type = isset( $_GET['export_type'] ) ? sanitize_text_field( $_GET['export_type'] ) : 'current';
+    
+    // Set headers for CSV download
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename="subsales-users-teams-' . date( 'Y-m-d' ) . '.csv"' );
+    header( 'Pragma: no-cache' );
+    header( 'Expires: 0' );
+    
+    $output = fopen( 'php://output', 'w' );
+    
+    // Write header comments and instructions
+    fwrite( $output, "# ===== SUBSALES USERS & TEAMS IMPORT/EXPORT FILE =====\n" );
+    fwrite( $output, "# This file contains both team definitions and user assignments.\n" );
+    fwrite( $output, "# Edit this file and re-import to update your data.\n" );
+    fwrite( $output, "#\n" );
+    fwrite( $output, "# IMPORTANT NOTES:\n" );
+    fwrite( $output, "# - Import OVERWRITES all data - what you import becomes the new official data\n" );
+    fwrite( $output, "# - Phone numbers must be exactly 10 digits (leading 1 will be auto-stripped)\n" );
+    fwrite( $output, "# - Teams in the USERS section must exist in the TEAMS section\n" );
+    fwrite( $output, "# - Use 'active' or 'inactive' for status fields\n" );
+    fwrite( $output, "# - Leave email blank to remove email from a user\n" );
+    fwrite( $output, "#\n\n" );
+    
+    // ===== TEAMS SECTION =====
+    fwrite( $output, "# ===== TEAMS SECTION =====\n" );
+    fwrite( $output, "# Define all teams with their access codes and status\n" );
+    fwrite( $output, "# Format: team_name, team_access_code, status\n" );
+    
+    if ( $export_type === 'template' ) {
+        // Template with example data
+        fwrite( $output, "# Example: Team Alpha, ALPHA123, active\n" );
+        fputcsv( $output, array( 'team_name', 'team_access_code', 'status' ) );
+        fputcsv( $output, array( 'Team Alpha', 'ALPHA123', 'active' ) );
+        fputcsv( $output, array( 'Team Beta', 'BETA456', 'inactive' ) );
+    } else {
+        // Export current teams
+        fputcsv( $output, array( 'team_name', 'team_access_code', 'status' ) );
+        $teams = $wpdb->get_results( "SELECT name, access_code, status FROM {$teams_table} ORDER BY name ASC", ARRAY_A );
+        foreach ( $teams as $team ) {
+            fputcsv( $output, array(
+                $team['name'],
+                $team['access_code'],
+                $team['status'] ?? 'active'
+            ) );
+        }
+    }
+    
+    fwrite( $output, "\n" );
+    
+    // ===== USERS SECTION =====
+    fwrite( $output, "# ===== USERS SECTION =====\n" );
+    fwrite( $output, "# Assign users to teams\n" );
+    fwrite( $output, "# Format: name, phone, email, status, teams\n" );
+    fwrite( $output, "# - phone: Must be exactly 10 digits\n" );
+    fwrite( $output, "# - email: Can be blank to remove email\n" );
+    fwrite( $output, "# - status: 'active' or 'inactive'\n" );
+    fwrite( $output, "# - teams: Comma-separated team names (must match teams defined above)\n" );
+    
+    if ( $export_type === 'template' ) {
+        // Template with example data
+        fwrite( $output, "# Example: John Doe, 2035551234, john@example.com, active, \"Team Alpha, Team Beta\"\n" );
+        fputcsv( $output, array( 'name', 'phone', 'email', 'status', 'teams' ) );
+        fputcsv( $output, array( 'John Doe', '2035551234', 'john@example.com', 'active', 'Team Alpha, Team Beta' ) );
+        fputcsv( $output, array( 'Jane Smith', '2035555678', 'jane@example.com', 'active', 'Team Alpha' ) );
+        fputcsv( $output, array( 'Bob Johnson', '2035559999', '', 'inactive', 'Team Beta' ) );
+    } else {
+        // Export current users with their teams
+        fputcsv( $output, array( 'name', 'phone', 'email', 'status', 'teams' ) );
+        
+        $users = $wpdb->get_results( "SELECT DISTINCT id, name, phone, email, status FROM {$members_table} ORDER BY name ASC", ARRAY_A );
+        
+        foreach ( $users as $user ) {
+            // Get all teams for this user
+            $user_teams = $wpdb->get_results( $wpdb->prepare(
+                "SELECT t.name 
+                FROM {$user_teams_table} ut
+                JOIN {$teams_table} t ON ut.team_id = t.id
+                WHERE ut.user_id = %d
+                ORDER BY t.name ASC",
+                $user['id']
+            ), ARRAY_A );
+            
+            $team_names = array_map( function( $t ) { return $t['name']; }, $user_teams );
+            $teams_string = implode( ', ', $team_names );
+            
+            fputcsv( $output, array(
+                $user['name'],
+                $user['phone'],
+                $user['email'] ?? '',
+                $user['status'] ?? 'active',
+                $teams_string
+            ) );
+        }
+    }
+    
+    fclose( $output );
+    exit;
+}
+
+/**
+ * Process import file and generate preview
+ */
+function subsales_process_import_preview( $file ) {
+    if ( ! $file || $file['error'] !== UPLOAD_ERR_OK ) {
+        return array( 'error' => 'File upload failed. Please try again.' );
+    }
+    
+    if ( $file['type'] !== 'text/csv' && ! str_ends_with( $file['name'], '.csv' ) ) {
+        return array( 'error' => 'Invalid file type. Please upload a CSV file.' );
+    }
+    
+    $handle = fopen( $file['tmp_name'], 'r' );
+    if ( ! $handle ) {
+        return array( 'error' => 'Could not read file.' );
+    }
+    
+    $teams = array();
+    $users = array();
+    $errors = array();
+    $section = null; // 'teams' or 'users'
+    $line_num = 0;
+    $teams_header_found = false;
+    $users_header_found = false;
+    
+    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+        $line_num++;
+        
+        // Skip empty rows
+        if ( empty( array_filter( $row ) ) ) continue;
+        
+        // Skip comment lines
+        if ( isset( $row[0] ) && str_starts_with( trim( $row[0] ), '#' ) ) {
+            // Check for section markers
+            if ( stripos( $row[0], 'TEAMS SECTION' ) !== false ) {
+                $section = 'teams';
+            } elseif ( stripos( $row[0], 'USERS SECTION' ) !== false ) {
+                $section = 'users';
+            }
+            continue;
+        }
+        
+        // Check for headers
+        if ( $section === 'teams' && ! $teams_header_found && isset( $row[0] ) && strtolower( trim( $row[0] ) ) === 'team_name' ) {
+            $teams_header_found = true;
+            continue;
+        }
+        if ( $section === 'users' && ! $users_header_found && isset( $row[0] ) && strtolower( trim( $row[0] ) ) === 'name' ) {
+            $users_header_found = true;
+            continue;
+        }
+        
+        // Process team rows
+        if ( $section === 'teams' && $teams_header_found ) {
+            if ( count( $row ) < 3 ) {
+                $errors[] = "Line {$line_num}: Invalid team format (need: team_name, access_code, status)";
+                continue;
+            }
+            
+            $team_name = trim( $row[0] );
+            $access_code = trim( $row[1] );
+            $status = trim( strtolower( $row[2] ) );
+            
+            if ( empty( $team_name ) ) {
+                $errors[] = "Line {$line_num}: Team name is required";
+                continue;
+            }
+            if ( empty( $access_code ) ) {
+                $errors[] = "Line {$line_num}: Access code is required for team '{$team_name}'";
+                continue;
+            }
+            if ( ! in_array( $status, array( 'active', 'inactive' ) ) ) {
+                $errors[] = "Line {$line_num}: Invalid status '{$status}' for team '{$team_name}' (must be 'active' or 'inactive')";
+                continue;
+            }
+            
+            $teams[] = array(
+                'name' => $team_name,
+                'access_code' => $access_code,
+                'status' => $status
+            );
+        }
+        
+        // Process user rows
+        if ( $section === 'users' && $users_header_found ) {
+            if ( count( $row ) < 5 ) {
+                $errors[] = "Line {$line_num}: Invalid user format (need: name, phone, email, status, teams)";
+                continue;
+            }
+            
+            $name = trim( $row[0] );
+            $phone = trim( $row[1] );
+            $email = trim( $row[2] );
+            $status = trim( strtolower( $row[3] ) );
+            $user_teams = trim( $row[4] );
+            
+            // Validate name
+            if ( empty( $name ) ) {
+                $errors[] = "Line {$line_num}: User name is required";
+                continue;
+            }
+            
+            // Validate and normalize phone
+            if ( empty( $phone ) ) {
+                $errors[] = "Line {$line_num}: Phone number is required for user '{$name}'";
+                continue;
+            }
+            
+            // Strip non-digits
+            $phone = preg_replace( '/[^0-9]/', '', $phone );
+            
+            // Strip leading 1
+            if ( strlen( $phone ) === 11 && $phone[0] === '1' ) {
+                $phone = substr( $phone, 1 );
+            }
+            
+            // Validate 10 digits
+            if ( strlen( $phone ) !== 10 ) {
+                $errors[] = "Line {$line_num}: Phone number must be exactly 10 digits for user '{$name}' (got: {$phone})";
+                continue;
+            }
+            
+            // Validate status
+            if ( ! in_array( $status, array( 'active', 'inactive' ) ) ) {
+                $errors[] = "Line {$line_num}: Invalid status '{$status}' for user '{$name}' (must be 'active' or 'inactive')";
+                continue;
+            }
+            
+            // Parse teams
+            $team_list = array();
+            if ( ! empty( $user_teams ) ) {
+                $team_list = array_map( 'trim', explode( ',', $user_teams ) );
+                
+                // Validate that all teams exist in the teams section
+                foreach ( $team_list as $team_name ) {
+                    $team_exists = false;
+                    foreach ( $teams as $team ) {
+                        if ( $team['name'] === $team_name ) {
+                            $team_exists = true;
+                            break;
+                        }
+                    }
+                    if ( ! $team_exists ) {
+                        $errors[] = "Line {$line_num}: Team '{$team_name}' not found in TEAMS section for user '{$name}'";
+                    }
+                }
+            }
+            
+            $users[] = array(
+                'name' => $name,
+                'phone' => $phone,
+                'email' => $email,
+                'status' => $status,
+                'teams' => $team_list
+            );
+        }
+    }
+    
+    fclose( $handle );
+    
+    if ( empty( $teams ) && empty( $users ) ) {
+        $errors[] = 'No valid data found in CSV file';
+    }
+    
+    if ( ! empty( $errors ) ) {
+        return array( 'error' => implode( '<br/>', $errors ) );
+    }
+    
+    return array(
+        'teams' => $teams,
+        'users' => $users
+    );
+}
+
+/**
+ * Confirm and execute import
+ */
+function subsales_process_import_confirm( $import_data ) {
+    global $wpdb;
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    // Start transaction
+    $wpdb->query( 'START TRANSACTION' );
+    
+    try {
+        // Clear existing data (complete overwrite as specified)
+        $wpdb->query( "DELETE FROM {$user_teams_table}" );
+        $wpdb->query( "DELETE FROM {$members_table}" );
+        $wpdb->query( "DELETE FROM {$teams_table}" );
+        
+        // Insert teams
+        $team_id_map = array(); // Map team names to IDs
+        foreach ( $import_data['teams'] as $team ) {
+            $wpdb->insert(
+                $teams_table,
+                array(
+                    'name' => $team['name'],
+                    'access_code' => $team['access_code'],
+                    'status' => $team['status']
+                ),
+                array( '%s', '%s', '%s' )
+            );
+            $team_id_map[ $team['name'] ] = $wpdb->insert_id;
+        }
+        
+        // Insert users and their team assignments
+        foreach ( $import_data['users'] as $user ) {
+            // Insert user
+            $wpdb->insert(
+                $members_table,
+                array(
+                    'team_id' => 0, // Legacy field, not used in multi-team system
+                    'name' => $user['name'],
+                    'phone' => $user['phone'],
+                    'email' => $user['email'],
+                    'role' => 'member',
+                    'status' => $user['status']
+                ),
+                array( '%d', '%s', '%s', '%s', '%s', '%s' )
+            );
+            $user_id = $wpdb->insert_id;
+            
+            // Insert team assignments
+            foreach ( $user['teams'] as $team_name ) {
+                if ( isset( $team_id_map[ $team_name ] ) ) {
+                    $wpdb->insert(
+                        $user_teams_table,
+                        array(
+                            'user_id' => $user_id,
+                            'team_id' => $team_id_map[ $team_name ]
+                        ),
+                        array( '%d', '%d' )
+                    );
+                }
+            }
+        }
+        
+        // Commit transaction
+        $wpdb->query( 'COMMIT' );
+        
+        subsales_log( 'INFO', 'import', 'Users and teams imported successfully', array(
+            'teams_count' => count( $import_data['teams'] ),
+            'users_count' => count( $import_data['users'] )
+        ), 'admin' );
+        
+    } catch ( Exception $e ) {
+        $wpdb->query( 'ROLLBACK' );
+        subsales_log( 'ERROR', 'import', 'Import failed', array( 'error' => $e->getMessage() ), 'admin' );
+        throw $e;
+    }
+}
+
+/**
+ * Import users and teams from CSV
+ * Handles preview and actual import
+ */
+function subsales_import_users_teams() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Permission denied' );
+    }
+    
+    // This will be handled in the teams page
+    // Redirect back to teams page
+    wp_redirect( admin_url( 'admin.php?page=subsales-teams' ) );
+    exit;
+}
+
+// Teams management admin page with tabbed interface
+function ss_teams_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+
+    global $wpdb;
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+
+    // Determine active tab
+    $active_tab = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'users';
+    
+    // Handle import preview
+    $import_preview = null;
+    if ( isset( $_POST['subsales_import_action'] ) && $_POST['subsales_import_action'] === 'preview' ) {
+        check_admin_referer( 'subsales_import_users_teams_preview' );
+        $import_preview = subsales_process_import_preview( $_FILES['import_file'] ?? null );
+    }
+    
+    // Handle actual import
+    if ( isset( $_POST['subsales_import_action'] ) && $_POST['subsales_import_action'] === 'confirm' ) {
+        check_admin_referer( 'subsales_import_users_teams_confirm' );
+        $import_data = isset( $_POST['import_data'] ) ? json_decode( stripslashes( $_POST['import_data'] ), true ) : null;
+        if ( $import_data ) {
+            subsales_process_import_confirm( $import_data );
+            echo '<div class="notice notice-success"><p><strong>Import completed successfully!</strong></p></div>';
+        }
+    }
+
+    // Handle user/member creation
+    if ( isset( $_POST['add_user'] ) ) {
+        check_admin_referer( 'order_sync_add_user' );
+        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $email = sanitize_email( $_POST['user_email'] ?? '' );
+        $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
+        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
+        $status = isset( $_POST['user_active'] ) ? 'active' : 'inactive';
+        
+        if ( empty( $name ) ) {
+            echo '<div class="notice notice-error"><p>User name is required.</p></div>';
+        } elseif ( empty( $phone ) ) {
+            echo '<div class="notice notice-error"><p>Phone number is required.</p></div>';
+        } elseif ( ! preg_match( '/^[0-9]{10}$/', preg_replace( '/[^0-9]/', '', $phone ) ) ) {
+            echo '<div class="notice notice-error"><p>Phone number must be 10 digits.</p></div>';
+        } else {
+            // Normalize phone to 10 digits only
+            $phone = preg_replace( '/[^0-9]/', '', $phone );
+            $email = $email ?: '';
+            // Add user without team assignment initially
+            $result = $wpdb->insert(
+                $members_table,
+                array(
+                    'team_id' => 0,
+                    'name' => $name,
+                    'email' => $email,
+                    'phone' => $phone,
+                    'role' => $role,
+                    'status' => $status
+                ),
+                array( '%d', '%s', '%s', '%s', '%s', '%s' )
+            );
+            
+            if ( $result ) {
+                echo '<div class="notice notice-success"><p>User created successfully.</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to create user.</p></div>';
+            }
+        }
+    }
+
+    // Handle user update
+    if ( isset( $_POST['edit_user'] ) ) {
+        check_admin_referer( 'order_sync_edit_user' );
+        $user_id = intval( $_POST['user_id'] ?? 0 );
+        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $email = sanitize_email( $_POST['user_email'] ?? '' );
+        $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
+        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
+        $status = isset( $_POST['user_active'] ) ? 'active' : 'inactive';
+        
+        if ( empty( $name ) ) {
+            echo '<div class="notice notice-error"><p>User name is required.</p></div>';
+        } elseif ( empty( $phone ) ) {
+            echo '<div class="notice notice-error"><p>Phone number is required.</p></div>';
+        } elseif ( ! preg_match( '/^[0-9]{10}$/', preg_replace( '/[^0-9]/', '', $phone ) ) ) {
+            echo '<div class="notice notice-error"><p>Phone number must be 10 digits.</p></div>';
+        } elseif ( $user_id && ! empty( $name ) ) {
+            // Normalize phone to 10 digits only
+            $phone = preg_replace( '/[^0-9]/', '', $phone );
+            $updated = $wpdb->update(
+                $members_table,
+                array( 'name' => $name, 'email' => $email ?: '', 'phone' => $phone, 'role' => $role, 'status' => $status ),
+                array( 'id' => $user_id ),
+                array( '%s', '%s', '%s', '%s', '%s' ),
+                array( '%d' )
+            );
+            
+            if ( $updated !== false ) {
+                echo '<div class="notice notice-success"><p>User updated successfully.</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to update user.</p></div>';
+            }
+        }
+    }
+
+    // Handle team creation
+    if ( isset( $_POST['add_team'] ) ) {
+        check_admin_referer( 'order_sync_add_team' );
+        $name = sanitize_text_field( $_POST['team_name'] ?? '' );
+        $code = sanitize_text_field( $_POST['team_code'] ?? '' );
+        $desc = sanitize_textarea_field( $_POST['team_description'] ?? '' );
+        $status = isset( $_POST['team_active'] ) ? 'active' : 'inactive';
+        if ( empty( $name ) || empty( $code ) ) {
+            echo '<div class="notice notice-error"><p>Team name and access code are required.</p></div>';
+        } else {
+            $ok = order_sync_add_team( $name, $code, $desc, $status );
+            if ( $ok ) echo '<div class="notice notice-success"><p>Team created.</p></div>';
+            else echo '<div class="notice notice-error"><p>Failed to create team (duplicate name or code?).</p></div>';
+        }
+    }
+
+    // Handle team update
+    if ( isset( $_POST['edit_team'] ) ) {
+        check_admin_referer( 'order_sync_edit_team' );
+        $tid = intval( $_POST['team_id'] ?? 0 );
+        $name = sanitize_text_field( $_POST['team_name'] ?? '' );
+        $code = sanitize_text_field( $_POST['team_code'] ?? '' );
+        $desc = sanitize_textarea_field( $_POST['team_description'] ?? '' );
+        $status = isset( $_POST['team_active'] ) ? 'active' : 'inactive';
+        if ( $tid && ( ! empty( $name ) && ! empty( $code ) ) ) {
+            $updated = $wpdb->update( $teams_table, array( 'name' => $name, 'access_code' => $code, 'description' => $desc, 'status' => $status ), array( 'id' => $tid ), array( '%s', '%s', '%s', '%s' ), array( '%d' ) );
+            if ( $updated !== false ) {
+                echo '<div class="notice notice-success"><p>Team updated.</p></div>';
+            } else {
+                echo '<div class="notice notice-error"><p>Failed to update team.</p></div>';
+            }
+        }
+    }
+
+    // Handle AJAX team assignment
+    if ( isset( $_POST['assign_user_to_team'] ) ) {
+        check_admin_referer( 'order_sync_team_assignment' );
+        $user_id = intval( $_POST['user_id'] ?? 0 );
+        $team_id = intval( $_POST['team_id'] ?? 0 );
+        
+        if ( $user_id ) {
+            $updated = $wpdb->update(
+                $members_table,
+                array( 'team_id' => $team_id ),
+                array( 'id' => $user_id ),
+                array( '%d' ),
+                array( '%d' )
+            );
+            
+            if ( $updated !== false ) {
+                wp_send_json_success( array( 'message' => 'User assigned to team successfully' ) );
+            } else {
+                wp_send_json_error( array( 'message' => 'Failed to assign user to team' ) );
+            }
+        }
+        wp_send_json_error( array( 'message' => 'Invalid user ID' ) );
+    }
+
+    // Get all users and teams (sort: active first, then by name)
+    $all_users = $wpdb->get_results( "SELECT * FROM {$members_table} ORDER BY status DESC, name ASC", ARRAY_A );
+    $teams = order_sync_get_teams();
+    
+    // Check if editing a user
+    $editing_user = false;
+    $edit_user = array( 'id' => 0, 'name' => '', 'email' => '', 'phone' => '', 'role' => 'member', 'status' => 'active' );
+    if ( isset( $_GET['edit_user'] ) ) {
+        $uid = intval( $_GET['edit_user'] );
+        if ( $uid ) {
+            $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$members_table} WHERE id = %d", $uid ), ARRAY_A );
+            if ( $row ) {
+                $editing_user = true;
+                $edit_user = $row;
+            }
+        }
+    }
+    
+    // Check if editing a team
+    $editing_team = false;
+    $edit_team = array( 'id' => 0, 'name' => '', 'access_code' => '', 'description' => '', 'status' => 'active' );
+    if ( isset( $_GET['edit_team'] ) ) {
+        $tid = intval( $_GET['edit_team'] );
+        if ( $tid ) {
+            $row = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$teams_table} WHERE id = %d", $tid ), ARRAY_A );
+            if ( $row ) {
+                $editing_team = true;
+                $edit_team = $row;
+            }
+        }
+    }
+    ?>
+    <div class="wrap">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h1 style="margin: 0;">User &amp; Team Management</h1>
+            <div>
+                <a href="<?php echo admin_url( 'admin-post.php?action=subsales_export_users_teams&export_type=template' ); ?>" class="button" style="margin-right: 8px;">
+                    📄 Download Template
+                </a>
+                <a href="<?php echo admin_url( 'admin-post.php?action=subsales_export_users_teams&export_type=current' ); ?>" class="button button-secondary" style="margin-right: 8px;">
+                    📥 Export Current Data
+                </a>
+                <button type="button" class="button button-primary" onclick="document.getElementById('subsales-import-form').style.display='block';">
+                    📤 Import Data
+                </button>
+            </div>
+        </div>
+        
+        <!-- Import Form (hidden by default) -->
+        <div id="subsales-import-form" style="display: none; background: #f9f9f9; border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; border-radius: 4px;">
+            <h2 style="margin-top: 0;">Import Users & Teams</h2>
+            <form method="post" action="<?php echo admin_url( 'admin.php?page=subsales-teams' ); ?>" enctype="multipart/form-data">
+                <?php wp_nonce_field( 'subsales_import_users_teams_preview' ); ?>
+                <input type="hidden" name="subsales_import_action" value="preview" />
+                <p>
+                    <label for="import_file"><strong>Select CSV File:</strong></label><br/>
+                    <input type="file" name="import_file" id="import_file" accept=".csv" required />
+                </p>
+                <p>
+                    <button type="submit" class="button button-primary">Preview Import</button>
+                    <button type="button" class="button" onclick="document.getElementById('subsales-import-form').style.display='none';">Cancel</button>
+                </p>
+            </form>
+        </div>
+        
+        <!-- Import Preview (shown when preview is generated) -->
+        <?php if ( $import_preview ) : ?>
+            <?php if ( isset( $import_preview['error'] ) ) : ?>
+                <div class="notice notice-error" style="margin-bottom: 20px;">
+                    <p><strong>Import Error:</strong></p>
+                    <p><?php echo $import_preview['error']; ?></p>
+                </div>
+            <?php else : ?>
+                <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin-bottom: 20px; border-radius: 4px;">
+                    <h2 style="margin-top: 0;">📋 Import Preview</h2>
+                    <p><strong>Review the changes below before confirming the import.</strong></p>
+                    <p style="color: #d63638;"><strong>⚠️ WARNING:</strong> This will completely replace all existing users and teams with the data shown below.</p>
+                    
+                    <h3>Teams to Import (<?php echo count( $import_preview['teams'] ); ?>)</h3>
+                    <table class="wp-list-table widefat fixed striped" style="margin-bottom: 20px;">
+                        <thead>
+                            <tr>
+                                <th>Team Name</th>
+                                <th>Access Code</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ( $import_preview['teams'] as $team ) : ?>
+                                <tr>
+                                    <td><?php echo esc_html( $team['name'] ); ?></td>
+                                    <td><?php echo esc_html( $team['access_code'] ); ?></td>
+                                    <td><?php echo esc_html( $team['status'] ); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    
+                    <h3>Users to Import (<?php echo count( $import_preview['users'] ); ?>)</h3>
+                    <table class="wp-list-table widefat fixed striped" style="margin-bottom: 20px;">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Phone</th>
+                                <th>Email</th>
+                                <th>Status</th>
+                                <th>Teams</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ( $import_preview['users'] as $user ) : ?>
+                                <tr>
+                                    <td><?php echo esc_html( $user['name'] ); ?></td>
+                                    <td><?php echo esc_html( $user['phone'] ); ?></td>
+                                    <td><?php echo esc_html( $user['email'] ); ?></td>
+                                    <td><?php echo esc_html( $user['status'] ); ?></td>
+                                    <td><?php echo esc_html( implode( ', ', $user['teams'] ) ); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    
+                    <form method="post" action="<?php echo admin_url( 'admin.php?page=subsales-teams' ); ?>">
+                        <?php wp_nonce_field( 'subsales_import_users_teams_confirm' ); ?>
+                        <input type="hidden" name="subsales_import_action" value="confirm" />
+                        <input type="hidden" name="import_data" value="<?php echo esc_attr( json_encode( $import_preview ) ); ?>" />
+                        <p>
+                            <button type="submit" class="button button-primary button-large" onclick="return confirm('Are you sure? This will completely replace all existing users and teams!');">
+                                ✅ Confirm Import
+                            </button>
+                            <a href="<?php echo admin_url( 'admin.php?page=subsales-teams' ); ?>" class="button button-large">Cancel</a>
+                        </p>
+                    </form>
+                </div>
+            <?php endif; ?>
+        <?php endif; ?>
+        
+        <h2 class="nav-tab-wrapper">
+            <a href="?page=subsales-teams&tab=users" class="nav-tab <?php echo $active_tab === 'users' ? 'nav-tab-active' : ''; ?>">Users</a>
+            <a href="?page=subsales-teams&tab=teams" class="nav-tab <?php echo $active_tab === 'teams' ? 'nav-tab-active' : ''; ?>">Teams</a>
+        </h2>
+
+        <?php if ( $active_tab === 'users' ) : ?>
+            <!-- USERS TAB -->
+            <div class="subsales-tab-content" style="margin-top: 20px;">
+                <h2><?php echo $editing_user ? 'Edit User' : 'Add New User'; ?></h2>
+                <form method="post" action="?page=subsales-teams&tab=users">
+                    <?php if ( $editing_user ): wp_nonce_field( 'order_sync_edit_user' ); else: wp_nonce_field( 'order_sync_add_user' ); endif; ?>
+                    <input type="hidden" name="user_id" value="<?php echo esc_attr( $edit_user['id'] ); ?>" />
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="user_active">Status</label></th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" id="user_active" name="user_active" value="1" <?php checked( ( $edit_user['status'] ?? 'active' ), 'active' ); ?> />
+                                    Active
+                                </label>
+                                <p class="description">Uncheck to make this user inactive. Inactive users cannot log into the PWA.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_name">Name *</label></th>
+                            <td><input type="text" id="user_name" name="user_name" class="regular-text" required value="<?php echo esc_attr( $edit_user['name'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_phone">Phone *</label></th>
+                            <td>
+                                <input type="tel" id="user_phone" name="user_phone" class="regular-text" required value="<?php echo esc_attr( $edit_user['phone'] ?? '' ); ?>" pattern="[0-9]{3}[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}" placeholder="555-123-4567" />
+                                <p class="description">Required. 10-digit phone number (unique per user).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_email">Email</label></th>
+                            <td><input type="email" id="user_email" name="user_email" class="regular-text" value="<?php echo esc_attr( $edit_user['email'] ); ?>" placeholder="(optional)" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="user_role">Role</label></th>
+                            <td>
+                                <select id="user_role" name="user_role">
+                                    <option value="member" <?php selected( $edit_user['role'], 'member' ); ?>>Member</option>
+                                    <option value="manager" <?php selected( $edit_user['role'], 'manager' ); ?>>Manager</option>
+                                    <option value="admin" <?php selected( $edit_user['role'], 'admin' ); ?>>Admin</option>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+                    <?php if ( $editing_user ): ?>
+                        <p>
+                            <button name="edit_user" class="button button-primary">Update User</button>
+                            <a href="?page=subsales-teams&tab=users" class="button">Cancel</a>
+                        </p>
+                    <?php else: ?>
+                        <p><button name="add_user" class="button button-primary">Add User</button></p>
+                    <?php endif; ?>
+                </form>
+
+                <h2 style="margin-top: 30px;">All Users</h2>
+                <?php if ( ! empty( $all_users ) ) : ?>
+                <input type="text" id="allUsersSearchBox" placeholder="Search users by name, phone, or email..." style="width: 100%; max-width: 400px; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                <table class="wp-list-table widefat fixed striped" id="allUsersTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 30%;">Name - Phone</th>
+                            <th style="width: 25%;">Email</th>
+                            <th style="width: 15%;">Role</th>
+                            <th style="width: 30%;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ( $all_users as $user ) : ?>
+                        <?php $is_active = ( $user['status'] ?? 'active' ) === 'active'; ?>
+                        <tr style="background-color: <?php echo $is_active ? '#e8f5e9' : '#f5f5f5'; ?>;<?php echo $is_active ? '' : ' opacity: 0.7;'; ?>">
+                            <td>
+                                <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                <span style="color: #666; font-size: 13px;">📞 <?php echo esc_html( $user['phone'] ?? 'No phone' ); ?></span>
+                            </td>
+                            <td><?php echo esc_html( $user['email'] ?: '—' ); ?></td>
+                            <td><?php echo esc_html( ucfirst( $user['role'] ) ); ?></td>
+                            <td>
+                                <a href="?page=subsales-teams&tab=users&edit_user=<?php echo intval( $user['id'] ); ?>" class="button button-small">Edit</a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php else : ?>
+                <p>No users yet. Add your first user above.</p>
+                <?php endif; ?>
+            </div>
+
+        <?php else : ?>
+            <!-- TEAMS TAB -->
+            <div class="subsales-tab-content" style="margin-top: 20px;">
+                <h2><?php echo $editing_team ? 'Edit Team' : 'Add New Team'; ?></h2>
+                <form method="post" action="?page=subsales-teams&tab=teams">
+                    <?php if ( $editing_team ): wp_nonce_field( 'order_sync_edit_team' ); else: wp_nonce_field( 'order_sync_add_team' ); endif; ?>
+                    <input type="hidden" name="team_id" value="<?php echo esc_attr( $edit_team['id'] ); ?>" />
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="team_active">Status</label></th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" id="team_active" name="team_active" value="1" <?php checked( ( $edit_team['status'] ?? 'active' ), 'active' ); ?> />
+                                    Active
+                                </label>
+                                <p class="description">Uncheck to make this team inactive. Inactive teams appear greyed out.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="team_name">Team Name</label></th>
+                            <td><input type="text" id="team_name" name="team_name" class="regular-text" required value="<?php echo esc_attr( $edit_team['name'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="team_code">Access Code</label></th>
+                            <td><input type="text" id="team_code" name="team_code" class="regular-text" required value="<?php echo esc_attr( $edit_team['access_code'] ); ?>" /></td>
+                        </tr>
+                        <tr>
+                            <th><label for="team_description">Description</label></th>
+                            <td><textarea id="team_description" name="team_description" class="large-text" rows="3"><?php echo esc_textarea( $edit_team['description'] ); ?></textarea></td>
+                        </tr>
+                    </table>
+                    <?php if ( $editing_team ): ?>
+                        <p>
+                            <button name="edit_team" class="button button-primary">Update Team</button>
+                            <a href="?page=subsales-teams&tab=teams" class="button">Cancel</a>
+                        </p>
+                    <?php else: ?>
+                        <p><button name="add_team" class="button button-primary">Add Team</button></p>
+                    <?php endif; ?>
+                </form>
+
+                <h2 style="margin-top: 30px;">Team Management</h2>
+                <p class="description">Drag users from the available users box into team boxes to assign them. Users can belong to multiple teams.</p>
+                
+                <style>
+                    .subsales-team-grid-wrapper {
+                        display: grid;
+                        gap: 20px;
+                        margin-top: 20px;
+                    }
+                    
+                    /* Large screens: 2 equal columns */
+                    @media (min-width: 900px) {
+                        .subsales-team-grid-wrapper {
+                            grid-template-columns: 1fr 1fr;
+                        }
+                    }
+                    
+                    /* Small screens: single column stacked */
+                    @media (max-width: 899px) {
+                        .subsales-team-grid-wrapper {
+                            grid-template-columns: 1fr;
+                        }
+                    }
+                    
+                    .available-users-column {
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        padding: 15px;
+                    }
+                    
+                    .available-teams-column {
+                        background: #f9f9f9;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        padding: 15px;
+                    }
+                    
+                    .teams-list {
+                        display: grid;
+                        gap: 15px;
+                    }
+                    
+                    /* Large screens: 3 columns inside teams container */
+                    @media (min-width: 1600px) {
+                        .teams-list {
+                            grid-template-columns: repeat(3, 1fr);
+                        }
+                    }
+                    
+                    /* Medium-large screens: 2 columns inside teams container */
+                    @media (min-width: 1200px) and (max-width: 1599px) {
+                        .teams-list {
+                            grid-template-columns: repeat(2, 1fr);
+                        }
+                    }
+                    
+                    /* Medium and small screens: 1 column inside teams container */
+                    @media (max-width: 1199px) {
+                        .teams-list {
+                            grid-template-columns: 1fr;
+                        }
+                    }
+                    
+                    .team-box {
+                        height: fit-content;
+                        margin-bottom: 0 !important;
+                    }
+                </style>
+                
+                <div class="subsales-team-grid-wrapper">
+                    <!-- Available Users -->
+                    <div class="available-users-column">
+                        <h3 style="margin-top: 0;">Available Users</h3>
+                        <input type="text" id="userSearchBox" placeholder="Search by name or phone..." style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                        <div class="available-users-list" id="availableUsersList" style="min-height: 200px;">
+                            <?php
+                            // Show only active users in the available list
+                            if ( ! empty( $all_users ) ) :
+                                foreach ( $all_users as $user ) :
+                                    // Skip inactive users
+                                    if ( ( $user['status'] ?? 'active' ) !== 'active' ) continue;
+                            ?>
+                                <div class="user-card draggable" draggable="true" data-user-id="<?php echo intval( $user['id'] ); ?>" 
+                                     style="background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; margin-bottom: 8px; cursor: move;">
+                                    <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                    <small style="color: #666;"><?php echo esc_html( $user['email'] ?: 'No email' ); ?></small>
+                                    <?php if ( ! empty( $user['phone'] ) ) : ?>
+                                        <br><small style="color: #666;">📞 <?php echo esc_html( $user['phone'] ); ?></small>
+                                    <?php endif; ?>
+                                </div>
+                            <?php
+                                endforeach;
+                            else :
+                            ?>
+                                <p style="color: #666; font-style: italic;">No users available. Create users in the Users tab.</p>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Available Teams -->
+                    <div class="available-teams-column">
+                        <h3 style="margin-top: 0;">Available Teams</h3>
+                        <input type="text" id="teamSearchBox" placeholder="Search teams by name, code, or member..." 
+                               style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
+                        <div class="teams-list" id="teamsList" style="min-height: 200px;">
+                            <?php if ( ! empty( $teams ) ) : ?>
+                                <?php foreach ( $teams as $team ) : ?>
+                                    <?php $team_is_active = ( $team['status'] ?? 'active' ) === 'active'; ?>
+                                    <div class="team-box postbox" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                         style="margin-bottom: 20px; border: 2px solid #ccc; border-radius: 6px;<?php echo $team_is_active ? '' : ' opacity: 0.6;'; ?>">
+                                        <div class="postbox-header" style="background: <?php echo $team_is_active ? '#e8f5e9' : '#f5f5f5'; ?>; padding: 12px 15px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
+                                            <h3 style="margin: 0;">
+                                                <?php echo esc_html( $team['name'] ); ?>
+                                                <?php if ( ! $team_is_active ) : ?>
+                                                    <span style="font-size: 12px; color: #999; font-weight: normal;">(Inactive)</span>
+                                                <?php endif; ?>
+                                                <span style="font-weight: normal; color: #666; font-size: 14px;">
+                                                    (Code: <?php echo esc_html( $team['access_code'] ); ?>)
+                                                </span>
+                                            </h3>
+                                            <div>
+                                                <a href="?page=subsales-teams&tab=teams&edit_team=<?php echo intval( $team['id'] ); ?>" class="button button-small">Edit</a>
+                                            </div>
+                                        </div>
+                                        <div class="inside team-dropzone" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                             style="padding: 15px; min-height: 100px; background: #fafafa;">
+                                            <?php if ( ! empty( $team['description'] ) ) : ?>
+                                                <p style="margin: 0 0 10px 0; font-style: italic; color: #666;"><?php echo esc_html( $team['description'] ); ?></p>
+                                            <?php endif; ?>
+                                            
+                                            <h4 style="margin: 10px 0;">Team Members</h4>
+                                            <div class="team-members-list">
+                                                <?php
+                                                // Get team members via junction table
+                                                $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+                                                $team_member_ids = $wpdb->get_col( $wpdb->prepare(
+                                                    "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
+                                                    $team['id']
+                                                ));
+                                                
+                                                $team_members_new = array();
+                                                if ( ! empty( $team_member_ids ) ) {
+                                                    $team_members_new = $wpdb->get_results(
+                                                        "SELECT * FROM {$members_table} WHERE id IN (" . implode( ',', array_map( 'intval', $team_member_ids ) ) . ")",
+                                                        ARRAY_A
+                                                    );
+                                                }
+                                                
+                                                if ( ! empty( $team_members_new ) ) : ?>
+                                                <?php foreach ( $team_members_new as $member ) : ?>
+                                                    <?php $member_is_active = ( $member['status'] ?? 'active' ) === 'active'; ?>
+                                                    <div class="user-card team-member-card" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                                         style="background: <?php echo $member_is_active ? '#fff' : '#f5f5f5'; ?>; border: 1px solid <?php echo $member_is_active ? '#4CAF50' : '#ccc'; ?>; border-radius: 4px; padding: 10px; margin-bottom: 8px; position: relative;<?php echo $member_is_active ? '' : ' opacity: 0.7;'; ?>">
+                                                        <button type="button" class="remove-from-team" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
+                                                                style="position: absolute; top: 5px; right: 5px; background: #dc3232; color: #fff; border: none; border-radius: 3px; cursor: pointer; padding: 2px 6px; font-size: 11px;"
+                                                                title="Remove from team">×</button>
+                                                        <strong><?php echo esc_html( $member['name'] ); ?></strong>
+                                                        <?php if ( ! $member_is_active ) : ?>
+                                                            <span style="font-size: 11px; color: #999;">(Inactive)</span>
+                                                        <?php endif; ?>
+                                                        <br>
+                                                        <small style="color: #666;"><?php echo esc_html( $member['email'] ?: 'No email' ); ?></small>
+                                                        <?php if ( ! empty( $member['phone'] ) ) : ?>
+                                                            <br><small style="color: #666;">📞 <?php echo esc_html( $member['phone'] ); ?></small>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            <?php else : ?>
+                                                <p style="color: #999; font-style: italic;">No members assigned yet. Drag users here to assign.</p>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php else : ?>
+                            <p style="color: #666; font-style: italic;">No teams created yet. Add your first team above.</p>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Drag and Drop JavaScript -->
+                <script>
+                (function($) {
+                    $(document).ready(function() {
+                        let draggedElement = null;
+
+                        // User search box - filters available users
+                        $('#userSearchBox').on('keyup', function() {
+                        const searchTerm = $(this).val().toLowerCase();
+                        $('#availableUsersList .user-card').each(function() {
+                            const text = $(this).text().toLowerCase();
+                            if (text.indexOf(searchTerm) > -1) {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+                    });
+                    
+                    // Team search box - filters team boxes
+                    $('#teamSearchBox').on('keyup', function() {
+                        const searchTerm = $(this).val().toLowerCase();
+                        $('.team-box').each(function() {
+                            const teamText = $(this).find('.postbox-header h3').text().toLowerCase();
+                            const membersText = $(this).find('.team-members-list').text().toLowerCase();
+                            const combinedText = teamText + ' ' + membersText;
+                            
+                            if (combinedText.indexOf(searchTerm) > -1) {
+                                $(this).show();
+                            } else {
+                                $(this).hide();
+                            }
+                        });
+                    });
+
+                    // Make user cards draggable
+                    $(document).on('dragstart', '.user-card', function(e) {
+                        draggedElement = this;
+                        $(this).css('opacity', '0.5');
+                        e.originalEvent.dataTransfer.effectAllowed = 'move';
+                        e.originalEvent.dataTransfer.setData('text/html', this.innerHTML);
+                    });
+
+                    $(document).on('dragend', '.user-card', function(e) {
+                        $(this).css('opacity', '1');
+                    });
+
+                    // Handle drag over team dropzones and available users list
+                    $(document).on('dragover', '.team-dropzone, #availableUsersList', function(e) {
+                        if (e.preventDefault) {
+                            e.preventDefault();
+                        }
+                        e.originalEvent.dataTransfer.dropEffect = 'move';
+                        $(this).css('background', '#e8f5e9');
+                        return false;
+                    });
+
+                    $(document).on('dragleave', '.team-dropzone, #availableUsersList', function(e) {
+                        $(this).css('background', '');
+                    });
+
+                    // Handle drop
+                    $(document).on('drop', '.team-dropzone', function(e) {
+                        if (e.stopPropagation) {
+                            e.stopPropagation();
+                        }
+                        $(this).css('background', '');
+
+                        if (draggedElement) {
+                            const userId = $(draggedElement).data('user-id');
+                            const teamId = $(this).data('team-id');
+                            
+                            // Add to team via AJAX (don't move visually from available list)
+                            $.post(ajaxurl, {
+                                action: 'subsales_add_user_to_team',
+                                user_id: userId,
+                                team_id: teamId,
+                                nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
+                            }, function(response) {
+                                if (response.success) {
+                                    // Reload to show updated team membership
+                                    location.reload();
+                                } else {
+                                    alert(response.data.message || 'Failed to assign user to team.');
+                                }
+                            });
+                        }
+                        
+                        return false;
+                    });
+
+                    // Handle remove button click
+                    $(document).on('click', '.remove-from-team', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        const userId = $(this).data('user-id');
+                        const teamId = $(this).data('team-id');
+                        
+                        if (!confirm('Remove this user from the team?')) {
+                            return;
+                        }
+                        
+                        // Remove from team via AJAX
+                        $.post(ajaxurl, {
+                            action: 'subsales_remove_user_from_team',
+                            user_id: userId,
+                            team_id: teamId,
+                            nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
+                        }, function(response) {
+                            if (response.success) {
+                                location.reload();
+                            } else {
+                                alert('Failed to remove user from team.');
+                            }
+                        });
+                    });
+                    }); // End document.ready
+                })(jQuery);
+                </script>
+            </div>
+        <?php endif; ?>
+        
+        <style>
+        .nav-tab-wrapper {
+            border-bottom: 1px solid #ccc;
+            margin: 20px 0 0 0;
+            padding: 0;
+        }
+        .nav-tab {
+            border: 1px solid #ccc;
+            border-bottom: none;
+            background: #f1f1f1;
+            color: #555;
+        }
+        .nav-tab-active {
+            background: #fff;
+            border-bottom: 1px solid #fff;
+            color: #000;
+            margin-bottom: -1px;
+        }
+        .user-card {
+            transition: all 0.2s ease;
+        }
+        .user-card:hover {
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transform: translateY(-1px);
+        }
+        .team-dropzone {
+            transition: background 0.2s ease;
+        }
+        .status-active { color: #46b450; font-weight: bold; }
+        .status-pending { color: #ffb900; font-weight: bold; }
+        .status-inactive { color: #dc3232; font-weight: bold; }
+        </style>
+        
+        <script>
+        (function($) {
+            $(document).ready(function() {
+                // Search functionality for All Users table
+                $('#allUsersSearchBox').on('keyup', function() {
+                    const searchTerm = $(this).val().toLowerCase();
+                    $('#allUsersTable tbody tr').each(function() {
+                        const text = $(this).text().toLowerCase();
+                        if (text.indexOf(searchTerm) > -1) {
+                            $(this).show();
+                        } else {
+                            $(this).hide();
+                        }
+                    });
+                });
+            });
+        })(jQuery);
+        </script>
+    </div>
+    <?php
+}
+
+// AJAX handler for adding user to team (many-to-many)
+add_action( 'wp_ajax_subsales_add_user_to_team', 'subsales_ajax_add_user_to_team' );
+function subsales_ajax_add_user_to_team() {
+    check_ajax_referer( 'subsales_team_assign', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    $user_id = intval( $_POST['user_id'] ?? 0 );
+    $team_id = intval( $_POST['team_id'] ?? 0 );
+    
+    if ( $user_id && $team_id ) {
+        // Check if already assigned
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            $user_id,
+            $team_id
+        ));
+        
+        if ( $exists ) {
+            wp_send_json_error( array( 'message' => 'User is already assigned to this team' ) );
+        }
+        
+        $result = $wpdb->insert(
+            $user_teams_table,
+            array( 'user_id' => $user_id, 'team_id' => $team_id ),
+            array( '%d', '%d' )
+        );
+        
+        if ( $result ) {
+            wp_send_json_success( array( 'message' => 'User added to team successfully' ) );
+        } else {
+            wp_send_json_error( array( 'message' => 'Database insert failed' ) );
+        }
+    }
+    
+    wp_send_json_error( array( 'message' => 'Invalid user or team ID' ) );
+}
+
+// AJAX handler for removing user from team
+add_action( 'wp_ajax_subsales_remove_user_from_team', 'subsales_ajax_remove_user_from_team' );
+function subsales_ajax_remove_user_from_team() {
+    check_ajax_referer( 'subsales_team_assign', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    global $wpdb;
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    $user_id = intval( $_POST['user_id'] ?? 0 );
+    $team_id = intval( $_POST['team_id'] ?? 0 );
+    
+    if ( $user_id && $team_id ) {
+        $deleted = $wpdb->delete(
+            $user_teams_table,
+            array( 'user_id' => $user_id, 'team_id' => $team_id ),
+            array( '%d', '%d' )
+        );
+        
+        if ( $deleted ) {
+            wp_send_json_success( array( 'message' => 'User removed from team successfully' ) );
+        } else {
+            wp_send_json_error( array( 'message' => 'Database delete failed' ) );
+        }
+    }
+    
+    wp_send_json_error( array( 'message' => 'Invalid user or team ID' ) );
+}
+
+// Orders admin page
+function order_sync_orders_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_orders';
+    // Initial page renders minimal markup; actual data is fetched via AJAX.
+    $nonce = wp_create_nonce( 'subsales_orders_nonce' );
+    $ajax_url = admin_url( 'admin-ajax.php' );
+    // preload teams, members and configured products for filter UI and table columns
+    $teams = order_sync_get_teams();
+    global $wpdb;
+    $members = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}ss_team_members ORDER BY name ASC", ARRAY_A );
+    $products_conf = order_sync_get_products_config();
+
+    // Get filter parameters from request
+    $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : '';
+    $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : '';
+    $filter_team = isset( $_GET['filter_team'] ) ? intval( $_GET['filter_team'] ) : 0;
+    $filter_member = isset( $_GET['filter_member'] ) ? sanitize_text_field( $_GET['filter_member'] ) : '';
+    $payment_method = isset( $_GET['payment_method'] ) ? sanitize_text_field( $_GET['payment_method'] ) : '';
+
+    // Build WHERE clauses safely
+    $where = array();
+    $params = array();
+
+    if ( ! empty( $start_date ) ) {
+        // start of day
+        $where[] = "created_at >= %s";
+        $params[] = $start_date . ' 00:00:00';
+    }
+    if ( ! empty( $end_date ) ) {
+        // end of day
+        $where[] = "created_at <= %s";
+        $params[] = $end_date . ' 23:59:59';
+    }
+    if ( $filter_team ) {
+        $where[] = "team_id = %d";
+        $params[] = $filter_team;
+    }
+    if ( ! empty( $filter_member ) ) {
+        // user_id column stores the entered_by identifier
+        $where[] = "user_id = %s";
+        $params[] = $filter_member;
+    }
+    if ( ! empty( $payment_method ) ) {
+        // best-effort JSON match in order_data -> search for paymentMethod or checkNumber
+        if ( $payment_method === 'cash' ) {
+            $where[] = "order_data LIKE %s";
+            $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"cash"%';
+        } elseif ( $payment_method === 'check' ) {
+            $where[] = "(order_data LIKE %s OR order_data LIKE %s)";
+            $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"check"%';
+            $params[] = '%' . $wpdb->esc_like( '"checkNumber"' ) . '%';
+        }
+    }
+
+    // Normalize stored products option (may be JSON string or array)
+    $products_conf = order_sync_get_products_config();
+
+    // Note: initial Orders page renders an empty table; data is fetched via AJAX. Do not run server-side queries here.
+    $orders = array();
+
+    ?>
+    <div class="wrap">
+        <h1>Orders</h1>
+
+        <!-- Quick Search -->
+        <div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px;">
+            <label for="subsales-quick-search" style="font-weight: 600; margin-right: 10px;">🔍 Quick Search:</label>
+            <input type="text" id="subsales-quick-search" placeholder="Search by customer name, address, or phone..." style="width: 400px; padding: 6px 12px;" />
+            <button id="subsales-clear-search" class="button" style="margin-left: 8px;">Clear</button>
+            <span id="subsales-search-results" style="margin-left: 15px; color: #666; font-style: italic;"></span>
+        </div>
+
+        <form id="subsales-orders-filter" class="subsales-orders-filter" onsubmit="return false;">
+            <input type="hidden" name="action" value="subsales_fetch_orders" />
+            <?php wp_nonce_field( 'subsales_orders_nonce', 'subsales_orders_nonce_field' ); ?>
+            <table class="form-table" style="max-width: 960px;">
+                <tr>
+                    <th style="width:110px">Start date</th>
+                    <td><input type="date" name="start_date" /></td>
+                    <th>End date</th>
+                    <td><input type="date" name="end_date" /></td>
+                </tr>
+                <tr>
+                    <th>Team</th>
+                    <td>
+                        <select name="team_id">
+                            <option value="">All teams</option>
+                            <?php foreach ( $teams as $t ) : ?>
+                                <option value="<?php echo intval( $t['id'] ); ?>"><?php echo esc_html( $t['name'] ); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                    <th>Team member</th>
+                    <td>
+                        <select name="entered_by_id">
+                            <option value="">All members</option>
+                            <?php foreach ( $members as $m ) : ?>
+                                <?php $label = esc_html( $m['name'] ); $email = trim( strval( $m['email'] ?? '' ) ); if ( $email ) { $label .= ' (' . esc_html( $email ) . ')'; } ?>
+                                <option value="<?php echo esc_attr( $m['id'] ); ?>"><?php echo $label; ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Payment</th>
+                    <td>
+                        <select name="payment_method">
+                            <option value="">Any</option>
+                            <option value="cash">Cash</option>
+                            <option value="check">Check</option>
+                        </select>
+                    </td>
+                    <th>Tally Status</th>
+                    <td>
+                        <select name="tally_status">
+                            <option value="untallied">Untallied Only</option>
+                            <option value="tallied">Tallied Only</option>
+                            <option value="all" selected>All Orders</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th>Show Deleted</th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="show_deleted" value="1" />
+                            Include deleted orders
+                        </label>
+                    </td>
+                    <th>Page size</th>
+                    <td>
+                        <select name="page_size">
+                            <option value="25">25</option>
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                        </select>
+                        <span class="description">(max 100)</span>
+                    </td>
+                </tr>
+            </table>
+            <p class="submit">
+                <button id="subsales-filter-btn" class="button button-primary">Filter</button>
+                <button id="subsales-reset-btn" type="button" class="button">Reset</button>
+            </p>
+        </form>
+
+        <div style="margin-bottom: 15px;">
+            <button id="subsales-bulk-tally-btn" class="button button-secondary" disabled>
+                Mark Selected as Tallied
+            </button>
+            <span id="subsales-selected-count" style="margin-left: 10px; color: #666;"></span>
+        </div>
+
+        <div id="subsales-orders-results">
+            <p id="subsales-orders-meta" style="margin-bottom:8px"></p>
+            <div style="overflow-x: auto; max-width: 100%;">
+            <table id="subsales-orders-table" class="widefat striped" cellspacing="0" style="table-layout: auto; min-width: 100%; width: max-content;">
+                <thead>
+                    <tr>
+                        <th style="width: 30px;"><input type="checkbox" id="subsales-select-all" title="Select all" /></th>
+                        <th style="white-space: nowrap;">Order ID</th>
+                        <th style="white-space: nowrap;">Date</th>
+                        <th style="white-space: nowrap;">Member</th>
+                        <th style="white-space: nowrap;">Team</th>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <th style="text-align:center; white-space: nowrap; padding: 8px 4px;" title="<?php echo esc_attr( $pcol['name'] ); ?>"><?php echo esc_html( substr( $pcol['name'], 0, 6 ) ); ?></th>
+                        <?php endforeach; ?>
+                        <th style="text-align:right; white-space: nowrap;">Donate</th>
+                        <th style="white-space: nowrap;">Pay</th>
+                        <th style="text-align:right; white-space: nowrap;">Total</th>
+                        <th style="white-space: nowrap;">Tallied</th>
+                        <th style="white-space: nowrap;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="subsales-orders-tbody">
+                    <tr><td colspan="<?php echo 8 + count( $products_conf ); ?>">Use the filters above and click Filter to load orders via AJAX.</td></tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="5" style="text-align:right">Page totals:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td id="subsales-page-prod-<?php echo esc_attr( $pcol['id'] ); ?>" style="text-align:center">0</td>
+                        <?php endforeach; ?>
+                        <td id="subsales-page-donation" style="text-align:right">$0.00</td>
+                        <td></td>
+                        <td id="subsales-page-total" style="text-align:right">$0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td colspan="5" style="text-align:right">Cash:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td></td>
+                        <?php endforeach; ?>
+                        <td></td>
+                        <td></td>
+                        <td id="subsales-page-cash" style="text-align:right">$0.00</td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td colspan="5" style="text-align:right">Check:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td></td>
+                        <?php endforeach; ?>
+                        <td></td>
+                        <td></td>
+                        <td id="subsales-page-check" style="text-align:right">$0.00</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+            </div>
+
+            <div id="subsales-pagination" style="margin-top:12px"></div>
+        </div>
+    </div>
+
+    <!-- Edit Order Modal -->
+    <div id="subsales-edit-modal" class="subsales-modal" style="display:none">
+        <div class="subsales-modal-backdrop"></div>
+        <div class="subsales-modal-content">
+            <div class="subsales-modal-header">
+                <h2>Edit Order</h2>
+                <button class="subsales-modal-close" onclick="SubsalesOrderEdit.closeEditModal()">&times;</button>
+            </div>
+            <div class="subsales-modal-body">
+                <form id="subsales-edit-form">
+                    <input type="hidden" name="order_db_id" />
+                    <input type="hidden" name="order_id" />
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th><label>Customer Name</label></th>
+                            <td><input type="text" name="customer" class="regular-text" required /></td>
+                        </tr>
+                        <tr>
+                            <th><label>Address</label></th>
+                            <td><input type="text" name="address" class="regular-text" required /></td>
+                        </tr>
+                        <tr>
+                            <th><label>Unit / Floor / Apt</label></th>
+                            <td><input type="text" name="unitFloorApt" class="regular-text" placeholder="Optional" /></td>
+                        </tr>
+                        <tr>
+                            <th><label>Cell Number</label></th>
+                            <td><input type="tel" name="cellNumber" class="regular-text" placeholder="Optional" /></td>
+                        </tr>
+                    </table>
+                    
+                    <h3 style="border: 2px solid #0073aa; padding: 10px; background: #f0f6fc; margin: 15px 0 5px 0; border-radius: 4px;">Products</h3>
+                    <table class="form-table" style="border: 2px solid #0073aa; margin-bottom: 15px; border-radius: 4px;">
+                        <tbody id="subsales-edit-products"></tbody>
+                    </table>
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th><label>Donation Amount (USD)</label></th>
+                            <td><input type="number" name="donationAmount" class="regular-text" min="0" step="0.01" placeholder="$0.00" /></td>
+                        </tr>
+                        <tr>
+                            <th><label>Payment Method</label></th>
+                            <td>
+                                <select name="paymentMethod">
+                                    <option value="cash">Cash</option>
+                                    <option value="check">Check</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label>Check Number</label></th>
+                            <td><input type="text" name="checkNumber" class="regular-text" /></td>
+                        </tr>
+                        <tr>
+                            <th><label>Delivery Instructions</label></th>
+                            <td><textarea name="notes" class="large-text" rows="3" placeholder="House color, long driveway, etc."></textarea></td>
+                        </tr>
+                        <tr>
+                            <th><label>Edit Reason</label> <span style="color:red">*</span></th>
+                            <td><textarea name="_edit_reason" class="large-text" rows="2" placeholder="Explain why this order is being edited..." required></textarea></td>
+                        </tr>
+                    </table>
+                </form>
+            </div>
+            <div class="subsales-modal-footer">
+                <button class="button button-large" onclick="SubsalesOrderEdit.closeEditModal()">Cancel</button>
+                <button class="button button-primary button-large" onclick="SubsalesOrderEdit.saveOrder()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="subsales-delete-modal" class="subsales-modal" style="display:none">
+        <div class="subsales-modal-backdrop"></div>
+        <div class="subsales-modal-content" style="max-width:500px">
+            <div class="subsales-modal-header">
+                <h2>Delete Order</h2>
+                <button class="subsales-modal-close" onclick="SubsalesOrderEdit.closeDeleteModal()">&times;</button>
+            </div>
+            <div class="subsales-modal-body">
+                <p><strong>Are you sure you want to delete this order?</strong></p>
+                <p id="subsales-delete-order-info"></p>
+                <form id="subsales-delete-form">
+                    <input type="hidden" name="order_db_id" />
+                    <input type="hidden" name="order_id" />
+                    <table class="form-table">
+                        <tr>
+                            <th><label>Delete Reason</label> <span style="color:red">*</span></th>
+                            <td><textarea name="delete_reason" class="large-text" rows="3" placeholder="Explain why this order is being deleted..." required></textarea></td>
+                        </tr>
+                    </table>
+                </form>
+            </div>
+            <div class="subsales-modal-footer">
+                <button class="button button-large" onclick="SubsalesOrderEdit.closeDeleteModal()">Cancel</button>
+                <button class="button button-primary button-large" style="background:red;border-color:darkred" onclick="SubsalesOrderEdit.confirmDelete()">Delete Order</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Panel -->
+    <div id="subsales-history-panel" class="subsales-history-panel" style="display:none">
+        <div class="subsales-history-header">
+            <h3>Order Edit History</h3>
+            <button class="button" onclick="SubsalesOrderEdit.closeHistoryPanel()">&times; Close</button>
+        </div>
+        <div id="subsales-history-content" class="subsales-history-content">
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <style>
+        .subsales-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100000; }
+        .subsales-modal-backdrop { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
+        .subsales-modal-content { position: relative; max-width: 700px; margin: 40px auto; background: white; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 90vh; display: flex; flex-direction: column; }
+        .subsales-modal-header { padding: 20px 24px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
+        .subsales-modal-header h2 { margin: 0; }
+        .subsales-modal-close { background: none; border: none; font-size: 28px; cursor: pointer; padding: 0; line-height: 1; color: #666; }
+        .subsales-modal-body { padding: 24px; overflow-y: auto; flex: 1; }
+        .subsales-modal-footer { padding: 16px 24px; border-top: 1px solid #ddd; text-align: right; }
+        .subsales-modal-footer button { margin-left: 8px; }
+        
+        .subsales-history-panel { position: fixed; top: 0; right: 0; width: 500px; height: 100%; background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.3); z-index: 100001; overflow-y: auto; }
+        .subsales-history-header { padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: white; }
+        .subsales-history-content { padding: 20px; }
+        .subsales-history-item { border: 1px solid #ddd; border-radius: 4px; padding: 16px; margin-bottom: 16px; background: #f9f9f9; }
+        .subsales-history-item h4 { margin: 0 0 8px 0; color: #2271b1; }
+        .subsales-history-item .meta { color: #666; font-size: 0.9em; margin-bottom: 8px; }
+        .subsales-history-item .summary { margin-bottom: 12px; }
+        .subsales-history-changes { background: white; border: 1px solid #ddd; padding: 12px; border-radius: 3px; font-size: 0.9em; }
+        .subsales-history-change { margin-bottom: 8px; padding: 8px; background: #f5f5f5; border-left: 3px solid #2271b1; }
+        .subsales-history-change strong { display: inline-block; min-width: 120px; }
+        .subsales-change-before { color: #d63638; text-decoration: line-through; }
+        .subsales-change-after { color: #00a32a; font-weight: 600; }
+        
+        .subsales-orders-meta-note { float: right; color: #666; font-size: 0.9em; }
+        .subsales-edited-star { color: red; font-weight: bold; }
+        .subsales-action-btn { 
+            padding: 6px 12px; 
+            font-size: 12px; 
+            margin-right: 4px; 
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid #ddd;
+            background: white;
+        }
+        .subsales-action-btn:hover { 
+            background: #f0f0f1;
+            border-color: #2271b1;
+            color: #2271b1;
+        }
+        .subsales-action-btn-edit { 
+            background: #2271b1;
+            color: white;
+            border-color: #2271b1;
+        }
+        .subsales-action-btn-edit:hover { 
+            background: #135e96;
+        }
+        .subsales-action-btn-delete { 
+            background: #d63638;
+            color: white;
+            border-color: #d63638;
+        }
+        .subsales-action-btn-delete:hover { 
+            background: #b32d2e;
+        }
+        .subsales-action-btn-history {
+            background: #dba617;
+            color: white;
+            border-color: #dba617;
+        }
+        .subsales-action-btn-history:hover {
+            background: #c29500;
+        }
+    </style>
+
+    <script>
+    (function(){
+        const ajaxUrl = <?php echo json_encode( $ajax_url ); ?>;
+        const nonce = <?php echo json_encode( $nonce ); ?>;
+        const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
+        const restUrl = <?php echo json_encode( rest_url( 'order-manager/v1/orders/tally' ) ); ?>;
+        const restNonce = <?php echo json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+        
+        let selectedOrderIds = new Set();
+
+        function serializeForm(form){
+            const fd = new FormData();
+            fd.append('action','subsales_fetch_orders');
+            fd.append('nonce', nonce);
+            const f = new FormData(form);
+            for (const [k,v] of f.entries()){ if (v !== null) fd.append(k,v); }
+            return fd;
+        }
+        
+        function updateTallyButton(){
+            const btn = document.getElementById('subsales-bulk-tally-btn');
+            const countSpan = document.getElementById('subsales-selected-count');
+            const count = selectedOrderIds.size;
+            
+            if (count > 0) {
+                btn.disabled = false;
+                countSpan.textContent = count;
+            } else {
+                btn.disabled = true;
+                countSpan.textContent = '0';
+            }
+        }
+        
+        function handleCheckboxChange(orderId, checked){
+            if (checked) {
+                selectedOrderIds.add(orderId);
+            } else {
+                selectedOrderIds.delete(orderId);
+            }
+            updateTallyButton();
+        }
+        
+        function handleSelectAllChange(checked){
+            const checkboxes = document.querySelectorAll('.subsales-order-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = checked;
+                const orderId = parseInt(cb.dataset.orderId);
+                if (checked) {
+                    selectedOrderIds.add(orderId);
+                } else {
+                    selectedOrderIds.delete(orderId);
+                }
+            });
+            updateTallyButton();
+        }
+        
+        async function bulkTallyOrders(){
+            if (selectedOrderIds.size === 0) {
+                alert('Please select at least one order to tally.');
+                return;
+            }
+            
+            if (!confirm('Mark ' + selectedOrderIds.size + ' order(s) as tallied?')) {
+                return;
+            }
+            
+            const orderIdsArray = Array.from(selectedOrderIds);
+            
+            try {
+                const resp = await fetch(restUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': restNonce
+                    },
+                    body: JSON.stringify({ order_ids: orderIdsArray })
+                });
+                
+                const data = await resp.json();
+                
+                if (data.success_count > 0) {
+                    alert('Successfully tallied ' + data.success_count + ' order(s)');
+                    selectedOrderIds.clear();
+                    document.getElementById('subsales-select-all').checked = false;
+                    updateTallyButton();
+                    fetchPage(1); // Refresh the table
+                } else {
+                    alert('Failed to tally orders: ' + (data.errors ? data.errors.join(', ') : 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Tally error:', error);
+                alert('Error tallying orders: ' + error.message);
+            }
+        }
+
+        function renderRows(orders){
+            const tbody = document.getElementById('subsales-orders-tbody');
+            tbody.innerHTML = '';
+                if (!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="' + (10 + configuredProducts.length) + '">No orders found for the selected filters.</td></tr>';
+                return;
+            }
+            for (const o of orders){
+                const tr = document.createElement('tr');
+                let html = '';
+                
+                // Checkbox column
+                html += '<td style="text-align:center; width:30px;">';
+                html += '<input type="checkbox" class="subsales-order-checkbox" data-order-id="' + o.id + '" onchange="handleCheckboxChange(' + o.id + ', this.checked)">';
+                html += '</td>';
+                
+                html += '<td style="white-space: nowrap;">' + escapeHtml(o.order_id) + (o.edited ? ' <span class="subsales-edited-star">*</span>' : '') + '</td>';
+                html += '<td style="white-space: nowrap;">' + escapeHtml(o.created_at_formatted) + '</td>';
+                html += '<td style="white-space: nowrap;">' + escapeHtml(o.entered_by_name || o.user_id || '') + '</td>';
+                html += '<td style="white-space: nowrap;">' + escapeHtml(o.team_name || '') + '</td>';
+                // per-configured-product columns
+                for (const p of configuredProducts) {
+                    const pid = p.id;
+                    const qty = (o.products_map && typeof o.products_map[pid] !== 'undefined') ? Number(o.products_map[pid]) : 0;
+                    html += '<td style="text-align:center; white-space: nowrap; padding: 8px 4px;">' + escapeHtml(qty) + '</td>';
+                }
+                // Donation column
+                const donationAmt = Number(o.donation_amount || 0);
+                html += '<td style="text-align:right; white-space: nowrap;">' + (donationAmt > 0 ? '$' + donationAmt.toFixed(2) : '') + '</td>';
+                // Items column removed; individual product columns are shown above.
+                html += '<td style="white-space: nowrap;">' + escapeHtml(o.payment_display || '') + '</td>';
+                html += '<td style="text-align:right; white-space: nowrap;">$' + Number(o.order_total).toFixed(2) + '</td>';
+                
+                // Tallied column
+                html += '<td style="text-align:center; white-space: nowrap;">';
+                if (o.tallied) {
+                    const tallyDate = o.tallied_at ? new Date(o.tallied_at).toLocaleDateString() : '';
+                    const tallyBy = o.tallied_by ? ' by ' + escapeHtml(o.tallied_by) : '';
+                    html += '<span title="Tallied ' + tallyDate + tallyBy + '">✓</span>';
+                } else {
+                    html += '';
+                }
+                html += '</td>';
+                
+                // Actions column
+                html += '<td style="white-space: nowrap;">';
+                html += '<button class="subsales-action-btn subsales-action-btn-edit" onclick="SubsalesOrderEdit.editOrder(' + o.id + ',\'' + escapeHtml(o.order_id).replace(/'/g, "\\'") + '\')" title="Edit order">✏️ Edit</button>';
+                html += '<button class="subsales-action-btn subsales-action-btn-delete" onclick="SubsalesOrderEdit.deleteOrder(' + o.id + ',\'' + escapeHtml(o.order_id).replace(/'/g, "\\'") + '\')" title="Delete order">🗑️ Delete</button>';
+                html += '<button class="subsales-action-btn subsales-action-btn-history" onclick="SubsalesOrderEdit.viewHistory(' + o.id + ')" title="View history">📋 History</button>';
+                html += '</td>';
+                
+                tr.innerHTML = html;
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderMeta(total_count, page, pages){
+            const meta = document.getElementById('subsales-orders-meta');
+            // Put the page meta on the left and an explanatory note on the right
+            meta.innerHTML = 'Showing page ' + page + ' of ' + pages + ' — ' + total_count + ' matching orders' +
+                '<span class="subsales-orders-meta-note"><span style="color: red;">*</span> indicates edited order</span>';
+        }
+
+        function renderTotals(totals){
+            // totals.product_totals is expected to be a map of productId => qty for the current page
+            try{
+                if (totals && totals.product_totals){
+                    for (const p of configuredProducts){
+                        const pid = p.id;
+                        const el = document.getElementById('subsales-page-prod-' + pid);
+                        if (el) el.textContent = (totals.product_totals[pid] !== undefined) ? String(totals.product_totals[pid]) : '0';
+                    }
+                } else {
+                    // clear product totals
+                    for (const p of configuredProducts){ const el = document.getElementById('subsales-page-prod-' + p.id); if (el) el.textContent = '0'; }
+                }
+            }catch(e){ console.warn('renderTotals product totals error', e); }
+            document.getElementById('subsales-page-donation').textContent = '$' + Number(totals.donations || 0).toFixed(2);
+            document.getElementById('subsales-page-total').textContent = '$' + Number(totals.grand || 0).toFixed(2);
+            document.getElementById('subsales-page-cash').textContent = '$' + Number(totals.cash || 0).toFixed(2);
+            document.getElementById('subsales-page-check').textContent = '$' + Number(totals.check || 0).toFixed(2);
+        }
+
+        function renderPagination(page, pages){
+            const el = document.getElementById('subsales-pagination');
+            el.innerHTML = '';
+            if (pages <= 1) return;
+            for (let p=1;p<=pages;p++){
+                const btn = document.createElement('button');
+                btn.className = 'button';
+                btn.style.marginRight = '6px';
+                btn.textContent = p;
+                if (p === page) btn.disabled = true;
+                btn.addEventListener('click', function(){ fetchPage(p); });
+                el.appendChild(btn);
+            }
+        }
+
+        function escapeHtml(s){ if (!s && s !== 0) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+        async function fetchPage(page){
+            const form = document.getElementById('subsales-orders-filter');
+            const fd = serializeForm(form);
+            fd.append('page', page);
+            // page_size is included from form
+            try {
+                const resp = await fetch(ajaxUrl, { method: 'POST', body: fd });
+                const data = await resp.json();
+                console.log('AJAX Response:', data);
+                if (!data || !data.success){
+                    console.error('AJAX Error:', data);
+                    alert('Failed to fetch orders: ' + (data && data.data ? data.data : 'Unknown error'));
+                    return;
+                }
+                const payload = data.data;
+                renderRows(payload.orders);
+                renderMeta(payload.total_count, payload.page, payload.pages);
+                renderTotals(payload.totals);
+                renderPagination(payload.page, payload.pages);
+            } catch (error) {
+                console.error('Fetch error:', error);
+                alert('Error loading orders: ' + error.message);
+            }
+        }
+
+        document.getElementById('subsales-filter-btn').addEventListener('click', function(){ fetchPage(1); });
+        document.getElementById('subsales-reset-btn').addEventListener('click', function(){
+            document.getElementById('subsales-orders-filter').reset(); fetchPage(1);
+        });
+        
+        // Select all checkbox handler
+        document.getElementById('subsales-select-all').addEventListener('change', function(){
+            handleSelectAllChange(this.checked);
+        });
+        
+        // Bulk tally button handler
+        document.getElementById('subsales-bulk-tally-btn').addEventListener('click', function(){
+            bulkTallyOrders();
+        });
+        
+        // Make functions globally available
+        window.handleCheckboxChange = handleCheckboxChange;
+        window.handleSelectAllChange = handleSelectAllChange;
+
+        // Quick Search functionality
+        let searchTimeout = null;
+        const searchInput = document.getElementById('subsales-quick-search');
+        const clearSearchBtn = document.getElementById('subsales-clear-search');
+        const searchResults = document.getElementById('subsales-search-results');
+        
+        function performSearch() {
+            const searchTerm = searchInput.value.trim();
+            
+            if (searchTerm.length === 0) {
+                searchResults.textContent = '';
+                fetchPage(1);
+                return;
+            }
+            
+            if (searchTerm.length < 2) {
+                searchResults.textContent = 'Enter at least 2 characters to search';
+                return;
+            }
+            
+            searchResults.textContent = 'Searching...';
+            
+            const form = document.getElementById('subsales-orders-filter');
+            const fd = serializeForm(form);
+            fd.append('page', 1);
+            fd.append('search_query', searchTerm);
+            
+            fetch(ajaxUrl, { method: 'POST', body: fd })
+                .then(resp => resp.json())
+                .then(data => {
+                    if (data && data.success) {
+                        const payload = data.data;
+                        renderRows(payload.orders);
+                        renderMeta(payload.total_count, payload.page, payload.pages);
+                        renderTotals(payload.totals);
+                        renderPagination(payload.page, payload.pages);
+                        
+                        const count = payload.total_count || 0;
+                        searchResults.textContent = count + ' result' + (count !== 1 ? 's' : '') + ' found';
+                    } else {
+                        searchResults.textContent = 'Search failed';
+                    }
+                })
+                .catch(error => {
+                    console.error('Search error:', error);
+                    searchResults.textContent = 'Search error';
+                });
+        }
+        
+        // Debounced search as user types
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(performSearch, 500);
+        });
+        
+        // Search on Enter key
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                clearTimeout(searchTimeout);
+                performSearch();
+            }
+        });
+        
+        // Clear search button
+        clearSearchBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            searchResults.textContent = '';
+            fetchPage(1);
+        });
+
+        // Load first page on open
+        fetchPage(1);
+        
+        // Make fetchPage available globally for refresh after edit/delete
+        window.SubsalesRefreshOrders = function(){ fetchPage(1); };
+    })();
+    
+    // Order Edit/Delete/History Manager
+    window.SubsalesOrderEdit = {
+        currentOrder: null,
+        
+        async editOrder(orderDbId, orderId) {
+            try {
+                // Fetch full order data using database ID
+                const resp = await fetch('<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>?action=subsales_get_order_by_db_id&id=' + orderDbId + '&nonce=<?php echo wp_create_nonce( 'wp_rest' ); ?>');
+                const result = await resp.json();
+                
+                console.log('Edit order response:', result);
+                
+                if (!result || !result.success || !result.data) {
+                    alert('Failed to load order: ' + (result && result.data ? result.data : 'Unknown error'));
+                    return;
+                }
+                
+                const order = result.data;
+                console.log('Order object:', order);
+                console.log('Order data:', order.order_data);
+                
+                if (!order || !order.order_data) {
+                    alert('Failed to load order: Invalid data structure');
+                    return;
+                }
+                
+                this.currentOrder = order;
+                const data = order.order_data;
+                
+                console.log('Parsed data:', data);
+                console.log('customer:', data.customer);
+                
+                // Populate form - match PWA field structure
+                const form = document.getElementById('subsales-edit-form');
+                form.elements['order_db_id'].value = order.id || '';
+                form.elements['order_id'].value = order.order_id || '';
+                form.elements['customer'].value = data.customer || data.customerName || '';
+                form.elements['address'].value = data.address || '';
+                form.elements['unitFloorApt'].value = data.unitFloorApt || '';
+                form.elements['cellNumber'].value = data.cellNumber || data.phone || '';
+                form.elements['donationAmount'].value = data.donationAmount || '';
+                form.elements['paymentMethod'].value = data.paymentMethod || 'cash';
+                form.elements['checkNumber'].value = data.checkNumber || '';
+                form.elements['notes'].value = data.notes || '';
+                form.elements['_edit_reason'].value = '';
+                
+                // Populate products
+                const productsContainer = document.getElementById('subsales-edit-products');
+                productsContainer.innerHTML = '';
+                const products = data.products || [];
+                const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
+                
+                console.log('Products from order:', products);
+                console.log('Configured products:', configuredProducts);
+                
+                for (const p of configuredProducts) {
+                    const existing = products.find(pr => pr.id === p.id);
+                    const qty = existing ? existing.qty : 0;
+                    
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = '<th><label>' + p.name + '</label></th>' +
+                        '<td><input type="number" name="product_' + p.id + '" min="0" value="' + qty + '" /></td>';
+                    productsContainer.appendChild(tr);
+                }
+                
+                // Show modal
+                document.getElementById('subsales-edit-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Edit order error:', error);
+                alert('Failed to load order: ' + error.message);
+            }
+        },
+        
+        closeEditModal() {
+            document.getElementById('subsales-edit-modal').style.display = 'none';
+            this.currentOrder = null;
+        },
+        
+        async saveOrder() {
+            const form = document.getElementById('subsales-edit-form');
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            
+            const orderDbId = form.elements['order_db_id'].value;
+            const orderId = form.elements['order_id'].value;
+            
+            // Build updated order data - preserve existing metadata from original order
+            const originalData = this.currentOrder.order_data || {};
+            const data = {
+                order_id: orderId,
+                user_id: this.currentOrder.user_id,
+                team_id: this.currentOrder.team_id,
+                customer: form.elements['customer'].value,
+                address: form.elements['address'].value,
+                unitFloorApt: form.elements['unitFloorApt'].value,
+                cellNumber: form.elements['cellNumber'].value,
+                donationAmount: parseFloat(form.elements['donationAmount'].value) || 0,
+                paymentMethod: form.elements['paymentMethod'].value,
+                checkNumber: form.elements['checkNumber'].value,
+                notes: form.elements['notes'].value,
+                _edit_reason: form.elements['_edit_reason'].value,
+                products: [],
+                // Preserve metadata from original order
+                createdAt: originalData.createdAt || new Date().toISOString(),
+                entered_by_id: originalData.entered_by_id || '',
+                entered_by_name: originalData.entered_by_name || '',
+                team_name: originalData.team_name || '',
+                team_code: originalData.team_code || '',
+                geo: originalData.geo || null
+            };
+            
+            // Collect products
+            const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
+            for (const p of configuredProducts) {
+                const qty = parseInt(form.elements['product_' + p.id].value) || 0;
+                data.products.push({
+                    id: p.id,
+                    name: p.name,
+                    price: p.price,
+                    qty: qty
+                });
+            }
+            
+            try {
+                const resp = await fetch('<?php echo esc_js( rest_url( 'order-manager/v1/orders/' ) ); ?>' + orderId, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await resp.json();
+                
+                if (resp.ok) {
+                    alert('Order updated successfully!');
+                    this.closeEditModal();
+                    window.SubsalesRefreshOrders();
+                } else {
+                    alert('Failed to update order: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Save order error:', error);
+                alert('Failed to save order: ' + error.message);
+            }
+        },
+        
+        deleteOrder(orderDbId, orderId) {
+            this.currentOrder = { id: orderDbId, order_id: orderId };
+            document.getElementById('subsales-delete-form').elements['order_db_id'].value = orderDbId;
+            document.getElementById('subsales-delete-form').elements['order_id'].value = orderId;
+            document.getElementById('subsales-delete-order-info').textContent = 'Order: ' + orderId;
+            document.getElementById('subsales-delete-form').elements['delete_reason'].value = '';
+            document.getElementById('subsales-delete-modal').style.display = 'block';
+        },
+        
+        closeDeleteModal() {
+            document.getElementById('subsales-delete-modal').style.display = 'none';
+            this.currentOrder = null;
+        },
+        
+        async confirmDelete() {
+            const form = document.getElementById('subsales-delete-form');
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            
+            const orderId = form.elements['order_id'].value;
+            const deleteReason = form.elements['delete_reason'].value;
+            
+            try {
+                const resp = await fetch('<?php echo esc_js( rest_url( 'order-manager/v1/orders/' ) ); ?>' + orderId, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-WP-Nonce': '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
+                    },
+                    body: JSON.stringify({ delete_reason: deleteReason })
+                });
+                
+                const result = await resp.json();
+                
+                if (resp.ok) {
+                    alert('Order deleted successfully!');
+                    this.closeDeleteModal();
+                    window.SubsalesRefreshOrders();
+                } else {
+                    alert('Failed to delete order: ' + (result.message || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Delete order error:', error);
+                alert('Failed to delete order: ' + error.message);
+            }
+        },
+        
+        async viewHistory(orderDbId) {
+            document.getElementById('subsales-history-panel').style.display = 'block';
+            document.getElementById('subsales-history-content').innerHTML = '<p>Loading history...</p>';
+            
+            try {
+                const resp = await fetch('<?php echo esc_js( rest_url( 'order-manager/v1/orders/' ) ); ?>' + orderDbId + '/history', {
+                    headers: {
+                        'X-WP-Nonce': '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
+                    }
+                });
+                const data = await resp.json();
+                
+                if (!resp.ok || !data.history) {
+                    document.getElementById('subsales-history-content').innerHTML = '<p>Failed to load history</p>';
+                    return;
+                }
+                
+                if (data.history.length === 0) {
+                    document.getElementById('subsales-history-content').innerHTML = '<p>No edit history for this order.</p>';
+                    return;
+                }
+                
+                // Render history
+                let html = '<div class="subsales-history-items">';
+                for (const item of data.history) {
+                    html += '<div class="subsales-history-item">';
+                    html += '<h4>' + this.escapeHtml(item.edit_type.toUpperCase()) + '</h4>';
+                    html += '<div class="meta">';
+                    html += 'By: ' + this.escapeHtml(item.edited_by_name) + ' | ';
+                    html += 'Date: ' + this.escapeHtml(item.edited_at) + '</div>';
+                    html += '<div class="summary"><strong>Summary:</strong> ' + this.escapeHtml(item.changes_summary) + '</div>';
+                    
+                    if (item.edit_reason) {
+                        html += '<div><strong>Reason:</strong> ' + this.escapeHtml(item.edit_reason) + '</div>';
+                    }
+                    
+                    // Show detailed changes
+                    if (item.changes_detail && item.changes_detail.changes) {
+                        html += '<details style="margin-top:12px"><summary style="cursor:pointer;color:#2271b1"><strong>View Detailed Changes</strong></summary>';
+                        html += '<div class="subsales-history-changes">';
+                        for (const change of item.changes_detail.changes) {
+                            html += '<div class="subsales-history-change">';
+                            html += '<strong>' + this.escapeHtml(change.label) + ':</strong> ';
+                            
+                            if (change.field === 'products') {
+                                html += '<br/><span class="subsales-change-before">' + this.renderProducts(change.before) + '</span>';
+                                html += '<br/><span class="subsales-change-after">' + this.renderProducts(change.after) + '</span>';
+                            } else {
+                                html += '<span class="subsales-change-before">' + this.escapeHtml(change.before) + '</span> → ';
+                                html += '<span class="subsales-change-after">' + this.escapeHtml(change.after) + '</span>';
+                            }
+                            html += '</div>';
+                        }
+                        html += '</div></details>';
+                    }
+                    
+                    html += '</div>';
+                }
+                html += '</div>';
+                
+                document.getElementById('subsales-history-content').innerHTML = html;
+            } catch (error) {
+                console.error('View history error:', error);
+                document.getElementById('subsales-history-content').innerHTML = '<p>Error loading history: ' + error.message + '</p>';
+            }
+        },
+        
+        closeHistoryPanel() {
+            document.getElementById('subsales-history-panel').style.display = 'none';
+        },
+        
+        escapeHtml(s) {
+            if (!s && s !== 0) return '';
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        },
+        
+        renderProducts(products) {
+            if (!products || products.length === 0) return '(none)';
+            return products.map(p => p.name + ' ×' + p.qty).join(', ');
+        }
+    };
+    </script>
+    <?php
+}
+
