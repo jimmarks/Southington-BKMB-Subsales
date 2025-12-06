@@ -1,13 +1,18 @@
 /* Admin dashboard styles for Subsales plugin */
 .subsales-dashboard-grid{ margin-top:10px; display:flex; flex-direction:column; gap:12px }
-.subsales-top-row, .subsales-second-row{ display:grid; gap:12px }
+.subsales-top-row, .subsales-financial-row{ display:grid; gap:12px }
 
-/* Top row: 4 columns large, 2 medium, 1 small */
-.subsales-top-row{ grid-template-columns: repeat(3, 1fr); }
+/* Top row: 4 columns (Teams, Members, Orders, Address Data) */
+.subsales-top-row{ grid-template-columns: repeat(4, 1fr); }
 @media (max-width:1400px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
 @media (max-width:700px){ .subsales-top-row{ grid-template-columns: 1fr; } }
 
-/* Second row: dynamic responsive grid, try to keep items on one line for very wide displays */
+/* Financial row: 4 columns (Product Sales, Donations, Cash, Checks) */
+.subsales-financial-row{ grid-template-columns: repeat(4, 1fr); }
+@media (max-width:1400px){ .subsales-financial-row{ grid-template-columns: repeat(2, 1fr); } }
+@media (max-width:700px){ .subsales-financial-row{ grid-template-columns: 1fr; } }
+
+/* Second row (Products): dynamic responsive grid, try to keep items on one line for very wide displays */
 .subsales-second-row{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 @media (min-width:1400px){
   .subsales-second-row{ display:grid; grid-auto-flow: column; grid-auto-columns: 1fr; align-items:start; }
@@ -28,6 +33,7 @@
 /* Compact variant: tighter spacing for admins who prefer denser dashboards */
 .subsales-dashboard-grid.subsales-compact{ gap:6px }
 .subsales-dashboard-grid.subsales-compact .subsales-top-row,
+.subsales-dashboard-grid.subsales-compact .subsales-financial-row,
 .subsales-dashboard-grid.subsales-compact .subsales-second-row{ gap:6px }
 .subsales-dashboard-grid.subsales-compact .subsales-box .postbox-header{ padding:6px 8px }
 .subsales-dashboard-grid.subsales-compact .subsales-box .postbox-header h2{ font-size:0.95rem; gap:6px }
@@ -118,6 +124,27 @@
 
 /* Dashboard row layouts - moved from inline styles */
 .subsales-financial-row{ margin-bottom:12px; display:grid; gap:20px; grid-template-columns: repeat(4, 1fr); }
+
+/* Sales/Donations widget split layout */
+.subsales-sales-section {
+  margin-bottom: 16px;
+}
+
+.subsales-sales-section:last-child {
+  margin-bottom: 0;
+}
+
+.subsales-sales-label {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: #666;
+  text-align: center;
+}
+
+.subsales-sales-value {
+  font-size: 28px;
+  margin: 0;
+}
 
 /* Address Data widget specific styles */
 .subsales-address-data-inside{ 

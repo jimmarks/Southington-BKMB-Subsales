@@ -842,8 +842,18 @@
       btn.addEventListener('click', async ()=>{
         console.log('subsalesNearby: load address data clicked');
         btn.disabled = true; btn.innerText = 'Loading…';
+        
+        // Try API endpoint first, fallback to static file
+        const apiUrl = '/wp-json/order-manager/v1/zip-index?cb=' + Date.now();
+        const staticUrl = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json';
+        
         try{
-          const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
+          let resp = await fetch(apiUrl, { cache: 'no-store' });
+          if(!resp.ok) {
+            console.warn('subsalesNearby: API failed, trying static file');
+            resp = await fetch(staticUrl, { cache: 'no-store' });
+          }
+          
           if(resp && resp.ok){ 
             const indexData = await resp.json(); 
             await prefetchAllZips(indexData); // Wait for first ZIP
@@ -862,10 +872,23 @@
     fetchNearby: fetchNearby,
     prefetch: async function(){ // MUST be async and return the promise
       console.log('subsalesNearby: Manual prefetch triggered - loading ALL served ZIPs now...');
+      
+      // Determine API URL or fallback to static file
+      const apiUrl = '/wp-json/order-manager/v1/zip-index?cb=' + Date.now();
+      const staticUrl = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json';
+      
       try{
-        const resp = await fetch((window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json', { cache: 'no-store' });
+        // Try API endpoint first (always current)
+        let resp = await fetch(apiUrl, { cache: 'no-store' });
+        
+        // Fallback to static file if API fails
         if(!resp.ok) {
-          console.warn('subsalesNearby: zip-index.json fetch failed, HTTP', resp.status);
+          console.warn('subsalesNearby: API endpoint failed, trying static file', resp.status);
+          resp = await fetch(staticUrl, { cache: 'no-store' });
+        }
+        
+        if(!resp.ok) {
+          console.warn('subsalesNearby: Both API and static file failed, HTTP', resp.status);
           return;
         }
         const indexData = await resp.json();

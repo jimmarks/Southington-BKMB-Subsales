@@ -104,6 +104,13 @@ class Subsales_REST_API {
             'callback' => 'order_manager_get_server_time',
             'permission_callback' => '__return_true',
         ));
+        
+        // ZIP Index API - dynamically serve current ZIP list
+        register_rest_route( 'order-manager/v1', '/zip-index', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_get_zip_index_api',
+            'permission_callback' => '__return_true',
+        ));
 
         // Teams API
         register_rest_route( 'order-manager/v1', '/teams/members', array(

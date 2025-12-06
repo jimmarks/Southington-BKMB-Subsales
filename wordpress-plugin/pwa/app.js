@@ -826,8 +826,17 @@
         // keep only digits and cap at 10
         const digits = pn.value.replace(/\D/g,'').slice(0,10);
         if (pn.value !== digits) pn.value = digits;
-        if (digits.length === 10) { pn.classList.remove('invalid'); try{ pn.setCustomValidity(''); }catch(e){} }
-        else { pn.classList.add('invalid'); try{ pn.setCustomValidity('Phone number must be 10 digits'); }catch(e){} }
+        // Only mark invalid if field has content but isn't 10 digits
+        if (digits.length === 0) {
+          pn.classList.remove('invalid');
+          try{ pn.setCustomValidity(''); }catch(e){}
+        } else if (digits.length === 10) {
+          pn.classList.remove('invalid');
+          try{ pn.setCustomValidity(''); }catch(e){}
+        } else {
+          pn.classList.add('invalid');
+          try{ pn.setCustomValidity('Phone number must be 10 digits'); }catch(e){}
+        }
       }catch(e){}
     });
     pn.addEventListener('blur', ()=>{
@@ -1297,6 +1306,10 @@
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
         try { localStorage.setItem('userPhone', phoneDigits); } catch(e){}
+        
+        // Store team member authentication credentials for PUT requests
+        try { localStorage.setItem('memberEmail', data.user.email || ''); } catch(e){}
+        try { localStorage.setItem('memberCode', data.user.phone || phoneDigits); } catch(e){}
         
         // Store user teams for potential switching
         if (data.teams && data.teams.length > 0) {
@@ -1963,6 +1976,14 @@
     const paymentMethod = (payCheck && payCheck.checked) ? 'check' : ((payCash && payCash.checked) ? 'cash' : '');
     const chkNumber = (checkNumber && checkNumber.value) ? checkNumber.value.trim() : '';
     
+    // Create price snapshot of ALL products at order creation time (for historical accuracy)
+    const priceSnapshot = {};
+    if (productsConfig && Array.isArray(productsConfig)) {
+      productsConfig.forEach(p => {
+        priceSnapshot[p.id] = p.price;
+      });
+    }
+    
     // Determine sales mode and capture appropriate auth data
     const salesMode = localStorage.getItem('salesMode') || localStorage.getItem('detectedSalesMode') || 'legacy';
     let subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode;
@@ -1985,30 +2006,69 @@
     const pos = await getCurrentPositionPromise(5000);
     const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
 
-    const order = {
-      id: 'o-' + Date.now(),
-      customer, address,
-      cellNumber: cell,
-      products: products,
-      donationAmount: donation,
-      paymentMethod,
-      checkNumber: chkNumber,
-      notes,
-      createdAt: new Date().toISOString(),
-      entered_by_id: enteredById,
-      entered_by_name: enteredByName,
-      teamName: teamName,
-      teamCode: teamCode,
-      subsales_user_id: subsalesUserId,
-      subsales_team_id: subsalesTeamId,
-      geo
-    };
-    // If we're editing an existing order, handle update vs create
+    // If we're editing an existing order, start with the original data
+    let order;
+    const isEditing = window._editingOrder && window._editingOrder.orderId;
+    
+    if (isEditing) {
+      // Load the existing order from storage to preserve all fields
+      const existingOrder = await Storage.get(window._editingOrder.orderId);
+      
+      // Start with existing order data and update with form values
+      order = existingOrder ? { ...existingOrder } : {};
+      
+      // Update with form values
+      order.id = window._editingOrder.orderId; // preserve id
+      order.customer = customer;
+      order.address = address;
+      order.cellNumber = cell;
+      order.products = products;
+      order.donationAmount = donation;
+      order.paymentMethod = paymentMethod;
+      order.checkNumber = chkNumber;
+      order.notes = notes;
+      // Update price snapshot (keep existing if not rebuilding)
+      order.price_snapshot = priceSnapshot;
+      
+      // Ensure createdAt is preserved (fallback to now if missing)
+      if (!order.createdAt) {
+        order.createdAt = new Date().toISOString();
+      }
+      
+      // Preserve subsales_user_id and subsales_team_id from original
+      // Only update geo if we got a new position
+      const pos = await getCurrentPositionPromise(5000);
+      if (pos && pos.coords) {
+        order.geo = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      }
+    } else {
+      // Creating new order
+      const pos = await getCurrentPositionPromise(5000);
+      const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
+      
+      order = {
+        id: 'o-' + Date.now(),
+        customer,
+        address,
+        cellNumber: cell,
+        products: products,
+        price_snapshot: priceSnapshot,
+        donationAmount: donation,
+        paymentMethod,
+        checkNumber: chkNumber,
+        notes,
+        createdAt: new Date().toISOString(),
+        subsales_user_id: subsalesUserId,
+        subsales_team_id: subsalesTeamId,
+        geo
+      };
+    }
+    
+    // Handle save based on edit state
     try{
-      if (window._editingOrder && window._editingOrder.orderId) {
+      if (isEditing) {
         // update existing
         const editing = window._editingOrder;
-          order.id = editing.orderId; // preserve id
         if (editing.local) {
           // update local queued order
           await Storage.update(order);
@@ -2019,79 +2079,37 @@
           if (navigator.onLine) trySync();
           return;
         } else {
-          // remote edit: if online, attempt PUT; if offline, queue op and save local copy
-          const payload = {
-            order_id: order.id,
-            user_id: order.subsales_user_id || order.entered_by_id || localStorage.getItem('userId') || localStorage.getItem('teamName') || 'team',
-            team_id: order.subsales_team_id || localStorage.getItem('selectedTeamId') || '',
-            customer: order.customer,
-            address: order.address,
-            notes: order.notes,
-            products: order.products || [],
-            donationAmount: order.donationAmount,
-            paymentMethod: order.paymentMethod,
-            checkNumber: order.checkNumber,
-            cellNumber: order.cellNumber,
-            createdAt: order.createdAt,
-            entered_by_id: order.entered_by_id || '',
-            entered_by_name: order.entered_by_name || '',
-            team_name: order.teamName || localStorage.getItem('teamName') || '',
-            team_code: order.teamCode || localStorage.getItem('teamCode') || '',
-            geo: order.geo || null
-          };
-          if (navigator.onLine) {
-            try{
-              const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(order.id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(order.id);
-              
-              // Build headers based on login mode
-              const headers = { 'Content-Type':'application/json' };
-              const loginMode = localStorage.getItem('loginMode') || 'legacy';
-              if (loginMode === 'user') {
-                // User mode: send X-User-ID and X-Team-ID headers
-                headers['X-User-ID'] = localStorage.getItem('userId') || '';
-                headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
-              } else {
-                // Legacy mode: send X-Team-Name and X-Access-Code headers
-                headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
-                headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
-              }
-              
-              const resp = await fetch(url, { method: 'PUT', headers: headers, body: JSON.stringify(payload) });
-              if (resp.ok) { alert('Order updated on server'); }
-              else { alert('Update failed: ' + resp.status); }
-            }catch(e){ await Storage.queueOperation({ type:'update', order_id: order.id, payload }); alert('Offline or error: update queued'); }
-          } else {
-            await Storage.queueOperation({ type:'update', order_id: order.id, payload }); alert('Offline: update queued');
-          }
-          // store local copy for UI
-          try{ await Storage.update(order); }catch(e){}
+          // Queue update for synced order (will be sent via PUT to server)
+          await Storage.queueOperation({ type: 'update', order_id: order.id, payload: order });
+          // Also update local copy for immediate UI feedback
+          await Storage.update(order);
           renderOrders();
-          // Show confirmation popup (don't clear form yet - OK button will do it)
+          syncStatus && (syncStatus.textContent='Update queued for sync');
           showOrderConfirmation(order, true);
           if (navigator.onLine) trySync();
           return;
         }
+      } else {
+        // default: create new queued order
+        await Storage.add(order);
+        renderOrders();
+        syncStatus && (syncStatus.textContent='Queued for sync');
+        
+        // Log successful order save
+        if (window.PWALogger) {
+          window.PWALogger.log('order', 'Order saved successfully', {
+            order_id: order.id,
+            customer: order.customer ? 'present' : 'missing',
+            products_count: order.products ? order.products.length : 0,
+            online: navigator.onLine
+          });
+        }
+        
+        // Show confirmation popup (don't clear form yet - OK button will do it)
+        showOrderConfirmation(order, false);
+        if (navigator.onLine) trySync();
       }
-    }catch(e){ console.warn('update flow error', e); }
-
-    // default: create new queued order
-    await Storage.add(order);
-    renderOrders();
-    syncStatus && (syncStatus.textContent='Queued for sync');
-    
-    // Log successful order save
-    if (window.PWALogger) {
-      window.PWALogger.log('order', 'Order saved successfully', {
-        order_id: order.id,
-        customer: order.customer ? 'present' : 'missing',
-        products_count: order.products ? order.products.length : 0,
-        online: navigator.onLine
-      });
-    }
-    
-    // Show confirmation popup (don't clear form yet - OK button will do it)
-    showOrderConfirmation(order, false);
-    if (navigator.onLine) trySync();
+    }catch(e){ console.warn('order save flow error', e); }
   });
 
   async function trySync(){
@@ -2122,9 +2140,20 @@
             } else if (op.type === 'update'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
               const updateHeaders = { ...headers, 'Content-Type':'application/json' };
+              // Add team member authentication headers for PWA edits
+              const memberEmail = localStorage.getItem('memberEmail');
+              const memberCode = localStorage.getItem('memberCode');
+              if (memberEmail && memberCode) {
+                updateHeaders['X-Team-Email'] = memberEmail;
+                updateHeaders['X-Member-Access-Code'] = memberCode;
+              }
               const resp = await fetch(url, { method: 'PUT', headers: updateHeaders, body: JSON.stringify(op.payload) });
               if (resp.ok) { 
-                await Storage.removeQueuedOp(op._id); 
+                await Storage.removeQueuedOp(op._id);
+                // Update local order to reflect it's been synced
+                if (op.payload && op.payload.id) {
+                  await Storage.update(op.payload);
+                }
               } else {
                 console.warn('Queued operation failed:', op.type, op.order_id, 'status:', resp.status);
                 const errorMsg = 'Failed to sync ' + op.type + ' for order ' + op.order_id + ' (HTTP ' + resp.status + ')';
@@ -2163,21 +2192,18 @@
           const url = apiBase ? (apiBase + '/orders') : '/wp-json/order-manager/v1/orders';
           const payload = {
             order_id: order.id,
-            user_id: order.subsales_user_id || order.entered_by_id || localStorage.getItem('userId') || localStorage.getItem('teamName') || 'team',
+            user_id: order.subsales_user_id || localStorage.getItem('userId') || '',
             team_id: order.subsales_team_id || localStorage.getItem('selectedTeamId') || '',
             customer: order.customer,
             address: order.address,
             notes: order.notes,
             products: order.products || [],
+            price_snapshot: order.price_snapshot || {},
             donationAmount: order.donationAmount,
             paymentMethod: order.paymentMethod,
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,
             createdAt: order.createdAt,
-            entered_by_id: order.entered_by_id || '',
-            entered_by_name: order.entered_by_name || '',
-            team_name: order.teamName || localStorage.getItem('teamName') || '',
-            team_code: order.teamCode || localStorage.getItem('teamCode') || '',
             geo: order.geo || null
           };
           console.log('Syncing order:', order.id, 'payload:', payload, 'headers:', headers);

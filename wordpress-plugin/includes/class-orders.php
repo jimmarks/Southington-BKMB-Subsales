@@ -230,7 +230,7 @@ class Subsales_Orders {
 
         // Ensure created_at uses the WordPress site-local time (respects timezone settings)
         // so stored timestamps align with the site's timezone (avoid DB server UTC mismatch).
-        $insert_row['created_at'] = current_time( 'mysql' );
+        $insert_row['created_at'] = current_time( 'mysql', true ); // Store in GMT
         $formats[] = '%s';
 
         $result = $wpdb->insert( $table_name, $insert_row, $formats );
@@ -250,8 +250,20 @@ class Subsales_Orders {
         // Get the newly created order's DB ID for history logging
         $new_order_db_id = $wpdb->insert_id;
         
-        // Log successful order creation
-        Subsales_Database::log_order( 'created', $order_id, null, $user_id, array(
+        // Determine user name for logging
+        $user_name_for_log = '';
+        if ( ! empty( $user_id ) ) {
+            $user_row = $wpdb->get_row( $wpdb->prepare( 
+                "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", 
+                intval( $user_id ) 
+            ) );
+            if ( $user_row ) {
+                $user_name_for_log = $user_row->name;
+            }
+        }
+        
+        // Log successful order creation with proper username
+        Subsales_Database::log_order( 'created', $order_id, $user_id, $user_name_for_log, array(
             'team_id' => $team_id,
             'db_id' => $new_order_db_id
         ), 'pwa' );
@@ -309,10 +321,37 @@ class Subsales_Orders {
         $order_id = $request->get_param( 'id' );
         $data = $request->get_json_params();
         
-        // Get current user info (must be WordPress admin)
+        // Try WordPress admin authentication first
         $current_user = wp_get_current_user();
-        if ( ! $current_user || ! $current_user->ID ) {
-            return new WP_REST_Response( 'Unauthorized', 401 );
+        $is_admin = ( $current_user && $current_user->ID );
+        
+        $user_id = null;
+        $user_name = '';
+        $auth_source = 'admin';
+        
+        if ( $is_admin ) {
+            // WordPress admin is authenticated
+            $user_id = $current_user->ID;
+            $user_name = $current_user->display_name;
+            $auth_source = 'admin';
+        } else {
+            // Check for user-based authentication (X-User-ID header)
+            $header_user_id = $request->get_header( 'X-User-ID' );
+            
+            if ( ! empty( $header_user_id ) ) {
+                // User mode authentication
+                $user_id = sanitize_text_field( $header_user_id );
+                
+                // Look up actual user name from database
+                $user_row = $wpdb->get_row( $wpdb->prepare( 
+                    "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", 
+                    intval( $user_id ) 
+                ) );
+                $user_name = $user_row ? $user_row->name : 'User ' . $user_id;
+                $auth_source = 'pwa';
+            } else {
+                return new WP_REST_Response( 'Unauthorized - admin login or user credentials required', 401 );
+            }
         }
         
         // Fetch existing order for history tracking
@@ -327,6 +366,9 @@ class Subsales_Orders {
         
         // Parse before/after data for history
         $before_data = json_decode( $existing_order['order_data'], true );
+        if ( ! is_array( $before_data ) ) {
+            $before_data = array(); // Ensure it's always an array
+        }
         $after_data = $data;
         
         // Get edit reason from request
@@ -334,6 +376,14 @@ class Subsales_Orders {
         unset( $data['_edit_reason'] ); // Remove from order data
         
         $order_data = wp_json_encode( $data );
+        
+        if ( $order_data === false ) {
+            Subsales_Database::log( 'ERROR', 'orders', 'Failed to encode order data as JSON', array(
+                'order_id' => $order_id,
+                'data_type' => gettype( $data )
+            ), $auth_source, $user_id, $user_name );
+            return new WP_REST_Response( 'Failed to encode order data', 500 );
+        }
 
         $update_fields = array(
             'order_data' => $order_data,
@@ -357,7 +407,7 @@ class Subsales_Orders {
             Subsales_Database::log( 'ERROR', 'orders', 'Failed to update order', array(
                 'order_id' => $order_id,
                 'db_error' => $wpdb->last_error
-            ), 'admin', $current_user->ID, $current_user->display_name );
+            ), $auth_source, $user_id, $user_name );
             return new WP_REST_Response( 'Failed to update order', 500 );
         }
         
@@ -368,10 +418,10 @@ class Subsales_Orders {
             $before_data,
             $after_data,
             'update',
-            $current_user->ID,
-            $current_user->display_name,
+            $user_id,
+            $user_name,
             $edit_reason,
-            'admin'
+            $auth_source
         );
         
         return new WP_REST_Response( array(

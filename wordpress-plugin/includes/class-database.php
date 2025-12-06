@@ -738,24 +738,36 @@ class Subsales_Database {
         global $wpdb;
         $history_table = $wpdb->prefix . 'ss_edit_history';
         
+        // Ensure data is in array format
+        if ( ! is_array( $before_data ) ) {
+            $before_data = array();
+        }
+        if ( ! is_array( $after_data ) ) {
+            $after_data = array();
+        }
+        
         // Build field-by-field comparison
         $changes = array();
         $summary_parts = array();
         
         // Define all possible order fields to compare
+        // Note: Some fields have multiple names (PWA vs admin) - we check both
         $fields_to_compare = array(
             'customerName' => 'Customer Name',
+            'customer' => 'Customer Name', // PWA uses 'customer'
             'address' => 'Address',
             'city' => 'City',
             'state' => 'State',
             'zip' => 'ZIP',
             'phone' => 'Phone',
+            'cellNumber' => 'Phone', // PWA uses 'cellNumber'
             'email' => 'Email',
             'deliveryDate' => 'Delivery Date',
             'driver' => 'Driver',
             'notes' => 'Notes',
             'donationAmount' => 'Donation Amount',
             'paymentMethod' => 'Payment Method',
+            'checkNumber' => 'Check Number',
             'products' => 'Products',
             'strawberryQty' => 'Strawberry Qty',
             'blueberryQty' => 'Blueberry Qty',
@@ -763,6 +775,9 @@ class Subsales_Database {
         );
         
         // Compare simple fields
+        // Track which labels we've already logged to avoid duplicates (e.g., 'customer' and 'customerName' both map to 'Customer Name')
+        $logged_labels = array();
+        
         foreach ( $fields_to_compare as $field => $label ) {
             if ( $field === 'products' ) continue; // Handle separately
             
@@ -776,6 +791,12 @@ class Subsales_Database {
             }
             
             if ( $before_val !== $after_val ) {
+                // Skip if we already logged a change for this label (avoid duplicate entries)
+                if ( isset( $logged_labels[ $label ] ) ) {
+                    continue;
+                }
+                $logged_labels[ $label ] = true;
+                
                 $changes[] = array(
                     'field' => $field,
                     'label' => $label,
