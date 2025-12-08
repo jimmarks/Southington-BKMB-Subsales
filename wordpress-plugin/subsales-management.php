@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.1.2
+ * Version: 2.1.3
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.1.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.1.3' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5688,10 +5688,21 @@ function order_sync_delivery_page() {
         <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
         
         <?php if ( isset( $_GET['manifest_url'] ) ): ?>
+        <div class="notice notice-success" style="margin-top:20px; padding:12px;">
+            <p style="font-size:14px; margin:0;">
+                <strong>✓ Manifests generated successfully!</strong><br/>
+                <a href="<?php echo esc_url( $_GET['manifest_url'] ); ?>" target="_blank" class="button button-primary" style="margin-top:8px;">
+                    📄 Open Delivery Manifests (New Tab)
+                </a>
+            </p>
+        </div>
         <script>
         (function() {
             const manifestUrl = <?php echo json_encode( esc_url_raw( $_GET['manifest_url'] ) ); ?>;
-            window.open(manifestUrl, '_blank');
+            // Try to open in new tab (may be blocked by popup blockers)
+            setTimeout(function() {
+                window.open(manifestUrl, '_blank');
+            }, 500);
         })();
         </script>
         <?php endif; ?>
