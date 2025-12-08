@@ -39,16 +39,6 @@ if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 
-// ---- Implementation (merged from legacy bkmb file) ----
-
-// Optional Composer autoload: if a vendor/autoload.php exists in the plugin directory
-// require it so composer-installed libraries (for example PhpSpreadsheet) are available.
-// This keeps the plugin functional when vendor/ isn't present (fallbacks remain).
-$subsales_vendor_autoload = __DIR__ . '/vendor/autoload.php';
-if ( file_exists( $subsales_vendor_autoload ) ) {
-    require_once $subsales_vendor_autoload;
-}
-
 // Load modular classes
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
@@ -1123,16 +1113,6 @@ function order_sync_admin_menu() {
         'order_sync_delivery_page'
     );
     
-    // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
-    // add_submenu_page(
-    //     'subsales-management',
-    //     'Address Extracts',
-    //     'Address Extracts',
-    //     'manage_options',
-    //     'subsales-address-extracts',
-    //     'subsales_address_extracts_page'
-    // );
-    
     add_submenu_page(
         'subsales-management',
         'System Logs',
@@ -1576,126 +1556,6 @@ function subsales_search_address_preview() {
 
     $total = $all_results['local']['count'];
     wp_send_json_success( array( 'sources' => $all_results, 'total' => $total, 'zips_searched' => $served_zips ) );
-}
-
-// Helper: Search OpenAddresses CSV for specific address
-function subsales_search_openaddresses( $address, $zip ) {
-    $upload = wp_upload_dir();
-    $csv_path = get_option( 'subsales_openaddresses_path', trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/connecticut.csv' );
-    
-    if ( ! file_exists( $csv_path ) ) return array();
-    
-    // Extract house number from address
-    $number = '';
-    $street_search = strtolower( trim( $address ) );
-    if ( preg_match( '/^(\d+)\s+(.+)$/i', $address, $matches ) ) {
-        $number = $matches[1];
-        $street_search = strtolower( trim( $matches[2] ) );
-    }
-    
-    $results = array();
-    $handle = fopen( $csv_path, 'r' );
-    if ( $handle === false ) return array();
-    
-    $header = fgetcsv( $handle );
-    if ( ! $header ) {
-        fclose( $handle );
-        return array();
-    }
-    
-    $col_map = array();
-    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'REGION', 'POSTCODE' ) as $col ) {
-        $idx = array_search( $col, $header );
-        if ( $idx !== false ) $col_map[ $col ] = $idx;
-    }
-    
-    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
-        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
-        if ( trim( $row[ $col_map['POSTCODE'] ] ) !== $zip ) continue;
-        
-        $row_number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
-        $row_street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? strtolower( trim( $row[ $col_map['STREET'] ] ) ) : '';
-        
-        // Match by number and partial street name
-        if ( $number && $row_number !== $number ) continue;
-        if ( strpos( $row_street, $street_search ) === false && strpos( $street_search, $row_street ) === false ) continue;
-        
-        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
-        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
-        
-        $label = $row_number . ' ' . $row[ $col_map['STREET'] ];
-        if ( $unit ) $label .= ' Unit ' . $unit;
-        if ( $city ) $label .= ', ' . $city;
-        
-        $results[] = array(
-            'label' => $label,
-            'housenumber' => $row_number,
-            'street' => $row[ $col_map['STREET'] ],
-            'unit' => $unit,
-            'city' => $city,
-            'state' => isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT',
-            'zip' => $zip,
-            'lat' => isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null,
-            'lng' => isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null,
-            'source' => 'openaddresses'
-        );
-    }
-    
-    fclose( $handle );
-    return $results;
-}
-
-// Helper: Search OSM Overpass for specific address
-function subsales_search_osm_address( $address, $zip ) {
-    // Extract street name from address
-    $parts = explode( ' ', trim( $address ) );
-    $number = '';
-    $street = $address;
-    
-    if ( preg_match( '/^(\d+)\s+(.+)$/', $address, $matches ) ) {
-        $number = $matches[1];
-        $street = $matches[2];
-    }
-    
-    $ql = '[out:json][timeout:10];';
-    if ( $number ) {
-        $ql .= '(node["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];';
-        $ql .= 'way["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];);';
-    } else {
-        $ql .= '(node["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];';
-        $ql .= 'way["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];);';
-    }
-    $ql .= 'out center;';
-    
-    $resp = wp_remote_post( 'https://overpass-api.de/api/interpreter', array(
-        'body' => $ql,
-        'timeout' => 15
-    ) );
-    
-    if ( is_wp_error( $resp ) ) return array();
-    $body = wp_remote_retrieve_body( $resp );
-    $json = json_decode( $body, true );
-    
-    $results = array();
-    if ( isset( $json['elements'] ) ) {
-        foreach ( $json['elements'] as $el ) {
-            $tags = isset( $el['tags'] ) ? $el['tags'] : array();
-            if ( empty( $tags['addr:street'] ) ) continue;
-            
-            $results[] = array(
-                'label' => ( isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] . ' ' : '' ) . $tags['addr:street'],
-                'housenumber' => isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] : '',
-                'street' => $tags['addr:street'],
-                'city' => isset( $tags['addr:city'] ) ? $tags['addr:city'] : '',
-                'state' => isset( $tags['addr:state'] ) ? $tags['addr:state'] : '',
-                'zip' => isset( $tags['addr:postcode'] ) ? $tags['addr:postcode'] : $zip,
-                'lat' => isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null ),
-                'lng' => isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null ),
-                'source' => 'osm'
-            );
-        }
-    }
-    return $results;
 }
 
 // AJAX handler to delete ZIP extract files
@@ -2387,208 +2247,6 @@ function subsales_reassign_zips_ajax() {
     ) );
 }
 
-// Helper: generate a single ZIP file by querying Overpass API for nodes/ways with addr:postcode and addr:housenumber
-function subsales_generate_zip_from_overpass( $zip, $base_dir ) {
-    $zip = preg_replace( '/[^0-9]/', '', (string) $zip );
-    if ( strlen( $zip ) !== 5 ) return array( 'error' => 'invalid_zip' );
-
-    // Two-phase query: First get addresses explicitly tagged with this postcode,
-    // then get the bounding box of the postal code area and grab all addresses within it
-    // This catches addresses that don't have addr:postcode explicitly tagged
-    
-    $ql = '[out:json][timeout:25];';
-    // Phase 1: Get all elements tagged with this postcode
-    $ql .= '(node["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
-    $ql .= 'way["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
-    $ql .= 'relation["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
-    // Phase 2: Get boundary/postal_code area to find addresses within it
-    $ql .= 'area["postal_code"="' . esc_attr( $zip ) . '"]->.searchArea;';
-    $ql .= '(node["addr:housenumber"]["addr:street"](area.searchArea);';
-    $ql .= 'way["addr:housenumber"]["addr:street"](area.searchArea););';
-    $ql .= ');out center;';
-
-    $overpass_url = 'https://overpass-api.de/api/interpreter';
-    $args = array(
-        'body' => $ql,
-        'timeout' => 60,
-        'headers' => array( 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8' ),
-    );
-    $resp = wp_remote_post( $overpass_url, $args );
-    if ( is_wp_error( $resp ) ) return array( 'error' => 'overpass_error', 'message' => $resp->get_error_message() );
-    $code = wp_remote_retrieve_response_code( $resp );
-    
-    // Return detailed error for non-200 responses
-    if ( $code !== 200 ) {
-        $body = wp_remote_retrieve_body( $resp );
-        $error_msg = '';
-        
-        if ( $code === 429 ) {
-            $error_msg = 'Rate limited - please wait a few minutes before trying again';
-        } elseif ( $code === 504 || $code === 503 ) {
-            $error_msg = 'Server timeout/unavailable - try again later';
-        } else {
-            $error_msg = 'HTTP ' . $code . ( $body ? ' - ' . substr( $body, 0, 100 ) : '' );
-        }
-        
-        return array( 'error' => 'overpass_status', 'status' => $code, 'message' => $error_msg );
-    }
-
-    $body = wp_remote_retrieve_body( $resp );
-    $json = json_decode( $body, true );
-    if ( ! $json || ! isset( $json['elements'] ) ) return array( 'error' => 'no_elements', 'message' => 'No address data returned from API' );
-
-    $out = array(); $seen = array();
-    $total_elements = count( $json['elements'] );
-    $skipped = 0;
-    
-    foreach ( $json['elements'] as $el ) {
-        $tags = isset( $el['tags'] ) ? $el['tags'] : array();
-        if ( empty( $tags['addr:housenumber'] ) || empty( $tags['addr:street'] ) ) {
-            $skipped++;
-            continue;
-        }
-        
-        // Build address with unit/apartment number if present
-        $address_parts = array( $tags['addr:housenumber'] );
-        
-        // Add unit/apartment/floor/door if available
-        if ( ! empty( $tags['addr:unit'] ) ) {
-            $address_parts[] = 'Unit ' . $tags['addr:unit'];
-        } elseif ( ! empty( $tags['addr:flr'] ) ) {
-            $address_parts[] = 'Floor ' . $tags['addr:flr'];
-        }
-        
-        if ( ! empty( $tags['addr:door'] ) ) {
-            $address_parts[] = 'Door ' . $tags['addr:door'];
-        }
-        
-        $address_parts[] = $tags['addr:street'];
-        
-        $label_parts = array();
-        $label_parts[] = implode( ' ', $address_parts );
-        
-        // Add housename/building name if present
-        if ( ! empty( $tags['addr:housename'] ) ) {
-            $label_parts[] = $tags['addr:housename'];
-        }
-        
-        if ( ! empty( $tags['addr:city'] ) ) $label_parts[] = $tags['addr:city'];
-        if ( ! empty( $tags['addr:state'] ) ) $label_parts[] = $tags['addr:state'];
-        $label_parts[] = $zip;
-        $label = implode( ', ', $label_parts );
-
-        $lat = isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null );
-        $lon = isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null );
-
-        $k = md5( $label ); if ( isset( $seen[ $k ] ) ) continue; $seen[ $k ] = true;
-
-        $out[] = array( 
-            'id' => 'osm-' . $el['type'] . '-' . $el['id'], 
-            'label' => $label, 
-            'street' => $tags['addr:street'], 
-            'housenumber' => $tags['addr:housenumber'],
-            'unit' => ( ! empty( $tags['addr:unit'] ) ? $tags['addr:unit'] : '' ),
-            'floor' => ( ! empty( $tags['addr:flr'] ) ? $tags['addr:flr'] : '' ),
-            'door' => ( ! empty( $tags['addr:door'] ) ? $tags['addr:door'] : '' ),
-            'housename' => ( ! empty( $tags['addr:housename'] ) ? $tags['addr:housename'] : '' ),
-            'city' => (isset($tags['addr:city'])?$tags['addr:city']:''), 
-            'state' => (isset($tags['addr:state'])?$tags['addr:state']:''), 
-            'zip' => $zip, 
-            'lat' => $lat, 
-            'lng' => $lon 
-        );
-    }
-
-    return array( 
-        'addresses' => $out,
-        'total_elements' => $total_elements,
-        'skipped' => $skipped
-    );
-}
-
-// Helper: Fetch addresses from Nominatim geocoding service
-function subsales_fetch_openaddresses_data( $zip ) {
-    // OpenAddresses.io provides bulk CSV files with comprehensive address coverage
-    // The admin can download the full state file and extract only needed ZIP codes
-    // to create a smaller, faster-to-read filtered file
-    
-    $upload = wp_upload_dir();
-    // First try filtered file (created by "Extract ZIP Codes" button)
-    $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses.csv';
-    
-    // Fall back to full file if filtered doesn't exist
-    if ( ! file_exists( $csv_path ) ) {
-        $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses-full.csv';
-    }
-    
-    if ( ! file_exists( $csv_path ) ) {
-        return array();
-    }
-    
-    $out = array();
-    $handle = fopen( $csv_path, 'r' );
-    
-    if ( $handle === false ) return array();
-    
-    // Read header row
-    $header = fgetcsv( $handle );
-    if ( ! $header ) {
-        fclose( $handle );
-        return array();
-    }
-    
-    // Find column indices
-    $col_map = array();
-    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'DISTRICT', 'REGION', 'POSTCODE' ) as $col ) {
-        $idx = array_search( $col, $header );
-        if ( $idx !== false ) $col_map[ $col ] = $idx;
-    }
-    
-    // Read rows and filter by ZIP
-    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
-        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
-        
-        $postcode = trim( $row[ $col_map['POSTCODE'] ] );
-        if ( $postcode !== $zip ) continue;
-        
-        $number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
-        $street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? trim( $row[ $col_map['STREET'] ] ) : '';
-        
-        if ( empty( $number ) || empty( $street ) ) continue;
-        
-        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
-        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
-        $state = isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT';
-        $lat = isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null;
-        $lng = isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null;
-        
-        $label_parts = array( $number . ' ' . $street );
-        if ( $unit ) $label_parts[0] .= ' Unit ' . $unit;
-        if ( $city ) $label_parts[] = $city;
-        if ( $state ) $label_parts[] = $state;
-        $label_parts[] = $zip;
-        
-        $out[] = array(
-            'id' => 'oa-' . md5( $number . $street . $unit . $zip ),
-            'label' => implode( ', ', $label_parts ),
-            'street' => $street,
-            'housenumber' => $number,
-            'unit' => $unit,
-            'floor' => '',
-            'door' => '',
-            'housename' => '',
-            'city' => $city,
-            'state' => $state,
-            'zip' => $zip,
-            'lat' => $lat,
-            'lng' => $lng
-        );
-    }
-    
-    fclose( $handle );
-    return $out;
-}
-
 // REST API callback: serve ZIP index dynamically (always current)
 function subsales_get_zip_index_api( $request ) {
     // Get uploads directory for the ZIP data files
@@ -2697,99 +2355,6 @@ function subsales_get_generation_logs( $limit = 10 ) {
     return array_slice( $logs, 0, $limit );
 }
 
-/**
- * Generate ZIP code JSON files from database (Phase 7)
- * Filters to residential addresses only for PWA consumption
- * 
- * @param array $zip_codes Array of ZIP codes to generate
- * @return array Results with counts per ZIP
- */
-function subsales_generate_zip_json_from_database( $zip_codes = null ) {
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Use configured ZIPs if none provided
-    if ( $zip_codes === null ) {
-        $zip_codes = get_option( 'subsales_served_zips', array() );
-        if ( ! is_array( $zip_codes ) ) {
-            $zip_codes = array_filter( array_map( 'trim', explode( ',', $zip_codes ) ) );
-        }
-    }
-    
-    if ( empty( $zip_codes ) ) {
-        return array( 'error' => 'No ZIP codes configured' );
-    }
-    
-    $upload = wp_upload_dir();
-    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
-    
-    // Ensure directory exists
-    if ( ! is_dir( $base_dir ) ) {
-        wp_mkdir_p( $base_dir );
-    }
-    
-    $results = array();
-    
-    foreach ( $zip_codes as $zip ) {
-        // Query RESIDENTIAL addresses only for this ZIP
-        $addresses = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$addresses_table} 
-             WHERE zip = %s 
-             AND type = 'residential'
-             ORDER BY street, house_number",
-            $zip
-        ), ARRAY_A );
-        
-        // Format for PWA compatibility
-        $formatted = array();
-        foreach ( $addresses as $addr ) {
-            $label_parts = array( $addr['house_number'] . ' ' . $addr['street'] );
-            if ( ! empty( $addr['unit'] ) ) {
-                $label_parts[0] .= ' Unit ' . $addr['unit'];
-            }
-            if ( ! empty( $addr['city'] ) ) {
-                $label_parts[] = $addr['city'];
-            }
-            if ( ! empty( $addr['state'] ) ) {
-                $label_parts[] = $addr['state'];
-            }
-            $label_parts[] = $addr['zip'];
-            
-            $formatted[] = array(
-                'id' => 'db-' . $addr['id'],
-                'label' => implode( ', ', $label_parts ),
-                'street' => $addr['street'],
-                'housenumber' => $addr['house_number'],
-                'unit' => $addr['unit'],
-                'floor' => '',
-                'door' => '',
-                'housename' => '',
-                'city' => $addr['city'],
-                'state' => $addr['state'],
-                'zip' => $addr['zip'],
-                'lat' => (float) $addr['lat'],
-                'lng' => (float) $addr['lng']
-            );
-        }
-        
-        // Write JSON file
-        $file_path = trailingslashit( $base_dir ) . $zip . '.json';
-        $written = file_put_contents( $file_path, wp_json_encode( $formatted, JSON_PRETTY_PRINT ) );
-        
-        $results[ $zip ] = array(
-            'count' => count( $formatted ),
-            'file' => $file_path,
-            'bytes' => $written,
-            'source' => 'database'
-        );
-    }
-    
-    // Update zip-index.json
-    subsales_update_zip_index();
-    
-    return $results;
-}
-
 // Enqueue admin assets for settings page (media uploader for header image)
 add_action( 'admin_enqueue_scripts', 'order_sync_admin_assets' );
 function order_sync_admin_assets( $hook ) {
@@ -2818,24 +2383,14 @@ function order_sync_admin_assets( $hook ) {
 }
 
 // Teams and Orders pages, DB functions, REST routes, etc. (merged implementation)
-// Implementation merged from legacy files; shortcode name is 'subsales_pwa'.
 
-// -- Teams management, orders page, DB creation and helpers --
-// ============================================================
 // DATABASE WRAPPER FUNCTIONS (for backward compatibility)
-// All database operations delegated to Subsales_Database class
-// ============================================================
-
 function order_sync_create_table() {
     Subsales_Database::create_tables();
 }
 
 function order_sync_add_team( $name, $access_code, $description = '', $status = 'active' ) {
     return Subsales_Database::add_team( $name, $access_code, $description, $status );
-}
-
-function order_sync_remove_team( $team_id ) {
-    return Subsales_Database::remove_team( $team_id );
 }
 
 function order_sync_get_teams() {
@@ -2850,56 +2405,15 @@ function subsales_log( $level, $category, $message, $context = array(), $source 
     Subsales_Database::log( $level, $category, $message, $context, $source, $user_id, $user_name );
 }
 
-function subsales_log_order( $action, $order_id, $user_id = null, $user_name = '', $context = array(), $source = 'admin' ) {
-    Subsales_Database::log_order( $action, $order_id, $user_id, $user_name, $context, $source );
-}
-
 function subsales_log_auth( $action, $user_id = null, $user_name = '', $context = array(), $source = 'pwa' ) {
     Subsales_Database::log_auth( $action, $user_id, $user_name, $context, $source );
-}
-
-function subsales_log_api_error( $endpoint, $error_message, $context = array(), $source = 'api' ) {
-    Subsales_Database::log_api_error( $endpoint, $error_message, $context, $source );
-}
-
-function subsales_cleanup_old_logs() {
-    Subsales_Database::cleanup_old_logs();
-}
-
-function subsales_check_debug_timeout() {
-    Subsales_Database::check_debug_timeout();
-}
-
-function subsales_log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
-    return Subsales_Database::log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason, $source );
-}
-
-function order_sync_add_team_member( $team_id, $name, $email, $role = 'member' ) {
-    return Subsales_Database::add_team_member( $team_id, $name, $email, $role );
-}
-
-function order_sync_remove_team_member( $member_id ) {
-    return Subsales_Database::remove_team_member( $member_id );
-}
-
-function order_sync_get_team_members_by_team( $team_id ) {
-    return Subsales_Database::get_team_members_by_team( $team_id );
 }
 
 function order_sync_verify_team_member( $email, $team_id ) {
     return Subsales_Database::verify_team_member( $email, $team_id );
 }
 
-// ============================================================
-// End of Database Wrapper Functions
-// ============================================================
-
-
-// ============================================================
 // REST API ROUTES
-// Routes now registered via Subsales_REST_API class
-// Handler functions remain below for compatibility
-// ============================================================
 
 
 // AJAX endpoint for admin orders filtering/pagination
@@ -4117,145 +3631,6 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
     return $html;
 }
 
-// Helper: Generate HTML manifest for printing (legacy - kept for compatibility)
-function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products ) {
-    
-    // Calculate product totals for packing list
-    $product_totals = array();
-    foreach ( $configured_products as $p ) {
-        $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
-    }
-
-    foreach ( $orders as $order ) {
-        foreach ( $order['products_map'] as $pid => $qty ) {
-            if ( isset( $product_totals[ $pid ] ) ) {
-                $product_totals[ $pid ]['qty'] += $qty;
-            }
-        }
-    }
-
-    // Calculate total pages: 1 for packing list + number of delivery stops
-    $total_pages = 1 + count( $orders );
-    
-    // Build HTML content with print-optimized CSS
-    $html = '<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</title>
-    <style>
-        @media print {
-            @page { margin: 0.5in; }
-            .no-print { display: none; }
-            .delivery-stop { page-break-after: always; }
-            .delivery-stop:last-child { page-break-after: auto; }
-        }
-        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0; font-size: 12pt; }
-        h1 { font-size: 24pt; margin: 0 0 10px 0; }
-        h2 { font-size: 18pt; margin: 20px 0 10px 0; }
-        .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
-        .page-number { font-size: 14pt; color: #666; margin-top: 10px; text-align: center; }
-        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; page-break-inside: avoid; background: #f9f9f9; }
-        .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
-        .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
-        .customer { font-size: 11pt; margin: 3px 0; }
-        .products { margin: 8px 0; }
-        .products-table { width: 100%; border-collapse: collapse; margin: 5px 0; }
-        .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
-        .products-table th { background: #e0e0e0; font-weight: bold; }
-        .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
-        .packing-list { margin-top: 40px; }
-        .manifest-section { page-break-before: always; }
-        .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
-        .packing-table th, .packing-table td { border: 3px solid #000; padding: 15px; text-align: left; }
-        .packing-table th { background: #f0f0f0; font-weight: bold; }
-        .packing-table .total-row { font-weight: bold; background: #d0d0d0; font-size: 24pt; }
-    </style>
-</head>
-<body>';
-
-    // Packing List (FIRST PAGE)
-    $html .= '<div class="packing-list">';
-    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-    $html .= '<table class="packing-table">';
-    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
-    $html .= '<tbody>';
-    
-    $grand_total = 0;
-    foreach ( $product_totals as $pid => $data ) {
-        if ( $data['qty'] > 0 ) {
-            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
-            $grand_total += $data['qty'];
-        }
-    }
-    
-    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
-    $html .= '</tbody></table>';
-    $html .= '<div class="page-number">Page 1 of ' . $total_pages . '</div>';
-    $html .= '</div>';
-
-    // Delivery Manifest (SUBSEQUENT PAGES)
-    $html .= '<div class="manifest-section">';
-    $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-    $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
-    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . date('F j, Y') . '</div>';
-
-    // Delivery stops
-    $stop_num = 1;
-    $page_num = 2; // Start at page 2 (packing list is page 1)
-    foreach ( $orders as $order ) {
-        $html .= '<div class="delivery-stop">';
-        $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
-        $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';;
-        
-        if ( ! empty( $order['customer'] ) ) {
-            $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-        }
-        
-        if ( ! empty( $order['phone'] ) ) {
-            $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-        }
-
-        // Products for this stop
-        $html .= '<div class="products"><strong>Products:</strong>';
-        $html .= '<table class="products-table">';
-        $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
-        $has_products = false;
-        foreach ( $order['products_map'] as $pid => $qty ) {
-            if ( $qty > 0 ) {
-                $product_name = '';
-                foreach ( $configured_products as $p ) {
-                    if ( $p['id'] === $pid ) {
-                        $product_name = $p['name'];
-                        break;
-                    }
-                }
-                $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
-                $has_products = true;
-            }
-        }
-        if ( ! $has_products ) {
-            $html .= '<tr><td colspan="2">No products</td></tr>';
-        }
-        $html .= '</tbody></table></div>';
-
-        if ( ! empty( $order['notes'] ) ) {
-            $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-        }
-
-        $html .= '<div class="page-number">Page ' . $page_num . ' of ' . $total_pages . '</div>';
-        $html .= '</div>';
-        $stop_num++;
-        $page_num++;
-    }
-    $html .= '</div>';
-    
-    $html .= '</body></html>';
-
-    return $html;
-}
-
 // Admin-post handler: export settings CSV (key,value)
 add_action( 'admin_post_subsales_export_settings', 'order_sync_admin_export_settings' );
 function order_sync_admin_export_settings() {
@@ -4883,24 +4258,6 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
     return current_user_can( 'edit_posts' );
 }
 
-// Admin-only permission callback for sensitive operations (edit, delete, restore, history)
-function order_sync_check_admin_permissions( WP_REST_Request $request ) {
-    // Check if user is logged into WordPress admin with edit permissions
-    if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
-        return true;
-    }
-    
-    // Optionally support API key authentication for admin operations
-    $api_key = $request->get_header( 'X-API-Key' );
-    $stored_key = get_option( 'order_sync_api_key', '' );
-    
-    if ( ! empty( $api_key ) && ! empty( $stored_key ) && hash_equals( $stored_key, $api_key ) ) {
-        return true;
-    }
-    
-    return false;
-}
-
 // Orders REST callbacks (get_orders, get_order_by_id, create_order, update_order, delete_order)
 /**
  * Order REST API Handler Functions (Backward Compatibility Wrappers)
@@ -4939,14 +4296,6 @@ function tally_orders( $request ) {
     return Subsales_Orders::tally_orders( $request );
 }
 
-// Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
-function order_manager_get_server_time( WP_REST_Request $request ) {
-    $ts = current_time( 'timestamp' );
-    $date = date( 'Y-m-d', $ts );
-    $gmt_offset = floatval( get_option( 'gmt_offset', 0 ) );
-    return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
-}
-
 /**
  * Teams & User Management Functions (Backward Compatibility Wrappers)
  * All team/user functionality now handled by Subsales_Teams class
@@ -4962,46 +4311,6 @@ function verify_team_access( WP_REST_Request $request ) {
 
 function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
     return Subsales_Teams::get_team_members_endpoint( $request );
-}
-
-function order_sync_create_user( WP_REST_Request $request ) {
-    return Subsales_Teams::create_user( $request );
-}
-
-function order_sync_get_users( WP_REST_Request $request ) {
-    return Subsales_Teams::get_users( $request );
-}
-
-function order_sync_get_user_by_id( WP_REST_Request $request ) {
-    return Subsales_Teams::get_user_by_id( $request );
-}
-
-function order_sync_update_user( WP_REST_Request $request ) {
-    return Subsales_Teams::update_user( $request );
-}
-
-function order_sync_delete_user( WP_REST_Request $request ) {
-    return Subsales_Teams::delete_user( $request );
-}
-
-function order_sync_search_users( WP_REST_Request $request ) {
-    return Subsales_Teams::search_users( $request );
-}
-
-function order_sync_get_user_teams( WP_REST_Request $request ) {
-    return Subsales_Teams::get_user_teams( $request );
-}
-
-function order_sync_assign_user_to_team( WP_REST_Request $request ) {
-    return Subsales_Teams::assign_user_to_team( $request );
-}
-
-function order_sync_remove_user_from_team( WP_REST_Request $request ) {
-    return Subsales_Teams::remove_user_from_team( $request );
-}
-
-function order_sync_get_team_users( WP_REST_Request $request ) {
-    return Subsales_Teams::get_team_users( $request );
 }
 
 /**
@@ -9014,24 +8323,6 @@ function order_sync_settings_page() {
 
                     if ( $ps_version ) {
                         echo esc_html( $ps_version );
-                    } else {
-                        echo '<span style="color:red">Missing</span>';
-                    }
-                    ?>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">DomPDF</th>
-                <td>
-                    <?php
-                    $dompdf_path = plugin_dir_path( __FILE__ ) . 'vendor/dompdf/autoload.inc.php';
-                    if ( file_exists( $dompdf_path ) ) {
-                        echo '<span style="color:green">Installed</span>';
-                        // Try to get version
-                        require_once $dompdf_path;
-                        if ( defined( 'Dompdf\\VERSION' ) ) {
-                            echo ' (v' . esc_html( Dompdf\VERSION ) . ')';
-                        }
                     } else {
                         echo '<span style="color:red">Missing</span>';
                     }
