@@ -139,10 +139,6 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 	#headerStatus{top:calc(10px + var(--safe-area-inset-top));right:calc(12px + var(--safe-area-inset-right));width:8px;height:8px}
 }
 .sm-select{display:block;margin-top:8px;padding:8px}
-.sm-modal{position:fixed;left:calc(12px + var(--safe-area-inset-left));right:calc(12px + var(--safe-area-inset-right));top:calc(80px + var(--safe-area-inset-top));bottom:calc(12px + var(--safe-area-inset-bottom));background:#fff;border:1px solid #ddd;padding:12px;z-index:10000;overflow:auto;box-shadow:0 12px 32px rgba(0,0,0,0.25)}
-.sm-modal .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.sm-modal .modal-body{display:flex;gap:12px;flex-wrap:wrap}
-.sm-modal .modal-col{flex:1;min-width:320px}
 .sm-variant-flat .sm-btn{box-shadow:none;border-radius:6px}
 .sm-variant-rounded .sm-btn{border-radius:24px}
 .sm-variant-dark body, .sm-variant-dark .sm-modal{background:#111;color:#eee}
@@ -169,11 +165,7 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 /* Small utilities */
 .sm-select{display:block;margin-top:8px;padding:8px}
 
-/* Modal for My Orders */
-.sm-modal{position:fixed;left:12px;right:12px;top:80px;bottom:12px;background:#fff;border:1px solid #ddd;padding:12px;z-index:10000;overflow:auto;box-shadow:0 12px 32px rgba(0,0,0,0.25)}
-.sm-modal .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.sm-modal .modal-body{display:flex;gap:12px;flex-wrap:wrap}
-.sm-modal .modal-col{flex:1;min-width:320px}
+/* Modal for My Orders - see modern definition below for actual styles */
 .order{border:1px solid #eee;padding:8px;margin-bottom:6px}
 
 /* Variant tweaks (variants set on body via JS class) */
@@ -218,10 +210,39 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 /* Small pending badge used in My Orders */
 .sm-badge{display:inline-block;background:#f59e0b;color:#fff;padding:2px 8px;border-radius:999px;font-size:12px;margin-left:8px}
 
+
 /* Name suggestions dropdown */
 .sm-suggestions{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #e6e9ef;border-top:none;border-radius:0 0 8px 8px;max-height:200px;overflow-y:auto;z-index:1000;box-shadow:0 4px 12px rgba(0,0,0,0.1);margin-top:-1px}
 .sm-suggestions.hidden{display:none}
 .sm-suggestion-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f3f4f6;transition:background 0.1s}
 .sm-suggestion-item:hover{background:#f8fafc}
 .sm-suggestion-item:last-child{border-bottom:none}
+
+/* PWA Install Prompt */
+.sm-install-prompt{background:linear-gradient(135deg,var(--sm-primary),#4f8aff);border-radius:12px;padding:20px;margin:0 auto 20px;max-width:480px;box-shadow:0 8px 24px rgba(45,108,223,0.25);animation:slideDown 0.3s ease-out}
+.sm-install-prompt.hidden{display:none}
+.sm-install-content h3{margin:0 0 8px;color:#fff;font-size:1.25rem;font-weight:700}
+.sm-install-content p{margin:0 0 16px;color:rgba(255,255,255,0.95);font-size:0.95rem;line-height:1.5}
+.sm-install-buttons{display:flex;gap:10px;flex-wrap:wrap}
+.sm-btn-primary{background:#fff;color:var(--sm-primary);font-weight:600;padding:10px 20px;border-radius:8px;border:none;cursor:pointer;transition:transform 0.1s,box-shadow 0.2s;box-shadow:0 4px 12px rgba(0,0,0,0.15)}
+.sm-btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,0.2)}
+.sm-btn-primary:active{transform:translateY(0)}
+.sm-btn-secondary{background:rgba(255,255,255,0.2);color:#fff;font-weight:600;padding:10px 20px;border-radius:8px;border:1px solid rgba(255,255,255,0.3);cursor:pointer;transition:background 0.2s}
+.sm-btn-secondary:hover{background:rgba(255,255,255,0.3)}
+
+/* iOS Install Instructions Modal */
+.sm-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;padding:20px;animation:fadeIn 0.2s ease-out}
+.sm-modal.hidden{display:none}
+.sm-modal-content{background:#fff;border-radius:16px;padding:24px;max-width:400px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,0.3);animation:scaleIn 0.3s ease-out}
+.sm-modal-content h3{margin:0 0 16px;color:#0f172a;font-size:1.5rem;font-weight:700;text-align:center}
+.sm-modal-content p{margin:0 0 12px;color:#475569;font-size:0.95rem;line-height:1.6}
+.sm-ios-instructions{margin:12px 0 20px;padding-left:24px;color:#334155;line-height:1.8}
+.sm-ios-instructions li{margin-bottom:8px}
+.sm-ios-instructions strong{color:#0f172a;font-weight:600}
+.sm-modal-content .sm-btn-primary{width:100%;margin-top:8px}
+
+/* Animations */
+@keyframes slideDown{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes scaleIn{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:scale(1)}}
 

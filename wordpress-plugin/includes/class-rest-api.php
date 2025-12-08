@@ -274,20 +274,23 @@ class Subsales_REST_API {
      * Update PWA heartbeat endpoint
      * 
      * POST /wp-json/order-manager/v1/pwa-session/heartbeat
-     * Body: { sessionId, activity }
+     * Body: { sessionId, activity, sessionExpiry, gps }
      */
     public static function update_pwa_heartbeat( $request ) {
         $params = $request->get_json_params();
         
         $session_id = isset( $params['sessionId'] ) ? sanitize_text_field( $params['sessionId'] ) : '';
         $activity = isset( $params['activity'] ) && is_array( $params['activity'] ) ? $params['activity'] : array();
+        $session_expiry = isset( $params['sessionExpiry'] ) ? sanitize_text_field( $params['sessionExpiry'] ) : null;
+        $gps = isset( $params['gps'] ) && is_array( $params['gps'] ) ? $params['gps'] : null;
         
         // Debug log heartbeat (only first time to avoid spam)
         static $heartbeat_logged = array();
         if ( ! isset( $heartbeat_logged[ $session_id ] ) ) {
             Subsales_Database::log( 'DEBUG', 'pwa', 'PWA heartbeat received (first)', array(
                 'session_id' => $session_id,
-                'has_activity' => ! empty( $activity )
+                'has_activity' => ! empty( $activity ),
+                'has_gps' => ! empty( $gps )
             ), 'api' );
             $heartbeat_logged[ $session_id ] = true;
         }
@@ -296,13 +299,22 @@ class Subsales_REST_API {
             return new WP_Error( 'missing_session_id', 'Session ID is required', array( 'status' => 400 ) );
         }
         
-        $result = Subsales_Database::update_pwa_heartbeat( $session_id, $activity );
-        
-        if ( $result === false ) {
-            Subsales_Database::log( 'DEBUG', 'pwa', 'PWA heartbeat failed - session not found', array(
-                'session_id' => $session_id
+        try {
+            $result = Subsales_Database::update_pwa_heartbeat( $session_id, $activity, $session_expiry, $gps );
+            
+            if ( $result === false ) {
+                Subsales_Database::log( 'ERROR', 'pwa', 'PWA heartbeat failed - session not found', array(
+                    'session_id' => $session_id
+                ), 'api' );
+                return new WP_Error( 'heartbeat_failed', 'Failed to update heartbeat', array( 'status' => 500 ) );
+            }
+        } catch ( Exception $e ) {
+            Subsales_Database::log( 'ERROR', 'pwa', 'PWA heartbeat exception', array(
+                'session_id' => $session_id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ), 'api' );
-            return new WP_Error( 'heartbeat_failed', 'Failed to update heartbeat', array( 'status' => 500 ) );
+            return new WP_Error( 'heartbeat_error', 'Heartbeat error: ' . $e->getMessage(), array( 'status' => 500 ) );
         }
         
         return rest_ensure_response( array(

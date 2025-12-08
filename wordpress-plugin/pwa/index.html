@@ -26,7 +26,6 @@
       </div>
       <div class="sm-header-right">
         <div id="headerStatus" title="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
-        <div id="installBox" class="hidden sm-auth-hidden"><button id="installBtn" class="sm-btn">Install App</button></div>
         <button id="forceSyncBtn" title="Force sync offline orders" class="sm-btn sm-auth-hidden">Sync now</button>
         <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
         <button id="logoutBtn" title="Log out" class="sm-btn sm-auth-hidden">Log out</button>
@@ -36,6 +35,32 @@
 
     <main>
       <section id="loginSection" class="sm-login-section">
+        <!-- PWA Install Prompt -->
+        <div id="installPrompt" class="sm-install-prompt hidden">
+          <div class="sm-install-content">
+            <h3>📱 Install App</h3>
+            <p>Install this app on your device for offline access and a better experience!</p>
+            <div class="sm-install-buttons">
+              <button id="installPromptBtn" class="sm-btn sm-btn-primary">Install Now</button>
+              <button id="installDismissBtn" class="sm-btn sm-btn-secondary">Not Now</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- iOS Install Instructions Modal -->
+        <div id="iosInstallModal" class="sm-modal hidden">
+          <div class="sm-modal-content">
+            <h3>Install on iOS</h3>
+            <p>To install this app on your iPhone or iPad:</p>
+            <ol class="sm-ios-instructions">
+              <li>Tap the <strong>Share</strong> button <span style="font-size:1.2em">⎙</span> in Safari</li>
+              <li>Scroll down and tap <strong>"Add to Home Screen"</strong> <span style="font-size:1.2em">➕</span></li>
+              <li>Tap <strong>"Add"</strong> in the top right</li>
+            </ol>
+            <button id="iosInstallCloseBtn" class="sm-btn sm-btn-primary">Got It</button>
+          </div>
+        </div>
+        
         <!-- Legacy login (team+code) -->
         <div id="legacyLogin" class="sm-login-mode">
           <h2 id="legacyLoginTitle">Loading...</h2>
@@ -235,10 +260,39 @@
         const img = document.getElementById('brandHeaderImage'); if (img && cfg.brandingImage) { img.src = cfg.brandingImage; img.classList.remove('hidden'); }
         const openBtn = document.getElementById('openInlayBtn'); if (openBtn) openBtn.classList.add('hidden');
       }
-      if ('serviceWorker' in navigator && cfg && cfg.pluginBase) {
-        navigator.serviceWorker.register(cfg.pluginBase + 'service-worker.js', { scope: cfg.pluginBase })
-          .then(()=>console.log('sw registered'))
-          .catch(err=>console.warn('sw register failed', err));
+      
+      // Register service worker - critical for offline functionality
+      if ('serviceWorker' in navigator) {
+        // Determine the base path for service worker
+        let swPath = 'service-worker.js';
+        let swScope = './';
+        
+        if (cfg && cfg.portalBase) {
+          // Use portal path for service worker (served by WordPress)
+          swPath = cfg.portalBase + 'service-worker.js';
+          swScope = cfg.portalBase;
+        } else if (cfg && cfg.pluginBase) {
+          // Fallback to plugin path if accessed directly
+          swPath = cfg.pluginBase + 'service-worker.js';
+          swScope = cfg.pluginBase;
+        }
+        
+        console.log('[PWA] Registering service worker:', swPath);
+        
+        navigator.serviceWorker.register(swPath, { scope: swScope })
+          .then(reg => {
+            console.log('[PWA] Service worker registered successfully');
+            if (navigator.serviceWorker.controller) {
+              console.log('[PWA] Page is controlled by service worker - offline mode available');
+            } else {
+              console.log('[PWA] Service worker will control page on next visit');
+            }
+          })
+          .catch(err => {
+            console.error('[PWA] Service worker registration failed:', err);
+          });
+      } else {
+        console.warn('[PWA] Service workers not supported');
       }
     </script>
   </body>

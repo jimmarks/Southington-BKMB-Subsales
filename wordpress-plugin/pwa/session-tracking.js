@@ -85,9 +85,38 @@
     const sessionId = getSessionId();
     const url = getApiBase() + '/pwa-session/heartbeat';
     
+    // Get session expiry from localStorage
+    const sessionExpiry = localStorage.getItem('sessionExpiry') || null;
+    
+    // Get GPS location if available
+    let gpsLocation = null;
+    if (navigator.geolocation) {
+      try {
+        // Don't block heartbeat on GPS - use cached position if available
+        const position = await new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            resolve,
+            reject,
+            { timeout: 5000, maximumAge: 60000, enableHighAccuracy: false }
+          );
+        });
+        gpsLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: new Date().toISOString()
+        };
+      } catch (error) {
+        // Silently fail - GPS is optional
+        console.log('GPS not available for heartbeat:', error.message);
+      }
+    }
+    
     const payload = {
       sessionId: sessionId,
-      activity: activity
+      activity: activity,
+      sessionExpiry: sessionExpiry, // Add expiry time for admin display
+      gps: gpsLocation // Add GPS location if available
     };
     
     // Log heartbeat to PWA Logger if available and debug enabled
@@ -95,7 +124,10 @@
       window.PWALogger.log('session', 'Heartbeat sent', {
         session_id: sessionId,
         has_activity: Object.keys(activity).length > 0,
-        activity_keys: Object.keys(activity)
+        activity_keys: Object.keys(activity),
+        expires_at: sessionExpiry,
+        has_gps: gpsLocation !== null,
+        gps_accuracy: gpsLocation ? gpsLocation.accuracy : null
       });
     }
     

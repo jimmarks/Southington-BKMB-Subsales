@@ -1,49 +1,158 @@
-// Subsales PWA service worker
-const CACHE_NAME = 'subsales-pwa-v2025-12-01-debug';
+// Subsales PWA service worker with offline-first support
+const CACHE_NAME = 'subsales-pwa-v2025-12-08-offline-v2';
 // Resolve asset URLs relative to the service worker's scope so the SW works when the plugin
 // is served from a nested path (e.g. /subsales-portal/). We build absolute URLs at runtime.
 const ASSETS = [
   './',
   './index.html',
   './app.js',
+  './styles.css',
   './manifest.json',
+  './pwa-logger.js',
+  './session-tracking.js',
   './icons/icon-192.svg',
   './icons/icon-512.svg'
 ];
 
 self.addEventListener('install', event => {
+  console.log('[SW] Installing...');
   event.waitUntil((async ()=>{
     try{
-      const base = (self.registration && self.registration.scope) ? self.registration.scope : '/';
+      const base = self.registration.scope;
+      console.log('[SW] Cache base:', base);
       const urls = ASSETS.map(p => new URL(p, base).toString());
+      console.log('[SW] Caching URLs:', urls);
       const cache = await caches.open(CACHE_NAME);
-      // Use addAll but protect against single-failure by adding individually and ignoring 404s
+      // Cache each asset individually with error handling
       for(const u of urls){
-        try{ await cache.add(u); }catch(e){ console.warn('sw cache add failed', u, e); }
+        try{ 
+          await cache.add(u); 
+          console.log('[SW] Cached:', u);
+        }catch(e){ 
+          console.warn('[SW] Cache add failed for', u, e); 
+        }
       }
-    }catch(e){ console.warn('sw install error', e); }
+      console.log('[SW] Install complete');
+    }catch(e){ 
+      console.warn('[SW] Install error', e); 
+    }
   })());
   self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
-    ))
+    caches.keys().then(keys => {
+      return Promise.all(
+        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
+      );
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
+// Cache-first strategy for PWA assets, network-first for API calls
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(
-    fetch(event.request).then(res => {
-      const copy = res.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
-      return res;
-    }).catch(() => caches.match(event.request).then(r => r || caches.match('/pwa/index.html')))
-  );
+  
+  const url = new URL(event.request.url);
+  const pathname = url.pathname;
+  
+  // Determine if this is a PWA asset (HTML, JS, CSS, icons, manifest)
+  const isPWAAsset = pathname.endsWith('.html') || 
+                     pathname.endsWith('.js') || 
+                     pathname.endsWith('.css') || 
+                     pathname.endsWith('.json') || 
+                     pathname.endsWith('.svg') || 
+                     pathname.endsWith('.png') ||
+                     pathname.endsWith('.jpg') ||
+                     pathname.endsWith('.ico');
+  
+  const isAPICall = pathname.includes('/wp-json/') || pathname.includes('/api/');
+  
+  // Navigation requests - serve from cache offline-first
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache => {
+        const base = self.registration.scope;
+        const indexUrl = new URL('./index.html', base).toString();
+        
+        return fetch(event.request)
+          .then(res => {
+            cache.put(event.request, res.clone());
+            return res;
+          })
+          .catch(() => {
+            // Offline - try cache
+            return cache.match(indexUrl).then(cached => {
+              if (cached) return cached;
+              return cache.match(base).then(baseCached => baseCached || new Response(
+                '<!DOCTYPE html><html><head><title>Offline</title></head><body><h1>Offline</h1><p>Unable to load the page.</p></body></html>',
+                { status: 503, headers: { 'Content-Type': 'text/html' } }
+              ));
+            });
+          });
+      })
+    );
+    return;
+  }
+  
+  if (isPWAAsset) {
+    // Cache-first for PWA assets (offline-first)
+    event.respondWith(
+      caches.match(event.request).then(cached => {
+        if (cached) {
+          console.log('[SW] Cache hit:', event.request.url);
+          // Return cached version, but update cache in background
+          fetch(event.request).then(res => {
+            if (res && res.ok) {
+              caches.open(CACHE_NAME).then(cache => cache.put(event.request, res));
+            }
+          }).catch(() => {});
+          return cached;
+        }
+        
+        console.log('[SW] Cache miss, fetching:', event.request.url);
+        // Not in cache, try network
+        return fetch(event.request).then(res => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+          }
+          return res;
+        }).catch(err => {
+          console.error('[SW] Fetch failed:', event.request.url, err);
+          return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+        });
+      })
+    );
+  } else if (isAPICall) {
+    // Network-first for API calls (fresh data priority)
+    event.respondWith(
+      fetch(event.request).then(res => {
+        // Don't cache API responses to avoid stale data
+        return res;
+      }).catch(() => {
+        // API failed offline, return error response
+        console.log('[SW] API call failed offline:', event.request.url);
+        return new Response(JSON.stringify({ error: 'Offline', offline: true }), {
+          status: 503,
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'application/json' }
+        });
+      })
+    );
+  } else {
+    // Default: network with cache fallback for other resources
+    event.respondWith(
+      fetch(event.request).then(res => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(event.request))
+    );
+  }
 });
 
 // Allow the page to trigger an immediate SW activation

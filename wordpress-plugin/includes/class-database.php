@@ -162,6 +162,7 @@ class Subsales_Database {
             login_at datetime NOT NULL,
             last_heartbeat datetime NOT NULL,
             logout_at datetime DEFAULT NULL,
+            session_expiry datetime DEFAULT NULL,
             session_data longtext,
             status enum('active','idle','ended') NOT NULL DEFAULT 'active',
             PRIMARY KEY  (id),
@@ -171,6 +172,22 @@ class Subsales_Database {
             KEY status (status),
             KEY last_heartbeat (last_heartbeat),
             KEY login_at (login_at)
+        ) $charset_collate;";
+        
+        // PWA Session Heartbeats table for tracking heartbeat history and GPS
+        $pwa_heartbeats_table_name = $wpdb->prefix . 'ss_pwa_heartbeats';
+        $pwa_heartbeats_sql = "CREATE TABLE $pwa_heartbeats_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            session_id varchar(64) NOT NULL,
+            heartbeat_at datetime NOT NULL,
+            gps_latitude decimal(10, 8) DEFAULT NULL,
+            gps_longitude decimal(11, 8) DEFAULT NULL,
+            gps_accuracy decimal(10, 2) DEFAULT NULL,
+            activity_data longtext,
+            PRIMARY KEY  (id),
+            KEY session_id (session_id),
+            KEY heartbeat_at (heartbeat_at),
+            KEY gps_coordinates (gps_latitude, gps_longitude)
         ) $charset_collate;";
         
         // Address Lookup table for validated addresses with GPS coordinates
@@ -209,6 +226,7 @@ class Subsales_Database {
         dbDelta( $edit_history_sql );
         dbDelta( $logs_sql );
         dbDelta( $pwa_sessions_sql );
+        dbDelta( $pwa_heartbeats_sql );
         dbDelta( $addresses_sql );
         
         // Run schema migrations
@@ -1039,11 +1057,14 @@ class Subsales_Database {
      * 
      * @param string $session_id Session identifier
      * @param array $activity_data Optional activity data (clicks, navigation, etc)
+     * @param string $session_expiry Optional session expiry timestamp
+     * @param array $gps Optional GPS location data
      * @return bool Success
      */
-    public static function update_pwa_heartbeat( $session_id, $activity_data = array() ) {
+    public static function update_pwa_heartbeat( $session_id, $activity_data = array(), $session_expiry = null, $gps = null ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        $heartbeats_table = $wpdb->prefix . 'ss_pwa_heartbeats';
         
         $now = current_time( 'mysql' );
         
@@ -1072,17 +1093,73 @@ class Subsales_Database {
             }
         }
         
+        // Prepare update data for sessions table
+        $update_data = array(
+            'last_heartbeat' => $now,
+            'status' => 'active',
+            'session_data' => wp_json_encode( $session_data )
+        );
+        $update_format = array( '%s', '%s', '%s' );
+        
+        // Add session expiry if provided
+        if ( $session_expiry ) {
+            // Convert ISO 8601 timestamp to MySQL datetime
+            $expiry_timestamp = strtotime( $session_expiry );
+            if ( $expiry_timestamp ) {
+                $update_data['session_expiry'] = gmdate( 'Y-m-d H:i:s', $expiry_timestamp );
+                $update_format[] = '%s';
+            }
+        }
+        
         $result = $wpdb->update(
             $table_name,
-            array(
-                'last_heartbeat' => $now,
-                'status' => 'active',
-                'session_data' => wp_json_encode( $session_data )
-            ),
+            $update_data,
             array( 'session_id' => $session_id ),
-            array( '%s', '%s', '%s' ),
+            $update_format,
             array( '%s' )
         );
+        
+        // Check if heartbeats table exists before inserting
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$heartbeats_table}'" ) === $heartbeats_table;
+        
+        if ( $table_exists ) {
+            // Store heartbeat in history table with GPS data
+            $heartbeat_data = array(
+                'session_id' => $session_id,
+                'heartbeat_at' => $now,
+                'activity_data' => ! empty( $activity_data ) ? wp_json_encode( $activity_data ) : null
+            );
+            $heartbeat_format = array( '%s', '%s', '%s' );
+            
+            if ( $gps && isset( $gps['latitude'] ) && isset( $gps['longitude'] ) ) {
+                $heartbeat_data['gps_latitude'] = floatval( $gps['latitude'] );
+                $heartbeat_data['gps_longitude'] = floatval( $gps['longitude'] );
+                $heartbeat_data['gps_accuracy'] = isset( $gps['accuracy'] ) ? floatval( $gps['accuracy'] ) : null;
+                $heartbeat_format[] = '%f';
+                $heartbeat_format[] = '%f';
+                $heartbeat_format[] = '%f';
+            }
+            
+            $wpdb->insert( $heartbeats_table, $heartbeat_data, $heartbeat_format );
+            
+            // Clean up old heartbeats (keep only last 100 per session)
+            // Use a simpler approach to avoid MySQL subquery limitations
+            $old_ids = $wpdb->get_col( $wpdb->prepare(
+                "SELECT id FROM {$heartbeats_table} 
+                 WHERE session_id = %s 
+                 ORDER BY heartbeat_at DESC 
+                 LIMIT 100, 999999",
+                $session_id
+            ) );
+            
+            if ( ! empty( $old_ids ) ) {
+                $ids_placeholder = implode( ',', array_fill( 0, count( $old_ids ), '%d' ) );
+                $wpdb->query( $wpdb->prepare(
+                    "DELETE FROM {$heartbeats_table} WHERE id IN ({$ids_placeholder})",
+                    $old_ids
+                ) );
+            }
+        }
         
         return $result !== false;
     }
@@ -1233,6 +1310,29 @@ class Subsales_Database {
         }
         
         return $result;
+    }
+    
+    /**
+     * Get heartbeat history for a session
+     * 
+     * @param string $session_id Session identifier
+     * @param int $limit Maximum number of heartbeats to return
+     * @return array Heartbeat history
+     */
+    public static function get_session_heartbeats( $session_id, $limit = 100 ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_heartbeats';
+        
+        $heartbeats = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table_name} 
+             WHERE session_id = %s 
+             ORDER BY heartbeat_at DESC 
+             LIMIT %d",
+            $session_id,
+            $limit
+        ), ARRAY_A );
+        
+        return $heartbeats ? $heartbeats : array();
     }
     
     /**

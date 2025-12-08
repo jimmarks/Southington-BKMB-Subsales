@@ -207,7 +207,6 @@
           </div>
             <div class="sm-header-right">
             <div id="headerStatus" class="sm-auth-hidden" title="Network status"><span id="headerDot" class="sm-header-dot"></span><span id="headerStatusText">Offline</span></div>
-            <div id="installBox" class="sm-install-box hidden"><button id="installBtn" class="sm-btn">Install App</button></div>
             <button id="myOrdersBtn" class="sm-btn sm-auth-hidden">My orders</button>
             <button id="eodBtn" class="sm-btn sm-auth-hidden">End of Day Tally</button>
             <button id="openInlayBtn" class="sm-btn hidden">Queued Orders</button>
@@ -749,8 +748,6 @@
   const ordersList = qs('#ordersList');
   const networkStatus = qs('#networkStatus');
   const syncStatus = qs('#syncStatus');
-  const installBox = qs('#installBox');
-  const installBtn = qs('#installBtn');
 
   // Products will be rendered dynamically from configured products (localized in cfg.products)
   const donationAmount = qs('#donationAmount');
@@ -850,43 +847,235 @@
 
       // All deep-inspection/proximity scanning removed.
 
-  // Install prompt handling
+  // ========================================
+  // PWA Install Prompt with iOS Support & Analytics
+  // ========================================
   let deferredPrompt = null;
-  window.addEventListener('beforeinstallprompt', (e)=>{
-    try{
+  const installPrompt = qs('#installPrompt');
+  const installPromptBtn = qs('#installPromptBtn');
+  const installDismissBtn = qs('#installDismissBtn');
+  const iosInstallModal = qs('#iosInstallModal');
+  const iosInstallCloseBtn = qs('#iosInstallCloseBtn');
+  
+  // Helper: Detect iOS
+  function isIOSDevice() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  }
+  
+  // Helper: Check if already installed
+  function isAppInstalled() {
+    // Check display mode
+    const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone || false;
+    // Check localStorage flag
+    const installedFlag = localStorage.getItem('pwa_installed');
+    return isStandalone || installedFlag === 'true';
+  }
+  
+  // Helper: Track install analytics
+  function trackInstallEvent(eventType, details = {}) {
+    try {
+      const event = {
+        type: eventType,
+        timestamp: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+        isIOS: isIOSDevice(),
+        isStandalone: isAppInstalled(),
+        ...details
+      };
+      
+      // Log to console
+      console.log('[PWA Install Analytics]', event);
+      
+      // Store in localStorage for later sync
+      const analytics = JSON.parse(localStorage.getItem('pwa_install_analytics') || '[]');
+      analytics.push(event);
+      // Keep last 50 events
+      if (analytics.length > 50) analytics.shift();
+      localStorage.setItem('pwa_install_analytics', JSON.stringify(analytics));
+      
+      // Log to PWALogger if available
+      if (window.PWALogger) {
+        window.PWALogger.log('install', eventType, event);
+      }
+    } catch(e) {
+      console.warn('Install analytics error:', e);
+    }
+  }
+  
+  // Helper: Show install prompt
+  function showInstallPrompt() {
+    try {
+      // Don't show if dismissed, installed, or not supported
+      if (localStorage.getItem('pwa_install_dismissed') === 'true') return;
+      if (isAppInstalled()) return;
+      
+      if (installPrompt) {
+        installPrompt.classList.remove('hidden');
+        trackInstallEvent('prompt_shown');
+      }
+    } catch(e) {
+      console.warn('showInstallPrompt error:', e);
+    }
+  }
+  
+  // Helper: Hide install prompt
+  function hideInstallPrompt() {
+    if (installPrompt) installPrompt.classList.add('hidden');
+  }
+  
+  // Listen for beforeinstallprompt (Android/Chrome)
+  window.addEventListener('beforeinstallprompt', (e) => {
+    try {
       e.preventDefault();
       deferredPrompt = e;
-      // expose to window for debugging
-      try{ window._deferredPWAPrompt = e; }catch(ex){}
-      installBox && installBox.classList.remove('hidden');
-      console.log('PWA beforeinstallprompt event captured; call install button to prompt.');
-    }catch(err){ console.warn('beforeinstallprompt handler error', err); }
+      // Expose to window for debugging
+      try { window._deferredPWAPrompt = e; } catch(ex) {}
+      
+      console.log('PWA beforeinstallprompt event captured');
+      trackInstallEvent('beforeinstallprompt_captured');
+      
+      // Show prompt if conditions met
+      showInstallPrompt();
+    } catch(err) {
+      console.warn('beforeinstallprompt handler error', err);
+    }
   });
-
-  installBtn && installBtn.addEventListener('click', async ()=>{
-    try{
-      if (!deferredPrompt) {
-        // Provide actionable diagnostics to help the user understand why install isn't available
-        let manifestHref = '(none)';
-        try{ const m = document.querySelector('link[rel="manifest"]'); manifestHref = m ? m.href : '(none)'; }catch(e){}
-        const protocol = location.protocol || '(unknown)';
-        let swRegs = [];
-        if ('serviceWorker' in navigator) {
-          try { swRegs = await navigator.serviceWorker.getRegistrations(); } catch(e){ swRegs = []; }
-        }
-        const isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone || false;
-        const msg = 'Install not available. Possible reasons:\n - Not a secure origin (HTTPS or localhost) (current: ' + protocol + ')\n - Service worker not registered (registrations=' + (swRegs ? swRegs.length : 0) + ')\n - Manifest not available (href=' + manifestHref + ')\n - Already installed (display-mode: ' + isStandalone + ')\n\nCheck the console for more details.';
-        alert(msg);
-        console.log('PWA install diagnostics', { protocol, manifestHref, swRegistrations: swRegs, isStandalone });
-        return;
+  
+  // Listen for successful app install
+  window.addEventListener('appinstalled', (e) => {
+    try {
+      console.log('PWA was installed successfully');
+      localStorage.setItem('pwa_installed', 'true');
+      trackInstallEvent('app_installed', { method: 'native' });
+      
+      // Hide prompt
+      hideInstallPrompt();
+      
+      // Show success message
+      if (window.smShowSnackbar) {
+        window.smShowSnackbar('✅ App installed successfully!', { timeout: 5000 });
       }
-      deferredPrompt.prompt();
-      try{ await deferredPrompt.userChoice; }catch(e){}
+      
+      // Clear deferred prompt
       deferredPrompt = null;
-      try{ window._deferredPWAPrompt = null; }catch(e){}
-      installBox && installBox.classList.add('hidden');
-    }catch(err){ console.warn('installBtn click error', err); }
+      try { window._deferredPWAPrompt = null; } catch(ex) {}
+    } catch(err) {
+      console.warn('appinstalled handler error', err);
+    }
   });
+  
+  // Install button click handler
+  if (installPromptBtn) {
+    installPromptBtn.addEventListener('click', async () => {
+      try {
+        // iOS device - show manual instructions
+        if (isIOSDevice()) {
+          trackInstallEvent('ios_instructions_shown');
+          if (iosInstallModal) {
+            iosInstallModal.classList.remove('hidden');
+          }
+          return;
+        }
+        
+        // Android/Chrome - use native prompt
+        if (!deferredPrompt) {
+          // Diagnostics if prompt not available
+          let manifestHref = '(none)';
+          try {
+            const m = document.querySelector('link[rel="manifest"]');
+            manifestHref = m ? m.href : '(none)';
+          } catch(e) {}
+          
+          const protocol = location.protocol || '(unknown)';
+          let swRegs = [];
+          if ('serviceWorker' in navigator) {
+            try {
+              swRegs = await navigator.serviceWorker.getRegistrations();
+            } catch(e) {
+              swRegs = [];
+            }
+          }
+          
+          trackInstallEvent('install_not_available', {
+            protocol,
+            manifestHref,
+            swRegistrations: swRegs.length,
+            isStandalone: isAppInstalled()
+          });
+          
+          alert('Install not currently available. This may be because:\n• Already installed\n• Not running on HTTPS\n• Browser doesn\'t support PWA installation\n\nCheck console for details.');
+          console.log('PWA install diagnostics', { protocol, manifestHref, swRegistrations: swRegs });
+          return;
+        }
+        
+        // Show native install prompt
+        trackInstallEvent('install_prompt_shown');
+        deferredPrompt.prompt();
+        
+        // Wait for user choice
+        const choiceResult = await deferredPrompt.userChoice;
+        trackInstallEvent('install_user_choice', { outcome: choiceResult.outcome });
+        
+        if (choiceResult.outcome === 'accepted') {
+          console.log('User accepted the install prompt');
+          // Note: appinstalled event will handle success UI
+        } else {
+          console.log('User dismissed the install prompt');
+        }
+        
+        // Clear deferred prompt
+        deferredPrompt = null;
+        try { window._deferredPWAPrompt = null; } catch(e) {}
+        hideInstallPrompt();
+      } catch(err) {
+        console.warn('installPromptBtn click error', err);
+        trackInstallEvent('install_error', { error: err.message });
+      }
+    });
+  }
+  
+  // Dismiss button click handler
+  if (installDismissBtn) {
+    installDismissBtn.addEventListener('click', () => {
+      try {
+        localStorage.setItem('pwa_install_dismissed', 'true');
+        trackInstallEvent('install_dismissed');
+        hideInstallPrompt();
+        console.log('Install prompt dismissed by user');
+      } catch(err) {
+        console.warn('installDismissBtn click error', err);
+      }
+    });
+  }
+  
+  // iOS modal close button
+  if (iosInstallCloseBtn) {
+    iosInstallCloseBtn.addEventListener('click', () => {
+      try {
+        if (iosInstallModal) {
+          iosInstallModal.classList.add('hidden');
+        }
+        trackInstallEvent('ios_instructions_closed');
+        // Mark as shown so we don't spam
+        localStorage.setItem('pwa_install_dismissed', 'true');
+        hideInstallPrompt();
+      } catch(err) {
+        console.warn('iosInstallCloseBtn click error', err);
+      }
+    });
+  }
+  
+  // Check on page load if we should show the prompt
+  // For iOS, show prompt even without beforeinstallprompt event
+  setTimeout(() => {
+    try {
+      if (isIOSDevice() && !isAppInstalled()) {
+        showInstallPrompt();
+      }
+    } catch(e) {
+      console.warn('iOS install check error:', e);
+    }
+  }, 2000); // Delay to avoid interfering with initial page load
 
   function updateNetworkUI(){ if (networkStatus) { if (navigator.onLine) { networkStatus.textContent='Online'; networkStatus.classList.remove('status-offline'); networkStatus.classList.add('status-online'); } else { networkStatus.textContent='Offline'; networkStatus.classList.remove('status-online'); networkStatus.classList.add('status-offline'); } } }
   window.addEventListener('online', ()=>{ updateNetworkUI(); trySync(); });
@@ -916,6 +1105,47 @@
   window.addEventListener('online', updateHeaderStatus);
   window.addEventListener('offline', updateHeaderStatus);
   updateHeaderStatus();
+
+  // Add click handler to show session timer
+  const headerStatus = qs('#headerStatus');
+  if (headerStatus) {
+    headerStatus.addEventListener('click', () => {
+      const expiry = localStorage.getItem('sessionExpiry');
+      if (!expiry) {
+        if (window.smShowSnackbar) {
+          window.smShowSnackbar('No active session', { timeout: 3000 });
+        }
+        return;
+      }
+      
+      const expTime = new Date(expiry).getTime();
+      const now = Date.now();
+      const remaining = expTime - now;
+      
+      if (remaining <= 0) {
+        if (window.smShowSnackbar) {
+          window.smShowSnackbar('Session expired', { timeout: 3000 });
+        }
+        return;
+      }
+      
+      // Calculate hours and minutes
+      const hours = Math.floor(remaining / (1000 * 60 * 60));
+      const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+      
+      const timerText = `Session Timer: ${hours}hrs ${minutes}min left`;
+      
+      if (window.smShowSnackbar) {
+        window.smShowSnackbar(timerText, { timeout: 5000 });
+      } else {
+        alert(timerText);
+      }
+    });
+    
+    // Make it look clickable
+    headerStatus.style.cursor = 'pointer';
+    headerStatus.title = 'Click to view session timer';
+  }
 
   // Reveal auth-only controls that are server-rendered hidden with `.sm-auth-hidden`
   function revealAuthControls(){
@@ -1149,8 +1379,7 @@
     console.warn('[Team Member] Module load/prefetch failed:', e);
   });
   
-  if (deferredPrompt) installBox && installBox.classList.remove('hidden');
-      trySync();
+  trySync();
     });
   }
 
@@ -1425,8 +1654,7 @@
         });
         
         revealAuthControls();
-        if (deferredPrompt) installBox && installBox.classList.remove('hidden');
-        trySync();
+        if (deferredPrompt) showInstallPrompt();
         
       } catch(err) {
         console.error('User login error:', err);
@@ -1528,7 +1756,6 @@
         console.warn('[Team Selection] Module load/prefetch failed:', e);
       });
       
-      if (deferredPrompt) installBox && installBox.classList.remove('hidden');
       trySync();
     } catch(e) {
       console.error('Failed to proceed to app', e);
@@ -1678,8 +1905,7 @@
   if (appSection) { appSection.classList.remove('hidden'); try{ appSection.style.display='block'; }catch(e){} }
       // reveal any server-side auth-only controls
       revealAuthControls();
-      if (deferredPrompt) installBox && installBox.classList.remove('hidden');
-          trySync();
+      trySync();
     }catch(err){ alert('Login failed. Check team name and code.'); }
   });
 
@@ -1862,6 +2088,7 @@
       const expTime = new Date(expiry).getTime();
       if (expTime && expTime < Date.now()) {
         // Session has expired - perform logout
+        console.log('Session expired - logging out');
         
         // Clear session data
         const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
@@ -2060,6 +2287,10 @@
         createdAt: new Date().toISOString(),
         subsales_user_id: subsalesUserId,
         subsales_team_id: subsalesTeamId,
+        entered_by_id: enteredById,
+        entered_by_name: enteredByName,
+        teamName: teamName,
+        teamCode: teamCode,
         geo
       };
     }
@@ -2249,8 +2480,8 @@
     }catch(e){ console.warn('trySync error', e); }
   }
 
-  // Service worker registration (prefer pluginBase so SW is loaded from plugin assets)
-  (function(){ if ('serviceWorker' in navigator) { const swBase = pluginBase || portalBase || '/'; const swPath = (swBase.endsWith('/') ? swBase : (swBase + '/')) + 'service-worker.js'; const scope = (swBase.endsWith('/') ? swBase : (swBase + '/')); navigator.serviceWorker.register(swPath, { scope }).then(()=>console.log('sw registered')).catch((e)=>console.warn('sw register failed', e)); } })();
+  // Service worker registration handled in index.html (uses portalBase for proper scope)
+  // Duplicate registration removed to prevent scope conflicts
 
   // Google Places autocomplete loader intentionally disabled: plain-text
   // address entry is used. Previous initSMPlaces implementation removed.
@@ -2378,35 +2609,28 @@
       }
     };
     
-    // Filter local orders: current user only (no date restriction since these are pending sync)
+    // Get ALL local orders (no filtering - these are by definition from this device/user)
+    // Local orders are unsynced and need to be visible for verification before sync
     const local = await Storage.all();
-    const localFiltered = local.filter(o => {
-      // Check if order belongs to current user
-      const isMyOrder = (currentUserId && o.entered_by_id && String(o.entered_by_id) === String(currentUserId)) || 
-                        (currentUserId && o.subsales_user_id && String(o.subsales_user_id) === String(currentUserId)) ||
-                        (currentUserName && o.entered_by_name && o.entered_by_name === currentUserName);
-      // Don't filter by date for local orders - show all pending orders
-      return isMyOrder;
-    });
+    const localFiltered = local; // Show all local orders - no filtering needed for offline storage
     
     // Debug logging for troubleshooting
     console.log('My Orders Debug:', {
       currentUserId,
       currentUserName,
       totalLocalOrders: local.length,
-      filteredLocalOrders: localFiltered.length,
       sampleLocalOrder: local[0],
-      loginMode
+      loginMode,
+      note: 'Local orders are NOT filtered - showing all pending sync orders'
     });
     
     // Log to server with detailed context
     if (window.PWALogger) {
-      window.PWALogger.log('ui', 'My Orders - Local orders filtered', {
+      window.PWALogger.log('ui', 'My Orders - Local orders loaded (no filtering)', {
         login_mode: loginMode,
         current_user_id: currentUserId,
         current_user_name: currentUserName,
         total_local_orders: local.length,
-        filtered_local_orders: localFiltered.length,
         has_sample: !!local[0],
         sample_order_id: local[0] ? local[0].id : null,
         sample_entered_by_id: local[0] ? local[0].entered_by_id : null,
@@ -2462,7 +2686,7 @@
     const modalId = 'myOrdersModal';
     let modal = qs('#' + modalId);
     if (!modal){
-      modal = document.createElement('div'); modal.id = modalId; modal.className = 'sm-modal hidden';
+      modal = document.createElement('div'); modal.id = modalId; modal.className = 'orders-inlay hidden';
       document.body.appendChild(modal);
     }
     // Build HTML with Edit/Delete actions for local and remote orders (mark pending ops)
@@ -2483,12 +2707,104 @@
       return `<div class="order" data-remote-id="${r.order_id||r.order_id}"><strong>${cust} ${badge}</strong><div>${(od.address||r.address||'')}</div><div>${created}</div><div style="margin-top:6px"><button class="sm-btn edit-order-remote" data-remote-id="${r.order_id||r.order_id}">Edit</button> <button class="sm-btn delete-order-remote" data-remote-id="${r.order_id||r.order_id}" style="background:#dc2626;color:#fff">Delete</button></div></div>`;
     }).join('') : '<div>No remote orders</div>';
 
-    modal.innerHTML = `<div class="modal-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><div><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div></div><div class="modal-body"><div class="modal-col"> <h4>Local (pending sync)</h4>${localHtml}</div><div class="modal-col"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
+    // Add export buttons (offline only) - for emergency data recovery
+    const exportButtonsHtml = !navigator.onLine && localFiltered.length > 0 
+      ? `<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+           <p style="font-size: 12px; color: #666; margin-bottom: 8px;">⚠️ Offline Mode - Export for backup:</p>
+           <button id="exportDownloadBtn" class="sm-btn" style="margin-right: 8px;">Download JSON</button>
+           <button id="exportCopyBtn" class="sm-btn">Copy to Clipboard</button>
+         </div>` 
+      : '';
+
+    modal.innerHTML = `<div class="inlay-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;"><div style="flex:1;min-width:280px;"> <h4>Local (pending sync)</h4>${localHtml}${exportButtonsHtml}</div><div style="flex:1;min-width:280px;"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
     const closeBtn = qs('#closeMyOrdersBtn'); 
     if (closeBtn) closeBtn.addEventListener('click', async ()=>{ 
       await logWithContext('ui', 'My Orders modal closed');
       modal.classList.add('hidden'); 
     });
+
+    // Export buttons (offline mode only)
+    const exportDownloadBtn = qs('#exportDownloadBtn');
+    if (exportDownloadBtn) {
+      exportDownloadBtn.addEventListener('click', async () => {
+        try {
+          const exportData = {
+            exported_at: new Date().toISOString(),
+            user: currentUserName || currentUserId || 'Unknown',
+            login_mode: loginMode,
+            orders: localFiltered
+          };
+          const dataStr = JSON.stringify(exportData, null, 2);
+          const blob = new Blob([dataStr], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `orders-backup-${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          
+          await logWithContext('data', 'Orders exported to JSON file', { 
+            order_count: localFiltered.length,
+            user: currentUserName || currentUserId
+          });
+          
+          if (window.smShowSnackbar) {
+            window.smShowSnackbar(`✓ Downloaded ${localFiltered.length} orders`, { timeout: 3000 });
+          } else {
+            alert(`Downloaded ${localFiltered.length} orders successfully`);
+          }
+        } catch(err) {
+          console.error('Export download failed:', err);
+          alert('Export failed: ' + err.message);
+        }
+      });
+    }
+
+    const exportCopyBtn = qs('#exportCopyBtn');
+    if (exportCopyBtn) {
+      exportCopyBtn.addEventListener('click', async () => {
+        try {
+          const exportData = {
+            exported_at: new Date().toISOString(),
+            user: currentUserName || currentUserId || 'Unknown',
+            login_mode: loginMode,
+            orders: localFiltered
+          };
+          const dataStr = JSON.stringify(exportData, null, 2);
+          
+          // Try modern clipboard API first
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(dataStr);
+          } else {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = dataStr;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+          }
+          
+          await logWithContext('data', 'Orders copied to clipboard', { 
+            order_count: localFiltered.length,
+            user: currentUserName || currentUserId
+          });
+          
+          if (window.smShowSnackbar) {
+            window.smShowSnackbar(`✓ Copied ${localFiltered.length} orders to clipboard`, { timeout: 3000 });
+          } else {
+            alert(`Copied ${localFiltered.length} orders to clipboard`);
+          }
+        } catch(err) {
+          console.error('Copy to clipboard failed:', err);
+          alert('Copy failed: ' + err.message);
+        }
+      });
+    }
 
     // Attach delegated handlers for edit/delete
     modal.querySelectorAll('.edit-order').forEach(b=>{ b.addEventListener('click', async (e)=>{ 
@@ -2805,22 +3121,39 @@
           const expiry = localStorage.getItem('sessionExpiry');
           if (!expiry) {
             e.target.blur(); // Remove focus
-            alert('Session expired. Please log in again.');
-            location.reload();
+            // Only reload if online
+            if (navigator.onLine) {
+              alert('Session expired. Please log in again.');
+              location.reload();
+            } else {
+              console.log('No session but offline - allowing continued use');
+              if (window.smShowSnackbar) {
+                window.smShowSnackbar('Working offline', { timeout: 3000 });
+              }
+            }
             return;
           }
           
           const expTime = new Date(expiry).getTime();
           if (expTime && expTime < Date.now()) {
             e.target.blur(); // Remove focus
-            alert('Session expired. Please log in again.');
-            const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
-                                 'selectedTeamId', 'selectedTeamName', 'userTeams',
-                                 'teamName', 'teamCode', 'loginMode', 'salesMode'];
-            keysToRemove.forEach(key => {
-              try { localStorage.removeItem(key); } catch(e) {}
-            });
-            location.reload();
+            // Only enforce session expiry if online
+            if (navigator.onLine) {
+              alert('Session expired. Please log in again.');
+              const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
+                                   'selectedTeamId', 'selectedTeamName', 'userTeams',
+                                   'teamName', 'teamCode', 'loginMode', 'salesMode'];
+              keysToRemove.forEach(key => {
+                try { localStorage.removeItem(key); } catch(e) {}
+              });
+              location.reload();
+            } else {
+              // Offline - allow continued use without reload
+              console.log('Session expired but offline - allowing continued use');
+              if (window.smShowSnackbar) {
+                window.smShowSnackbar('Working offline - session expired', { timeout: 3000 });
+              }
+            }
           }
         });
       });

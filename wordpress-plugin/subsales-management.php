@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.99
+ * Version: 2.0.0.152
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.99' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.152' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -1174,6 +1174,7 @@ add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_ope
 add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
 add_action( 'wp_ajax_subsales_toggle_debug', 'subsales_toggle_debug_ajax' );
 add_action( 'wp_ajax_subsales_get_active_sessions_count', 'subsales_get_active_sessions_count_ajax' );
+add_action( 'wp_ajax_subsales_get_session_details', 'subsales_get_session_details_ajax' );
 add_action( 'wp_ajax_subsales_match_addresses_batch', 'subsales_match_addresses_batch_ajax' );
 
 // Background matching AJAX handlers
@@ -1284,6 +1285,40 @@ function subsales_get_active_sessions_count_ajax() {
     
     $active_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
     wp_send_json_success( array( 'count' => $active_count ) );
+}
+
+// AJAX handler for getting session details and heartbeat history
+function subsales_get_session_details_ajax() {
+    check_ajax_referer( 'subsales_session_details', 'nonce' );
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    
+    $session_id = isset( $_POST['session_id'] ) ? sanitize_text_field( $_POST['session_id'] ) : '';
+    
+    if ( empty( $session_id ) ) {
+        wp_send_json_error( 'Session ID required' );
+    }
+    
+    // Get session data
+    global $wpdb;
+    $sessions_table = $wpdb->prefix . 'ss_pwa_sessions';
+    $session = $wpdb->get_row( $wpdb->prepare(
+        "SELECT * FROM {$sessions_table} WHERE session_id = %s",
+        $session_id
+    ), ARRAY_A );
+    
+    if ( ! $session ) {
+        wp_send_json_error( 'Session not found' );
+    }
+    
+    // Get heartbeat history
+    $heartbeats = Subsales_Database::get_session_heartbeats( $session_id, 100 );
+    
+    wp_send_json_success( array(
+        'session' => $session,
+        'heartbeats' => $heartbeats
+    ) );
 }
 
 // AJAX handler for debug mode toggle
@@ -5345,7 +5380,8 @@ function order_sync_get_plugin_version() {
 }
 
 // Serve portal assets from plugin folder at portal path
-add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
+// Use 'init' hook with priority 0 to intercept before WordPress routing
+add_action( 'init', 'subsales_serve_portal_assets', 0 );
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
 add_action( 'rest_api_init', function(){
@@ -5416,9 +5452,134 @@ function subsales_haversine_distance( $lat1, $lon1, $lat2, $lon2 ){
     return $R * $c;
 }
 function subsales_serve_portal_assets() {
-    $portal_slug = get_option( 'order_sync_portal_slug', '' ); if ( empty( $portal_slug ) ) return;
-    $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
-    $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
+    // Skip during installation, updates, and admin operations
+    if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
+        return;
+    }
+    
+    // Early exit for admin pages, wp-json, and other non-portal requests
+    $req_uri = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '';
+    if ( empty( $req_uri ) ||
+         strpos( $req_uri, '/wp-admin/' ) !== false || 
+         strpos( $req_uri, '/wp-json/' ) !== false || 
+         strpos( $req_uri, 'wp-login.php' ) !== false ||
+         $req_uri === '/favicon.ico' ) {
+        return;
+    }
+    
+    $portal_slug = get_option( 'order_sync_portal_slug', '' );
+    $req_path_raw = parse_url( $req_uri, PHP_URL_PATH );
+    $req_path = $req_path_raw ? trim( $req_path_raw, '/' ) : '';
+    
+    // Redirect /subsales-portal to /subsales-portal/ for service worker scope consistency
+    if ( $portal_slug && $req_path === $portal_slug && substr( $req_uri, -1 ) !== '/' ) {
+        wp_redirect( home_url( '/' . $portal_slug . '/' ), 301 );
+        exit;
+    }
+    
+    // Handle direct PWA access at /wp-content/plugins/subsales-management/pwa/
+    $pwa_base_path_raw = parse_url( SUBSALES_PLUGIN_URL . 'pwa/', PHP_URL_PATH );
+    $pwa_base_path = $pwa_base_path_raw ? trim( $pwa_base_path_raw, '/' ) : '';
+    
+    // Serve service worker for direct PWA access
+    if ( $req_path === $pwa_base_path . '/service-worker.js' || $req_path === rtrim($pwa_base_path, '/') . '/service-worker.js' ) {
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
+        if ( file_exists( $file ) ) {
+            header( 'Content-Type: application/javascript' );
+            header( 'Cache-Control: public, max-age=3600' );
+            header( 'Access-Control-Allow-Origin: *' );
+            header( 'Service-Worker-Allowed: /' );
+            readfile( $file );
+            exit;
+        }
+    }
+    
+    // Serve other PWA assets (styles, scripts, manifest, icons) for direct PWA access
+    if ( strpos( $req_path, $pwa_base_path ) === 0 ) {
+        $rel_path = substr( $req_path, strlen( $pwa_base_path ) );
+        $rel_path = ltrim( $rel_path, '/' );
+        
+        if ( $rel_path && $rel_path !== 'index.html' ) {
+            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
+            if ( file_exists( $file ) && is_file( $file ) ) {
+                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
+                switch ( $ext ) {
+                    case 'js': $ct = 'application/javascript'; break;
+                    case 'css': $ct = 'text/css'; break;
+                    case 'json': $ct = 'application/json'; break;
+                    case 'svg': $ct = 'image/svg+xml'; break;
+                    case 'png': $ct = 'image/png'; break;
+                    case 'jpg':
+                    case 'jpeg': $ct = 'image/jpeg'; break;
+                    case 'webp': $ct = 'image/webp'; break;
+                    case 'ico': $ct = 'image/x-icon'; break;
+                    default: $ct = 'application/octet-stream';
+                }
+                header( 'Content-Type: ' . $ct );
+                header( 'Cache-Control: public, max-age=86400' );
+                header( 'Access-Control-Allow-Origin: *' );
+                readfile( $file );
+                exit;
+            }
+        }
+    }
+    
+    if ( $req_path === $pwa_base_path || $req_path === $pwa_base_path . '/index.html' || rtrim($req_path, '/') === rtrim($pwa_base_path, '/') ) {
+        $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
+        if ( file_exists( $file ) ) {
+            $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
+            $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
+
+            $settings = array(
+                'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
+                'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
+                'portalBase' => esc_url_raw( home_url( '/' . ( $portal_slug ?: 'subsales-portal' ) . '/' ) ),
+                'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
+                'brandName' => get_option( 'subsales_branding', 'Subsales' ),
+                'brandingImage' => $header_image_url
+            );
+            // Include configured products so portal bootstraps with current product list
+            $settings['products'] = order_sync_get_products_config();
+
+            $html_content = file_get_contents( $file );
+            if ( $html_content === false ) {
+                error_log( '[Subsales] Failed to read index.html' );
+                return;
+            }
+            $html = $html_content;
+            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
+            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
+            // Rewrite relative stylesheet hrefs to absolute plugin path
+            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
+            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
+            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
+            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
+            // Rewrite relative stylesheet hrefs to absolute plugin path
+            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
+            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
+            // If replacement didn't find the exact marker, inject config before </head>
+            if ( $new_html === $html ) {
+                $pos = stripos( $html, '</head>' );
+                if ( $pos !== false ) {
+                    $new_html = substr_replace( $html, $inject . "\n<script src=\"" . $app_src . "\"></script>\n", $pos, 0 );
+                } else {
+                    // fallback: prepend to document
+                    $new_html = $inject . "\n<script src=\"" . $app_src . "\"></script>\n" . $html;
+                }
+            }
+            $html = $new_html;
+            // Serve index publicly
+            header( 'Content-Type: text/html; charset=utf-8' );
+            header( 'Cache-Control: public, max-age=300' );
+            header( 'Access-Control-Allow-Origin: *' );
+            echo $html;
+            exit;
+        }
+    }
+    
+    if ( empty( $portal_slug ) ) return;
+    $portal_base_raw = parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH );
+    $portal_base = $portal_base_raw ? trim( $portal_base_raw, '/' ) : '';
 
     // Also serve manifest at the site root (/manifest.json) to handle cases where the browser requests it from /
     if ( $req_path === 'manifest.json' ) {
@@ -5445,19 +5606,57 @@ function subsales_serve_portal_assets() {
         }
     }
 
-    if ( $req_path === $portal_base . '/service-worker.js' ) {
+    // Serve service worker for portal access (check both with and without leading slash)
+    if ( $req_path === $portal_base . '/service-worker.js' || $req_path === rtrim($portal_base, '/') . '/service-worker.js' ) {
+        error_log( '[Subsales Debug] Service worker requested at portal path - serving from: ' . SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js' );
         $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
         if ( file_exists( $file ) ) {
-            // Serve publicly with permissive caching and CORS so browsers can register the SW without auth issues
-            header( 'Content-Type: application/javascript' );
-            header( 'Cache-Control: public, max-age=3600' );
+            // Clear any previous output and set explicit 200 status
+            status_header( 200 );
+            header( 'Content-Type: application/javascript; charset=utf-8' );
+            header( 'Cache-Control: no-cache, must-revalidate' );
             header( 'Access-Control-Allow-Origin: *' );
+            header( 'Service-Worker-Allowed: /' );
             readfile( $file );
             exit;
+        } else {
+            error_log( '[Subsales Debug] Service worker file NOT FOUND at: ' . $file );
+        }
+    }
+
+    // Serve other PWA assets at portal path (app.js, styles.css, manifest.json, icons, etc.)
+    if ( strpos( $req_path, $portal_base ) === 0 && $req_path !== $portal_base && $req_path !== $portal_base . '/' && $req_path !== $portal_base . '/index.html' ) {
+        $rel_path = substr( $req_path, strlen( $portal_base ) );
+        $rel_path = ltrim( $rel_path, '/' );
+        
+        if ( $rel_path ) {
+            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
+            if ( file_exists( $file ) && is_file( $file ) ) {
+                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
+                switch ( $ext ) {
+                    case 'js': $ct = 'application/javascript'; break;
+                    case 'css': $ct = 'text/css'; break;
+                    case 'json': $ct = 'application/json'; break;
+                    case 'svg': $ct = 'image/svg+xml'; break;
+                    case 'png': $ct = 'image/png'; break;
+                    case 'jpg':
+                    case 'jpeg': $ct = 'image/jpeg'; break;
+                    case 'webp': $ct = 'image/webp'; break;
+                    case 'ico': $ct = 'image/x-icon'; break;
+                    default: $ct = 'application/octet-stream';
+                }
+                status_header( 200 );
+                header( 'Content-Type: ' . $ct );
+                header( 'Cache-Control: public, max-age=86400' );
+                header( 'Access-Control-Allow-Origin: *' );
+                readfile( $file );
+                exit;
+            }
         }
     }
 
     if ( $req_path === $portal_base || $req_path === $portal_base . '/index.html' || $req_path === $portal_base . '/' ) {
+        // Serve PWA directly instead of redirecting
         $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
         if ( file_exists( $file ) ) {
             $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
@@ -5466,21 +5665,21 @@ function subsales_serve_portal_assets() {
             $settings = array(
                 'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
                 'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-                'portalBase' => esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) ),
+                'portalBase' => esc_url_raw( home_url( '/' . $portal_slug . '/' ) ),
                 'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
                 'brandName' => get_option( 'subsales_branding', 'Subsales' ),
                 'brandingImage' => $header_image_url
             );
-            // Include configured products so portal bootstraps with current product list
+            // Include configured products
             $settings['products'] = order_sync_get_products_config();
 
             $html = file_get_contents( $file );
             $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
             $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path to avoid portal-relative 404s
+            // Rewrite relative stylesheet hrefs to absolute plugin path
             $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
             $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            // If replacement didn't find the exact marker (different spacing/paths), inject config before </head>
+            // If replacement didn't find the exact marker, inject config before </head>
             if ( $new_html === $html ) {
                 $pos = stripos( $html, '</head>' );
                 if ( $pos !== false ) {
@@ -5491,11 +5690,12 @@ function subsales_serve_portal_assets() {
                 }
             }
             $html = $new_html;
-            // Serve index publicly so the portal can be loaded without authentication
+            // Serve index publicly
             header( 'Content-Type: text/html; charset=utf-8' );
             header( 'Cache-Control: public, max-age=300' );
             header( 'Access-Control-Allow-Origin: *' );
-            echo $html; exit;
+            echo $html;
+            exit;
         }
     }
 
@@ -7039,8 +7239,7 @@ function subsales_pwa_sessions_page() {
                     <th style="width: 150px;">User/Team</th>
                     <th style="width: 120px;">Login</th>
                     <th style="width: 120px;">Last Heartbeat</th>
-                    <th style="width: 120px;">Logout</th>
-                    <th style="width: 80px;">Duration</th>
+                    <th style="width: 120px;">Session Expires</th>
                     <th style="width: 80px;">Status</th>
                     <th>User Agent</th>
                     <th style="width: 100px;">IP</th>
@@ -7048,7 +7247,7 @@ function subsales_pwa_sessions_page() {
             </thead>
             <tbody>
                 <?php if ( empty( $sessions ) ): ?>
-                    <tr><td colspan="9" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
+                    <tr><td colspan="8" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
                 <?php else: ?>
                     <?php foreach ( $sessions as $session ): 
                         $login_time = strtotime( $session['login_at'] );
@@ -7074,17 +7273,35 @@ function subsales_pwa_sessions_page() {
                             'ended' => '#6c757d'
                         );
                         $status_color = isset( $status_colors[ $display_status ] ) ? $status_colors[ $display_status ] : '#ccc';
+                        
+                        // Calculate session expires remaining time
+                        $expiry_display = '—';
+                        if ( $session['session_expiry'] && $display_status !== 'ended' ) {
+                            $expiry_time = strtotime( $session['session_expiry'] );
+                            $time_remaining = $expiry_time - $current_time;
+                            
+                            if ( $time_remaining > 0 ) {
+                                $hours = floor( $time_remaining / 3600 );
+                                $minutes = floor( ( $time_remaining % 3600 ) / 60 );
+                                $expiry_display = sprintf( '%dh %dm', $hours, $minutes );
+                            } else {
+                                $expiry_display = '<span style="color: #dc3545;">Expired</span>';
+                            }
+                        }
                     ?>
                     <tr>
-                        <td><small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small></td>
+                        <td>
+                            <a href="#" class="view-session-details" data-session-id="<?php echo esc_attr( $session['session_id'] ); ?>" style="text-decoration: none; color: #2271b1;">
+                                <small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small>
+                            </a>
+                        </td>
                         <td>
                             <strong><?php echo esc_html( $session['user_name'] ?: '(Unknown)' ); ?></strong><br>
                             <small style="color: #666;"><?php echo esc_html( $session['team_name'] ?: 'No Team' ); ?></small>
                         </td>
                         <td><?php echo date( 'M j, g:i a', $login_time ); ?></td>
                         <td><?php echo date( 'M j, g:i a', strtotime( $session['last_heartbeat'] ) ); ?></td>
-                        <td><?php echo $logout_time ? date( 'M j, g:i a', $logout_time ) : '—'; ?></td>
-                        <td><?php echo gmdate( 'H:i:s', $duration ); ?></td>
+                        <td><?php echo $expiry_display; ?></td>
                         <td>
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?php echo $status_color; ?>; margin-right: 5px;"></span>
                             <?php echo esc_html( ucfirst( $display_status ) ); ?>
@@ -7110,8 +7327,24 @@ function subsales_pwa_sessions_page() {
         
         <p style="margin-top: 20px; color: #666; font-style: italic;">
             💡 <strong>Tip:</strong> Sessions are automatically marked as "idle" after 5 minutes of no heartbeat. 
-            Active sessions send a heartbeat every 30 seconds from the app.
+            Active sessions send a heartbeat every 30 seconds from the app. Click a Session ID to view heartbeat history and GPS tracking.
         </p>
+    </div>
+    
+    <!-- Session Detail Modal -->
+    <div id="session-detail-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 100000; overflow: auto;">
+        <div style="max-width: 900px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+            <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0;">Session Details</h2>
+                <button id="close-session-modal" class="button" style="font-size: 20px; line-height: 1;">&times;</button>
+            </div>
+            <div id="session-detail-content" style="padding: 20px;">
+                <div style="text-align: center; padding: 40px;">
+                    <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                    <p>Loading session data...</p>
+                </div>
+            </div>
+        </div>
     </div>
     
     <style>
@@ -7123,12 +7356,20 @@ function subsales_pwa_sessions_page() {
             vertical-align: middle;
             margin-right: 5px;
         }
+        .view-session-details:hover {
+            text-decoration: underline !important;
+        }
     </style>
     
     <script>
     jQuery(document).ready(function($) {
         // Auto-refresh active sessions every 10 seconds
         let autoRefreshInterval = setInterval(function() {
+            // Don't refresh if modal is open
+            if ($('#session-detail-modal').is(':visible')) {
+                console.log('Auto-refresh skipped - modal is open');
+                return;
+            }
             location.reload();
         }, 10000);
         
@@ -7137,11 +7378,115 @@ function subsales_pwa_sessions_page() {
             location.reload();
         });
         
-        // Stop auto-refresh when user interacts with filters
+        // Stop auto-refresh when user interacts with filters or modal
         $('select, input').on('focus', function() {
             clearInterval(autoRefreshInterval);
             console.log('Auto-refresh paused while editing filters');
         });
+        
+        // View session details
+        $('.view-session-details').on('click', function(e) {
+            e.preventDefault();
+            const sessionId = $(this).data('session-id');
+            
+            // Show modal
+            $('#session-detail-modal').fadeIn(200);
+            
+            // Load session data via AJAX
+            $.ajax({
+                url: ajaxurl,
+                method: 'POST',
+                data: {
+                    action: 'subsales_get_session_details',
+                    nonce: '<?php echo wp_create_nonce( 'subsales_session_details' ); ?>',
+                    session_id: sessionId
+                },
+                success: function(response) {
+                    if (response.success) {
+                        displaySessionDetails(response.data);
+                    } else {
+                        $('#session-detail-content').html('<div class="notice notice-error"><p>Error loading session data.</p></div>');
+                    }
+                },
+                error: function() {
+                    $('#session-detail-content').html('<div class="notice notice-error"><p>Failed to load session data.</p></div>');
+                }
+            });
+        });
+        
+        // Close modal
+        $('#close-session-modal, #session-detail-modal').on('click', function(e) {
+            if (e.target === this) {
+                $('#session-detail-modal').fadeOut(200);
+            }
+        });
+        
+        function displaySessionDetails(data) {
+            const session = data.session;
+            const heartbeats = data.heartbeats;
+            
+            let html = '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">';
+            html += '<div><strong>User:</strong> ' + (session.user_name || 'Unknown') + '</div>';
+            html += '<div><strong>Team:</strong> ' + (session.team_name || 'No Team') + '</div>';
+            html += '<div><strong>Login:</strong> ' + session.login_at + '</div>';
+            html += '<div><strong>Last Heartbeat:</strong> ' + session.last_heartbeat + '</div>';
+            html += '<div><strong>Session Expires:</strong> ' + (session.session_expiry || 'N/A') + '</div>';
+            html += '<div><strong>Status:</strong> ' + session.status + '</div>';
+            html += '<div><strong>IP Address:</strong> ' + session.ip_address + '</div>';
+            html += '<div><strong>User Agent:</strong> ' + session.user_agent + '</div>';
+            html += '</div>';
+            
+            html += '<h3 style="margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px;">Heartbeat History (' + heartbeats.length + ' records)</h3>';
+            
+            if (heartbeats.length > 0) {
+                html += '<div style="max-height: 400px; overflow-y: auto;">';
+                html += '<table class="widefat striped">';
+                html += '<thead><tr>';
+                html += '<th>Timestamp</th>';
+                html += '<th>GPS Location</th>';
+                html += '<th>Accuracy</th>';
+                html += '<th>Activity</th>';
+                html += '</tr></thead><tbody>';
+                
+                heartbeats.forEach(function(hb) {
+                    html += '<tr>';
+                    html += '<td>' + hb.heartbeat_at + '</td>';
+                    
+                    if (hb.gps_latitude && hb.gps_longitude) {
+                        const mapsUrl = 'https://www.google.com/maps?q=' + hb.gps_latitude + ',' + hb.gps_longitude;
+                        html += '<td><a href="' + mapsUrl + '" target="_blank">' + hb.gps_latitude + ', ' + hb.gps_longitude + '</a></td>';
+                        html += '<td>' + (hb.gps_accuracy ? Math.round(hb.gps_accuracy) + 'm' : 'N/A') + '</td>';
+                    } else {
+                        html += '<td>—</td><td>—</td>';
+                    }
+                    
+                    const activity = hb.activity_data ? JSON.parse(hb.activity_data) : {};
+                    let activityDisplay = 'None';
+                    
+                    if (activity.type) {
+                        // Auto heartbeat
+                        activityDisplay = '<span style="color: #666;">Auto (' + activity.type + ')</span>';
+                    } else if (activity.events && Array.isArray(activity.events)) {
+                        // User activity events
+                        const eventTypes = activity.events.map(e => e.action).join(', ');
+                        activityDisplay = '<strong>' + activity.events.length + ' event' + (activity.events.length > 1 ? 's' : '') + ':</strong> ' + eventTypes;
+                    } else if (Object.keys(activity).length > 0) {
+                        // Unknown activity format - show keys
+                        activityDisplay = Object.keys(activity).join(', ');
+                    }
+                    
+                    html += '<td>' + activityDisplay + '</td>';
+                    html += '</tr>';
+                });
+                
+                html += '</tbody></table>';
+                html += '</div>';
+            } else {
+                html += '<p style="color: #666; font-style: italic;">No heartbeat data available.</p>';
+            }
+            
+            $('#session-detail-content').html(html);
+        }
     });
     </script>
     <?php

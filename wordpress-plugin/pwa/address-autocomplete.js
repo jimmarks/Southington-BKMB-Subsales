@@ -871,6 +871,15 @@
     init: initNearbyAutocomplete,
     fetchNearby: fetchNearby,
     prefetch: async function(){ // MUST be async and return the promise
+      // Check if already prefetched this session
+      const sessionId = sessionStorage.getItem('pwaSessionId');
+      const lastPrefetchSession = sessionStorage.getItem('zipPrefetchSession');
+      
+      if (sessionId && lastPrefetchSession === sessionId) {
+        console.log('subsalesNearby: ZIPs already prefetched this session, skipping...');
+        return; // Already prefetched this session
+      }
+      
       console.log('subsalesNearby: Manual prefetch triggered - loading ALL served ZIPs now...');
       
       // Determine API URL or fallback to static file
@@ -895,6 +904,12 @@
         console.log('subsalesNearby: zip-index.json loaded, loading all ZIPs now...');
         await prefetchAllZips(indexData); // Wait for ALL ZIPs to load
         console.log('subsalesNearby: ALL ZIPs loaded and ready for use!');
+        
+        // Mark as prefetched for this session
+        if (sessionId) {
+          sessionStorage.setItem('zipPrefetchSession', sessionId);
+          console.log('subsalesNearby: Marked ZIPs as prefetched for session:', sessionId);
+        }
       }catch(e){ 
         console.warn('subsalesNearby: manual prefetch failed', e); 
         throw e; // Re-throw so caller knows it failed
