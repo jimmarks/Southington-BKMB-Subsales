@@ -99,12 +99,8 @@ function order_sync_delivery_page() {
                 <tr>
                     <th scope="row">Administrative CSV (no routing)</th>
                     <td>
-                        <p class="description">Create a CSV export you can open in a spreadsheet to design your own routes. This export contains one row per normalized address and per-product columns.</p>
+                        <p class="description">Create a CSV export you can open in a spreadsheet to design your own routes. This export contains one row per normalized address and per-product columns. Includes all orders.</p>
                     </td>
-                </tr>
-                <tr>
-                    <th scope="row">Delivery date (optional)</th>
-                    <td><input type="date" name="delivery_date" value="" /></td>
                 </tr>
             </table>
             <p class="submit"><button class="button">Generate Administrative CSV</button></p>
@@ -123,9 +119,9 @@ function order_sync_delivery_page() {
                     <p class="description">All routes will start from this location</p></td>
                 </tr>
                 <tr>
-                    <th scope="row">Delivery date (optional)</th>
-                    <td><input type="date" name="delivery_date" id="sdm_delivery_date" value="" />
-                    <p class="description">Leave blank to include all orders</p></td>
+                    <th scope="row">Delivery date for manifest header</th>
+                    <td><input type="date" name="delivery_date" id="sdm_delivery_date" value="<?php echo esc_attr( date('Y-m-d') ); ?>" />
+                    <p class="description">This date will appear on the printed manifests (does not filter orders)</p></td>
                 </tr>
             </table>
             <p class="submit">

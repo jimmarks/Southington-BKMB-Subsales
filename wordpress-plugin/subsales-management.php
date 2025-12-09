@@ -2899,9 +2899,9 @@ function order_sync_handle_generate_admin_csv() {
     if ( ! empty( $delivery_date ) ) {
         $start_dt = $delivery_date . ' 00:00:00';
         $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE deleted = 0 AND created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
     } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     }
 
     $configured_products = order_sync_get_products_config();
@@ -3271,17 +3271,11 @@ function order_sync_handle_generate_delivery_pdf() {
         wp_die( 'Could not geocode starting address. Please check your Google Maps API key and address.' );
     }
 
-    // Fetch orders
-    if ( ! empty( $delivery_date ) ) {
-        $start_dt = $delivery_date . ' 00:00:00';
-        $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
-    } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
-    }
+    // Fetch ALL orders (delivery_date is for display only, not filtering)
+    $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
 
     if ( empty( $rows ) ) {
-        $msg = rawurlencode( 'No orders found for ' . ( $delivery_date ?: 'all dates' ) );
+        $msg = rawurlencode( 'No orders found' );
         wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
         exit;
     }
