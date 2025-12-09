@@ -84,6 +84,8 @@
             const wasEnabled = this.debugEnabled;
             this.debugEnabled = !!enabled;
             
+            console.warn('[PWA Logger] updateDebugStatus called - was:', wasEnabled, 'now:', this.debugEnabled);
+            
             if (wasEnabled !== this.debugEnabled) {
                 console.warn('[PWA Logger] Debug mode changed:', wasEnabled, '→', this.debugEnabled);
                 
@@ -233,11 +235,14 @@
             // Log all button clicks (check debugEnabled at click time, not setup time)
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('button');
-                if (button && logger.debugEnabled) {
-                    logger.logButtonClick(
-                        button.id || 'unnamed',
-                        button.textContent.trim().substring(0, 50)
-                    );
+                if (button) {
+                    console.warn('[PWA Logger] Button clicked:', button.textContent.trim().substring(0, 50), 'debugEnabled:', logger.debugEnabled);
+                    if (logger.debugEnabled) {
+                        logger.logButtonClick(
+                            button.id || 'unnamed',
+                            button.textContent.trim().substring(0, 50)
+                        );
+                    }
                 }
             });
 
