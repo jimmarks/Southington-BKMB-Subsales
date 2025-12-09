@@ -3475,12 +3475,29 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Manifests - ' . $display_date . '</title>
     <style>
+        /* Hide all WordPress admin elements */
+        #wpadminbar, #adminmenumain, #adminmenuback, #adminmenuwrap, 
+        .wp-toolbar, #wpfooter, .update-nag, .notice, .error, 
+        #wpbody-content > .wrap, #wpbody-content > h1, #wpbody-content > h2,
+        .wrap > h1, .wrap > h2 {
+            display: none !important;
+        }
+        
+        /* Ensure body takes full width without admin sidebar */
+        body.wp-admin { margin: 0 !important; padding: 0 !important; }
+        #wpcontent, #wpbody { margin-left: 0 !important; }
+        
         @media print {
             @page { margin: 0.5in 0.5in 0.75in 0.5in; }
             .page-break { page-break-after: always; }
             .manifest-section { page-break-before: always; }
             .manifest-section:first-child { page-break-before: auto; }
             .delivery-stop { page-break-inside: avoid; }
+            /* Extra insurance: hide WP elements in print */
+            #wpadminbar, #adminmenumain, #adminmenuback, #adminmenuwrap, 
+            .wp-toolbar, #wpfooter, .update-nag, .notice, .error { 
+                display: none !important; 
+            }
         }
         body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; position: relative; }
         h1 { font-size: 24pt; margin: 0 0 10px 0; }
@@ -5499,7 +5516,17 @@ function subsales_manifest_viewer_page() {
     // Delete transient after retrieval for security
     delete_transient( $manifest_key );
     
-    // Output the HTML directly (not wrapped in WordPress admin)
+    // Clear all output buffers to prevent WordPress from wrapping the HTML
+    while ( ob_get_level() > 0 ) {
+        ob_end_clean();
+    }
+    
+    // Send headers to prevent caching
+    nocache_headers();
+    
+    // Output the HTML directly as a standalone document
+    // This prevents WordPress admin wrapper from loading
+    header( 'Content-Type: text/html; charset=UTF-8' );
     echo $html;
     exit;
 }
