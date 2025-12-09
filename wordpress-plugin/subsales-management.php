@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: Complete fundraising/subsales order management system with embedded PWA for mobile order entry. Features multi-team support, address autocomplete with GPS enrichment, delivery manifest generation with route optimization, and comprehensive audit logging. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in Subsales → Settings.
- * Version: 2.2.1.49
+ * Version: 2.2.1.50
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6246,80 +6246,6 @@ function subsales_logs_page() {
     <div class="wrap subsales-logs-page">
         <h1>System Logs</h1>
         
-        <!-- Debug Diagnostics -->
-        <?php if ( isset( $_GET['diagnostics'] ) && $_GET['diagnostics'] === '1' ): ?>
-        <div class="notice notice-info" style="padding: 20px; margin: 20px 0;">
-            <h2>🔍 Debug System Diagnostics</h2>
-            
-            <h3>Option Values:</h3>
-            <table class="wp-list-table widefat" style="margin: 10px 0;">
-                <tr>
-                    <td><strong>subsales_debug_logging_enabled</strong></td>
-                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_enabled', 'NOT SET' ) ); ?></code></td>
-                </tr>
-                <tr>
-                    <td><strong>subsales_debug_logging_started</strong></td>
-                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_started', 'NOT SET' ) ); ?></code></td>
-                </tr>
-                <tr>
-                    <td><strong>Current Time</strong></td>
-                    <td><code><?php echo time(); ?></code> (<?php echo date( 'Y-m-d H:i:s', time() ); ?>)</td>
-                </tr>
-                <tr>
-                    <td><strong>Started Time</strong></td>
-                    <td><code><?php echo $debug_started; ?></code> 
-                        <?php if ( $debug_started ): ?>
-                            (<?php echo date( 'Y-m-d H:i:s', $debug_started ); ?>)
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <tr>
-                    <td><strong>Elapsed Seconds</strong></td>
-                    <td><code><?php echo $debug_started ? ( time() - $debug_started ) : 'N/A'; ?></code></td>
-                </tr>
-                <tr>
-                    <td><strong>Remaining Seconds</strong></td>
-                    <td><code><?php echo $debug_remaining; ?></code></td>
-                </tr>
-            </table>
-            
-            <h3>Calculated Values:</h3>
-            <pre><?php
-                echo "debug_enabled: " . var_export( $debug_enabled, true ) . "\n";
-                echo "debug_started: " . var_export( $debug_started, true ) . "\n";
-                echo "debug_remaining: " . var_export( $debug_remaining, true ) . "\n";
-                echo "24 hours in seconds: 86400\n";
-                if ( $debug_started ) {
-                    echo "Should expire at: " . date( 'Y-m-d H:i:s', $debug_started + 86400 ) . "\n";
-                }
-            ?></pre>
-            
-            <h3>Test Log Entry:</h3>
-            <?php
-                // Write a test log with DEBUG level
-                $test_time = time();
-                Subsales_Database::log( 'DEBUG', 'system', 'Diagnostics test log entry at ' . date('Y-m-d H:i:s', $test_time), array(
-                    'test_id' => $test_time,
-                    'debug_enabled' => $debug_enabled,
-                    'debug_started' => $debug_started
-                ), 'diagnostics' );
-                echo '<p style="color: green;">✓ Test DEBUG log written at ' . date('Y-m-d H:i:s', $test_time) . '</p>';
-            ?>
-            
-            <h3>Recent Logs from Database:</h3>
-            <?php
-                global $wpdb;
-                $logs_table = $wpdb->prefix . 'ss_logs';
-                $recent_logs = $wpdb->get_results( "SELECT * FROM {$logs_table} ORDER BY created_at DESC LIMIT 5", ARRAY_A );
-                echo '<pre>';
-                print_r( $recent_logs );
-                echo '</pre>';
-            ?>
-            
-            <p><a href="?page=subsales-logs" class="button">Back to Logs (without diagnostics)</a></p>
-        </div>
-        <?php endif; ?>
-        
         <!-- Debug Mode Toggle -->
         <div class="subsales-debug-toggle" style="background: #fff; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; border: 1px solid #ddd; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; padding: 15px; margin: 20px 0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -6331,7 +6257,6 @@ function subsales_logs_page() {
                             (<?php echo gmdate( 'H:i:s', $debug_remaining ); ?> remaining)
                         </span>
                     <?php endif; ?>
-                    <a href="?page=subsales-logs&diagnostics=1" class="button button-small" style="margin-left: 15px;">Run Diagnostics</a>
                 </div>
                 <button id="toggle-debug-btn" class="button button-<?php echo $debug_enabled ? 'secondary' : 'primary'; ?>">
                     <?php echo $debug_enabled ? 'Disable Debug Mode' : 'Enable Debug Mode'; ?>
