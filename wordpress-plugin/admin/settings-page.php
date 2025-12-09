@@ -862,34 +862,6 @@ function order_sync_settings_page() {
                 <td><?php echo PHP_VERSION; ?></td>
             </tr>
             <tr>
-                <th scope="row">PhpSpreadsheet</th>
-                <td>
-                    <?php
-                    $ps_version = null;
-                    // Try Composer InstalledVersions first (if available)
-                    if ( class_exists( '\\Composer\\InstalledVersions' ) ) {
-                        try {
-                            if ( method_exists( '\\Composer\\InstalledVersions', 'getPrettyVersion' ) ) {
-                                $ps_version = \Composer\InstalledVersions::getPrettyVersion( 'phpoffice/phpspreadsheet' );
-                            }
-                        } catch ( Exception $e ) {
-                            $ps_version = null;
-                        }
-                    }
-                    // Fallback: detect presence of the main class
-                    if ( ! $ps_version && class_exists( 'PhpOffice\\PhpSpreadsheet\\Spreadsheet' ) ) {
-                        $ps_version = 'installed';
-                    }
-
-                    if ( $ps_version ) {
-                        echo esc_html( $ps_version );
-                    } else {
-                        echo '<span style="color:red">Missing</span>';
-                    }
-                    ?>
-                </td>
-            </tr>
-            <tr>
                 <th scope="row">Database Tables</th>
                 <td>
                     <?php
@@ -904,27 +876,6 @@ function order_sync_settings_page() {
                     foreach ( $tables as $table => $name ) {
                         $exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table;
                         echo '<span style="color: ' . ( $exists ? 'green' : 'red' ) . ';">● ' . $name . '</span><br>';
-                    }
-                    ?>
-                </td>
-            </tr>
-            <tr>
-                <th scope="row">Database Schema</th>
-                <td>
-                    <p>Run this to update database constraints and fix legacy user data:</p>
-                    <form method="post" action="">
-                        <?php wp_nonce_field( 'subsales_migrate_db' ); ?>
-                        <button type="submit" name="run_db_migration" class="button button-primary">Run Database Migration</button>
-                    </form>
-                    <p class="description">This will: 1) Set default phones for users with NULL/empty phones, 2) Add NOT NULL constraint to phone, 3) Add UNIQUE constraint to phone, 4) Remove UNIQUE constraint from email.</p>
-                    <?php
-                    if ( isset( $_POST['run_db_migration'] ) ) {
-                        check_admin_referer( 'subsales_migrate_db' );
-                        if ( current_user_can( 'manage_options' ) ) {
-                            // Run the table creation function which includes migration logic
-                            order_sync_create_table();
-                            echo '<div class="notice notice-success inline" style="margin-top: 10px;"><p>Database migration completed successfully!</p></div>';
-                        }
                     }
                     ?>
                 </td>
