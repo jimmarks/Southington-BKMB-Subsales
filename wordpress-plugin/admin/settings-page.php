@@ -338,9 +338,9 @@ function order_sync_settings_page() {
                                 <fieldset>
                                     <label style="display: block; margin-bottom: 10px;">
                                         <input type="radio" name="login_mode" value="legacy" <?php checked( $login_mode, 'legacy' ); ?> />
-                                        <strong>Legacy Login (Team + Code)</strong>
+                                        <strong>Team Mode (Team + Code)</strong>
                                         <p class="description" style="margin-left: 24px; margin-top: 4px;">
-                                            Users enter a team name and access code to login. Original authentication method.
+                                            Users enter a team name and access code to login.
                                         </p>
                                     </label>
                                     <label style="display: block; margin-top: 10px;">
@@ -536,7 +536,7 @@ function order_sync_settings_page() {
                     
                     <?php
                     // Include the modern dashboard
-                    include plugin_dir_path( __FILE__ ) . 'admin/address-management-dashboard.php';
+                    include plugin_dir_path( dirname( __FILE__ ) ) . 'admin/address-management-dashboard.php';
                     ?>
                 </div>
 
