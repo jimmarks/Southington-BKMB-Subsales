@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Script to package the WordPress plugin into dist/subsales-management.zip
-# Does NOT auto-increment version - version must be manually set in subsales-management.php
+# Auto-increments patch version (e.g., 2.2.1.0 -> 2.2.1.1)
 # Usage: ./scripts/package-plugin.sh
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,11 +12,25 @@ PKG_NAME="subsales-management.zip"
 # Create the package at the repository root so it's always at: $ROOT_DIR/$PKG_NAME
 PKG_PATH="$ROOT_DIR/$PKG_NAME"
 
-## Get current version (no auto-increment)
+## Get current version and auto-increment patch
 echo "Checking current version..."
 CURRENT_VERSION=$(grep -m1 "^ \* Version:" "$PLUGIN_FILE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-echo "Packaging version: $CURRENT_VERSION"
-NEW_VERSION="$CURRENT_VERSION"
+echo "Current version: $CURRENT_VERSION"
+
+# Parse version components
+IFS='.' read -r MAJOR MINOR PATCH BUILD <<< "$CURRENT_VERSION"
+if [ -z "$BUILD" ]; then
+    BUILD=0
+fi
+
+# Increment patch version
+BUILD=$((BUILD + 1))
+NEW_VERSION="$MAJOR.$MINOR.$PATCH.$BUILD"
+echo "New version: $NEW_VERSION"
+
+# Update version in plugin file
+sed -i "s/^ \* Version: $CURRENT_VERSION/ * Version: $NEW_VERSION/" "$PLUGIN_FILE"
+echo "Updated plugin file to version $NEW_VERSION"
 
 ## Clean previous artifacts
 rm -rf "$ROOT_DIR/subsales-management" "$PKG_PATH"
@@ -25,6 +39,20 @@ rm -rf "$ROOT_DIR/subsales-management" "$PKG_PATH"
 cp -a "$PLUGIN_DIR" "$ROOT_DIR/subsales-management"
 # Remove any VCS metadata if present
 rm -rf "$ROOT_DIR/subsales-management/.git" || true
+
+# Remove vendor test files and development artifacts to reduce size
+if [ -d "$ROOT_DIR/subsales-management/vendor" ]; then
+    echo "Optimizing vendor directory..."
+    find "$ROOT_DIR/subsales-management/vendor" -type d -name "test" -o -name "tests" -o -name "Test" -o -name "Tests" | xargs rm -rf
+    find "$ROOT_DIR/subsales-management/vendor" -name "phpunit.xml*" -o -name ".gitattributes" -o -name ".gitignore" | xargs rm -f
+    
+    # Remove large font files from endroid/qr-code assets (16MB!) - we don't use labels
+    if [ -d "$ROOT_DIR/subsales-management/vendor/endroid/qr-code/assets" ]; then
+        echo "Removing unnecessary QR code assets (fonts)..."
+        rm -f "$ROOT_DIR/subsales-management/vendor/endroid/qr-code/assets/"*.otf
+        rm -f "$ROOT_DIR/subsales-management/vendor/endroid/qr-code/assets/"*.ttf
+    fi
+fi
 
 # Create zip at repo root
 ( cd "$ROOT_DIR" && zip -r "$PKG_NAME" subsales-management )

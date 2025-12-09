@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.0
+ * Version: 2.2.1.19
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -95,6 +95,9 @@ function subsales_activate() {
     subsales_register_route_rewrite();
     flush_rewrite_rules();
     
+    // Set flag to show rewrite flush notice (in case flush doesn't work immediately)
+    set_transient( 'subsales_needs_rewrite_flush', true, DAY_IN_SECONDS );
+    
     // Set activation flag for admin notice and onboarding
     set_transient( 'subsales_activated', true, 30 );
     // Use a dedicated transient to trigger the onboarding wizard once (checked by onboarding function)
@@ -121,6 +124,28 @@ function subsales_activate() {
 function subsales_deactivate() {
     // Nothing to do on deactivation
     // Data deletion preference is handled via modal before deactivation
+}
+
+/**
+ * Check version on admin_init and flush rewrites if version changed
+ * This ensures rewrite rules are updated when the plugin is updated
+ */
+add_action( 'admin_init', 'subsales_check_version_and_flush' );
+function subsales_check_version_and_flush() {
+    $saved_version = get_option( 'subsales_db_version' );
+    if ( $saved_version !== SUBSALES_VERSION ) {
+        // Register the route rewrite rules
+        subsales_register_route_rewrite();
+        // Flush rewrite rules to ensure new rules take effect
+        flush_rewrite_rules();
+        // Update saved version
+        update_option( 'subsales_db_version', SUBSALES_VERSION );
+        
+        subsales_log( 'INFO', 'system', 'Rewrite rules flushed after version update', array(
+            'old_version' => $saved_version,
+            'new_version' => SUBSALES_VERSION
+        ), 'admin' );
+    }
 }
 
 /**
@@ -359,6 +384,26 @@ function subsales_debug_mode_badge() {
     });
     </script>
     <?php
+}
+
+// Add admin notice to flush rewrite rules if needed
+add_action( 'admin_notices', 'subsales_route_rewrite_notice' );
+function subsales_route_rewrite_notice() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    
+    // Check if we need to show the flush notice
+    if ( get_transient( 'subsales_needs_rewrite_flush' ) ) {
+        ?>
+        <div class="notice notice-warning is-dismissible">
+            <p><strong>Subsales Management:</strong> Route QR codes may not work until you flush rewrite rules. 
+            <a href="<?php echo admin_url( 'options-permalink.php' ); ?>">Visit Permalinks Settings</a> and click "Save Changes" (no changes needed).</p>
+        </div>
+        <?php
+        // Clear the transient after showing once
+        delete_transient( 'subsales_needs_rewrite_flush' );
+    }
 }
 
 // Auto-regenerate ZIP index on admin_init if missing but ZIP files exist
@@ -4756,7 +4801,9 @@ add_action( 'init', 'subsales_serve_portal_assets', 0 );
 // Register rewrite rules for delivery route QR codes
 add_action( 'init', 'subsales_register_route_rewrite' );
 function subsales_register_route_rewrite() {
-    add_rewrite_rule( '^route/([^/]+)/?$', 'index.php?subsales_route=$1', 'top' );
+    // Pattern captures base64 string including padding (=) characters
+    // Use $matches[1] to capture the base64 data
+    add_rewrite_rule( '^route/([A-Za-z0-9+/=]+)/?$', 'index.php?subsales_route=$matches[1]', 'top' );
 }
 
 // Add query var for route handler
@@ -4774,6 +4821,9 @@ function subsales_handle_route_page() {
     if ( empty( $route_data ) ) {
         return; // Not a route request
     }
+    
+    // Strip any trailing slashes WordPress may have added, but keep = padding for base64
+    $route_data = rtrim( $route_data, '/' );
     
     // Decode the route data (base64-encoded JSON)
     $decoded = base64_decode( $route_data, true );

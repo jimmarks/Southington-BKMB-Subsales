@@ -255,23 +255,23 @@ function order_sync_delivery_page() {
  * @param int $size QR code size in pixels
  * @return string Data URI for embedding in HTML, or empty string on failure
  */
-function subsales_generate_qr_code( $url, $size = 300 ) {
+function subsales_generate_qr_code( $url, $size = 800 ) {
     // Check if endroid QR code library is available
     if ( ! class_exists( 'Endroid\QrCode\QrCode' ) ) {
         return ''; // Library not loaded
     }
     
     try {
-        // Get branding options (for future: logo and colors from admin settings)
-        // For now, use modern styling with defaults
+        // Generate crisp QR code with no block rounding
+        // Using higher error correction and larger size for quality
         
         $qrCode = \Endroid\QrCode\QrCode::create( $url )
             ->setSize( $size )
-            ->setMargin( 10 )
+            ->setMargin( 20 )
             ->setEncoding( new \Endroid\QrCode\Encoding\Encoding( 'UTF-8' ) )
             ->setErrorCorrectionLevel( new \Endroid\QrCode\ErrorCorrectionLevel\ErrorCorrectionLevelHigh() )
-            ->setRoundBlockSizeMode( new \Endroid\QrCode\RoundBlockSizeMode\RoundBlockSizeModeMargin() )
-            ->setForegroundColor( new \Endroid\QrCode\Color\Color( 0, 115, 170 ) ) // Brand blue
+            ->setRoundBlockSizeMode( new \Endroid\QrCode\RoundBlockSizeMode\RoundBlockSizeModeNone() )
+            ->setForegroundColor( new \Endroid\QrCode\Color\Color( 0, 0, 0 ) ) // Pure black for maximum contrast
             ->setBackgroundColor( new \Endroid\QrCode\Color\Color( 255, 255, 255 ) );
         
         // Future: Add logo support
@@ -306,12 +306,16 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     $display_date = ! empty( $delivery_date ) ? date( 'F j, Y', strtotime( $delivery_date ) ) : date( 'F j, Y' );
     $total_addresses = 0;
     
+    // Get the URL to the admin CSS file
+    $css_url = plugin_dir_url( dirname( __FILE__ ) ) . 'assets/css/admin-dashboard.css';
+    
     $html = '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Route QR Codes - ' . $display_date . '</title>
+    <link rel="stylesheet" href="' . esc_url( $css_url ) . '" />
     <style>
         @media print {
             @page { margin: 0.5in; }
@@ -320,10 +324,15 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
         
         body {
             font-family: Arial, Helvetica, sans-serif;
-            max-width: 8.5in;
-            margin: 0 auto;
+            margin: 0;
             padding: 20px;
-            background: white;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
         }
         
         .header {
@@ -345,79 +354,10 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
             margin: 5px 0;
         }
         
-        .header .instructions {
-            font-size: 11pt;
-            color: #999;
-            margin-top: 10px;
-            font-style: italic;
-        }
-        
-        .route-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 30px;
-            margin-bottom: 40px;
-        }
-        
-        .route-card {
-            border: 2px solid #0073aa;
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        .route-title {
-            font-size: 20pt;
-            font-weight: bold;
-            margin-bottom: 8px;
-            color: #0073aa;
-        }
-        
-        .route-count {
-            font-size: 12pt;
-            color: #666;
-            margin-bottom: 15px;
-        }
-        
-        .qr-container {
-            margin: 15px 0;
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-            display: inline-block;
-        }
-        
-        .qr-container img {
-            display: block;
-            width: 200px;
-            height: 200px;
-        }
-        
-        .scan-hint {
-            font-size: 9pt;
-            color: #999;
-            margin-top: 10px;
-            font-style: italic;
-        }
-        
-        .address-preview {
-            text-align: left;
-            font-size: 9pt;
-            line-height: 1.4;
-            max-height: 120px;
-            overflow-y: auto;
-            background: white;
-            padding: 10px;
-            border-radius: 6px;
-            margin-top: 12px;
-            border-left: 3px solid #0073aa;
-        }
-        
-        .address-preview-item {
-            padding: 3px 0;
-            color: #333;
+        @media print {
+            body {
+                background: white;
+            }
         }
         
         .footer-info {
@@ -431,13 +371,13 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>🚚 Delivery Route QR Codes</h1>
-        <div class="date"><strong>Delivery Date:</strong> ' . $display_date . '</div>
-        <div class="instructions">Scan QR code with phone camera to open route in maps app</div>
-    </div>
-    
-    <div class="route-grid">';
+    <div class="container">
+        <div class="header">
+            <h1>🚚 Delivery Route QR Codes</h1>
+            <div class="date"><strong>Delivery Date:</strong> ' . $display_date . '</div>
+        </div>
+        
+        <div class="route-grid">';
     
     // Generate QR code for each route
     foreach ( $all_routes as $idx => $route_info ) {
@@ -454,10 +394,11 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
         );
         
         $encoded = base64_encode( json_encode( $route_data ) );
-        $route_url = home_url( '/route/' . $encoded );
+        // Build URL without trailing slash to avoid issues with base64 padding
+        $route_url = untrailingslashit( home_url() ) . '/route/' . $encoded;
         
-        // Generate QR code
-        $qr_data_uri = subsales_generate_qr_code( $route_url, 200 );
+        // Generate QR code at very high resolution (800px) for crisp display
+        $qr_data_uri = subsales_generate_qr_code( $route_url, 800 );
         
         $html .= '<div class="route-card">';
         $html .= '<div class="route-title">Route ' . $route_number . '</div>';
@@ -471,18 +412,6 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
             $html .= '<div style="color: #d63031; padding: 20px;">QR Code generation failed</div>';
         }
         
-        $html .= '<div class="scan-hint">Point camera at code to open route</div>';
-        
-        // Address preview
-        $html .= '<div class="address-preview">';
-        foreach ( array_slice( $addresses, 0, 5 ) as $i => $addr ) {
-            $html .= '<div class="address-preview-item">' . ( $i + 1 ) . '. ' . htmlspecialchars( $addr, ENT_QUOTES, 'UTF-8' ) . '</div>';
-        }
-        if ( $address_count > 5 ) {
-            $html .= '<div class="address-preview-item" style="color: #999;">... and ' . ( $address_count - 5 ) . ' more</div>';
-        }
-        $html .= '</div>';
-        
         $html .= '</div>'; // end route-card
     }
     
@@ -493,6 +422,7 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     $html .= 'Total: ' . $total_addresses . ' addresses across ' . count( $all_routes ) . ' route' . ( count( $all_routes ) !== 1 ? 's' : '' );
     $html .= '</div>';
     
+    $html .= '</div>'; // end container
     $html .= '</body></html>';
     
     return $html;

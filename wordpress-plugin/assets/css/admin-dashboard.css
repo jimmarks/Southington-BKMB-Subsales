@@ -515,3 +515,115 @@
   border-top: 1px solid #dcdcde; 
 }
 
+/* QR Code Grid Layout */
+.route-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 40px;
+}
+
+@media screen and (max-width: 1400px) {
+    .route-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+@media screen and (max-width: 1000px) {
+    .route-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media screen and (max-width: 600px) {
+    .route-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media print {
+    .route-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+    }
+}
+
+/* ========================================
+   DELIVERY QR CODE PAGE STYLES
+   ======================================== */
+
+/* QR Code Grid Layout - 4 columns for print */
+.route-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 40px;
+    width: 100%;
+}
+
+@media print {
+    .route-grid {
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+    }
+}
+
+.route-card {
+    border: 3px solid #0073aa;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 280px;
+}
+
+@media print {
+    .route-card {
+        page-break-inside: avoid;
+        box-shadow: none;
+        min-height: auto;
+    }
+}
+
+.route-title {
+    font-size: 18pt;
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #0073aa;
+}
+
+.route-count {
+    font-size: 11pt;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.qr-container {
+    margin: 10px 0;
+    padding: 0;
+    background: white;
+    display: inline-block;
+}
+
+.qr-container img {
+    display: block;
+    width: 220px;
+    height: 220px;
+    max-width: 220px;
+    max-height: 220px;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+}
+
+@media print {
+    .qr-container img {
+        width: 200px;
+        height: 200px;
+    }
+}
