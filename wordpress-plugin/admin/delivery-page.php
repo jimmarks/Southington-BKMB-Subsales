@@ -316,61 +316,8 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Route QR Codes - ' . $display_date . '</title>
     <link rel="stylesheet" href="' . esc_url( $css_url ) . '" />
-    <style>
-        @media print {
-            @page { margin: 0.5in; }
-            .page-break { page-break-after: always; }
-        }
-        
-        body {
-            font-family: Arial, Helvetica, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        
-        .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            width: 100%;
-        }
-        
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-            padding-bottom: 15px;
-            border-bottom: 3px solid #0073aa;
-        }
-        
-        .header h1 {
-            font-size: 28pt;
-            margin: 0 0 10px 0;
-            color: #0073aa;
-        }
-        
-        .header .date {
-            font-size: 14pt;
-            color: #666;
-            margin: 5px 0;
-        }
-        
-        @media print {
-            body {
-                background: white;
-            }
-        }
-        
-        .footer-info {
-            text-align: center;
-            color: #999;
-            font-size: 10pt;
-            margin-top: 30px;
-            padding-top: 15px;
-            border-top: 1px solid #ddd;
-        }
-    </style>
 </head>
-<body>
+<body class="subsales-qr-viewer">
     <div class="container">
         <div class="header">
             <h1>🚚 Delivery Route QR Codes</h1>
