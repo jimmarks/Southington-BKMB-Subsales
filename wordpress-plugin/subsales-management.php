@@ -64,6 +64,8 @@ Subsales_PWA::init();
 // Initialize Orders
 Subsales_Orders::init();
 
+// Early intercept for manifest viewer to prevent WordPress admin wrapper
+add_action( 'admin_init', 'subsales_intercept_manifest_viewer', 1 );
 
 // Activation/Deactivation hooks
 register_activation_hook( __FILE__, 'subsales_activate' );
@@ -5495,8 +5497,14 @@ function subsales_address_extracts_page() {
 // Admin Delivery page - Moved to admin/delivery-page.php
 require_once SUBSALES_PLUGIN_PATH . 'admin/delivery-page.php';
 
-// Manifest viewer page (hidden, accessed via transient key)
-function subsales_manifest_viewer_page() {
+// Early intercept function to catch manifest viewer requests before WordPress admin loads
+function subsales_intercept_manifest_viewer() {
+    // Check if this is a manifest viewer request
+    if ( ! isset( $_GET['page'] ) || $_GET['page'] !== 'subsales-manifest-viewer' ) {
+        return;
+    }
+    
+    // Permission check
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( 'Insufficient permissions' );
     }
@@ -5521,15 +5529,24 @@ function subsales_manifest_viewer_page() {
         ob_end_clean();
     }
     
-    // Send headers to prevent caching
+    // Send headers to prevent caching and set content type
     nocache_headers();
-    
-    // Output the HTML directly as a standalone document
-    // This prevents WordPress admin wrapper from loading
     header( 'Content-Type: text/html; charset=UTF-8' );
+    
+    // Output the standalone HTML document
     echo $html;
+    
+    // Exit immediately to prevent WordPress from rendering admin interface
     exit;
 }
+
+// Manifest viewer page (kept for menu registration, but actual output handled by early intercept)
+function subsales_manifest_viewer_page() {
+    // This function is now just a placeholder since the intercept handles everything
+    // If we somehow get here, show an error
+    echo '<div class="wrap"><h1>Manifest Viewer</h1><p>Please access manifests through the delivery page.</p></div>';
+}
+
 
 // Handle generate delivery export (admin POST)
 add_action( 'admin_post_subsales_generate_delivery', 'order_sync_handle_generate_delivery' );
