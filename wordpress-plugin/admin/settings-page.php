@@ -870,7 +870,12 @@ function order_sync_settings_page() {
                         $wpdb->prefix . 'ss_orders' => 'Orders',
                         $wpdb->prefix . 'ss_teams' => 'Teams',
                         $wpdb->prefix . 'ss_team_members' => 'Team Members',
-                        $wpdb->prefix . 'ss_user_teams' => 'User-Team Assignments'
+                        $wpdb->prefix . 'ss_user_teams' => 'User-Team Assignments',
+                        $wpdb->prefix . 'ss_edit_history' => 'Order Edit History',
+                        $wpdb->prefix . 'ss_logs' => 'System Logs',
+                        $wpdb->prefix . 'ss_pwa_sessions' => 'PWA Sessions',
+                        $wpdb->prefix . 'ss_pwa_heartbeats' => 'PWA Heartbeats',
+                        $wpdb->prefix . 'ss_addresses' => 'Address Lookup'
                     );
                     
                     foreach ( $tables as $table => $name ) {
