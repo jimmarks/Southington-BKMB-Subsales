@@ -38,15 +38,8 @@
                     this.debugEnabled = data.debugLoggingEnabled || data.debug_logging_enabled || false;
                     this.initialized = true;
 
-                    console.log('[PWA Logger] Initialized:', {
-                        debugEnabled: this.debugEnabled,
-                        apiBase: this.apiBase,
-                        hasTeamName: !!this.teamName,
-                        hasUserName: !!this.userName
-                    });
-
                     if (this.debugEnabled) {
-                        console.log('[PWA Logger] ✓ Debug logging ENABLED - All interactions will be logged');
+
                         this.log('system', 'PWA Logger initialized', {
                             user_agent: navigator.userAgent,
                             online: navigator.onLine,
@@ -54,7 +47,7 @@
                             has_auth: !!(this.teamName && this.userName)
                         });
                     } else {
-                        console.log('[PWA Logger] ✗ Debug logging DISABLED - Only errors will be logged');
+
                     }
                 } else {
                     console.warn('[PWA Logger] Failed to check debug status, HTTP', response.status);
@@ -73,13 +66,7 @@
             this.teamName = teamName || this.teamName;
             this.userName = userName || this.userName;
             this.sessionId = sessionId || this.sessionId;
-            
-            console.log('[PWA Logger] Credentials updated:', {
-                teamName: this.teamName,
-                userName: this.userName,
-                hasSessionId: !!this.sessionId
-            });
-            
+
             if (this.debugEnabled) {
                 this.log('system', 'PWA Logger credentials updated after login', {
                     team: this.teamName,
@@ -127,7 +114,7 @@
                 });
 
                 // Also log to console for immediate visibility
-                console.log(`[PWA] ${category}: ${message}`, context);
+
             } catch (error) {
                 console.error('[PWA Logger] Log error:', error);
             }
@@ -247,7 +234,6 @@
                 }
             });
 
-            console.log('[PWA Logger] UI instrumentation enabled');
         }
     };
 

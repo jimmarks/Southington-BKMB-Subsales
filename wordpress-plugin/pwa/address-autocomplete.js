@@ -5,7 +5,7 @@
 // - Renders a minimal suggestion dropdown and writes selected label to #address
 
 (function(){
-  console.log('subsalesNearby: debug build initialized');
+
   const DB_NAME = 'subsales-cache-v1';
   const STORE = 'nearby';
   const CACHE_NAME = 'subsales-nearby-cache';
@@ -54,8 +54,7 @@
 
   async function fetchNearby(lat,lng,radius=500,max=50){
     const key = cacheKey(lat,lng,radius,max);
-    console.log('subsalesNearby: fetchNearby called', { lat, lng, radius, max, key });
-    
+
     // Log search initiation
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'Nearby address search initiated', {
@@ -70,7 +69,7 @@
     try{
       const cached = await idbGet(key);
       if(cached && cached.ts && (Date.now() - cached.ts) < CACHE_TTL_MS){
-        console.log('subsalesNearby: cache hit (IndexedDB)', { key, ageMs: Date.now()-cached.ts, count: (cached.results||[]).length });
+
         if(window.PWALogger && window.PWALogger.debugEnabled){
           window.PWALogger.log('address', 'Address search: cache hit', {
             cache_type: 'IndexedDB',
@@ -83,12 +82,12 @@
     }catch(e){ console.warn('subsalesNearby: idbGet error', e); }
 
     const url = `/wp-json/subsales/v1/nearby?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&r=${encodeURIComponent(radius)}&max=${encodeURIComponent(max)}`;
-    console.log('subsalesNearby: fetching from server', url);
+
     try{
       const resp = await fetch(url, { cache: 'no-store' });
       if(!resp.ok) throw new Error('network ' + resp.status);
       const json = await resp.json();
-      console.log('subsalesNearby: server returned', (json && json.results && json.results.length) || 0, 'results');
+
       
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('address', 'Address search: server response', {
@@ -112,7 +111,7 @@
         const cachedResp = await c.match(url);
         if(cachedResp){ 
           const j = await cachedResp.json(); 
-          console.log('subsalesNearby: cache API hit', (j && j.results && j.results.length)||0);
+
           if(window.PWALogger && window.PWALogger.debugEnabled){
             window.PWALogger.log('address', 'Address search: Cache API fallback', {
               results_count: (j && j.results && j.results.length)||0
@@ -133,7 +132,7 @@
     zip = (''+zip).trim();
     if(!/^[0-9]{5}$/.test(zip)) throw new Error('invalid zip');
     if(ZIP_CACHE[zip]){ 
-      console.log('subsalesNearby: zip cache hit', zip);
+
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('address', 'ZIP data loaded from memory cache', {
           zip: zip,
@@ -143,8 +142,7 @@
       return ZIP_CACHE[zip]; 
     }
     const url = ZIP_BASE_URL + zip + '.json';
-    console.log('subsalesNearby: loading zip data', url);
-    
+
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'Loading ZIP data', {
         zip: zip,
@@ -160,8 +158,7 @@
       ZIP_CACHE[zip] = arr;
       // also persist small index in idb for offline
       try{ await idbPut('zip_' + zip, { ts: Date.now(), results: arr }); }catch(e){ console.warn('subsalesNearby: idb store zip failed', e); }
-      console.log('subsalesNearby: loaded', arr.length, 'records for zip', zip);
-      
+
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('address', 'ZIP data loaded successfully', {
           zip: zip,
@@ -181,7 +178,7 @@
         const cached = await idbGet('zip_' + zip); 
         if(cached && cached.results){ 
           ZIP_CACHE[zip] = cached.results; 
-          console.log('subsalesNearby: loaded zip from idb', zip);
+
           if(window.PWALogger && window.PWALogger.debugEnabled){
             window.PWALogger.log('address', 'ZIP data loaded from IndexedDB fallback', {
               zip: zip,
@@ -218,25 +215,23 @@
 
   // Prefetch a list of zips in the background and store them in IndexedDB + memory cache.
   async function prefetchAllZips(indexData){
-    console.log('[prefetchAllZips] Called with indexData:', indexData);
-    
+
     // Handle both formats: array of zips or object with {zips: [], baseUrl: ''}
     let zipList = [];
     if(Array.isArray(indexData)){
       zipList = indexData;
-      console.log('[prefetchAllZips] indexData is array, length:', zipList.length);
+
     } else if(indexData && typeof indexData === 'object'){
       if(indexData.baseUrl) ZIP_BASE_URL = indexData.baseUrl;
       zipList = indexData.zips || [];
-      console.log('[prefetchAllZips] indexData is object, zips:', zipList, 'baseUrl:', indexData.baseUrl);
+
     }
     
     if(!Array.isArray(zipList) || zipList.length === 0) {
       console.warn('[prefetchAllZips] No ZIPs to load! zipList:', zipList);
       return;
     }
-    
-    console.log('subsalesNearby: prefetching ALL zips NOW (blocking)', zipList, 'from', ZIP_BASE_URL);
+
     
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'ZIP prefetch started', {
@@ -258,8 +253,6 @@
       try{ 
         await loadZipData(z);
         successCount++;
-        // Log progress
-        console.log(`subsalesNearby: loaded ${successCount}/${zipList.length} - ${z} (${Object.keys(ZIP_CACHE).length} ZIPs in cache)`);
       }
       catch(e){ 
         console.warn('subsalesNearby: prefetch zip failed', z, e);
@@ -268,9 +261,7 @@
       // Small delay between loads to avoid overwhelming the server
       if(i < zipList.length - 1) await new Promise(r=>setTimeout(r, 100));
     }
-    
-    console.log(`subsalesNearby: ALL ZIPs loaded! ${successCount} successful, ${failCount} failed`);
-    
+
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'ZIP prefetch completed', {
         total_zips: zipList.length,
@@ -300,12 +291,12 @@
       }
     }
     const url = (base.endsWith('/') ? base : base + '/') + 'global-suggestions.json';
-    console.log('subsalesNearby: fetchBroadRecommendations loading', url);
+
     try{
       const r = await fetch(url, { cache: 'no-store' });
       if(!r.ok) throw new Error('network '+r.status);
       const j = await r.json();
-      console.log('subsalesNearby: broad recommendations', (j && j.length) || 0);
+
       return j || [];
     }catch(e){ console.warn('subsalesNearby: broad fetch failed', e); return []; }
   }
@@ -401,8 +392,7 @@
     return streetOut || label || '';
   }
   function renderDropdown(inputEl, items){
-    console.log('subsalesNearby: renderDropdown', { items: items ? items.length : 0 });
-    
+
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'Address suggestions displayed', {
         suggestions_count: items ? items.length : 0
@@ -440,8 +430,7 @@
       row.id = 'subsales-option-' + idx;
       // unify selection logic so we can trigger it from pointer/touch/click
       const doSelect = ()=>{
-        console.log('subsalesNearby: suggestion selected', it);
-        
+
         if(window.PWALogger && window.PWALogger.debugEnabled){
           window.PWALogger.log('address', 'Address suggestion selected', {
             selected_address: normalizeAddress(it),
@@ -571,8 +560,7 @@
       inputTimer = setTimeout(async ()=>{
         // throttle repeated requests
         const now = Date.now(); if(now - lastFetchTs < 1000) return; lastFetchTs = now;
-        console.log('subsalesNearby: input triggered fetch for query', q);
-        
+
         if(window.PWALogger && window.PWALogger.debugEnabled){
           window.PWALogger.log('address', 'Address input search triggered', {
             query_length: q.length,
@@ -620,14 +608,14 @@
           for(const z of Object.keys(ZIP_CACHE)){ 
             pool.push(...(ZIP_CACHE[z]||[])); 
           }
-          console.log('subsalesNearby: searching', pool.length, 'addresses from', Object.keys(ZIP_CACHE).length, 'cached ZIPs');
+
         }
         
         // If no memory cache, try IndexedDB
         if(pool.length === 0){ 
           try{ 
             pool = await idbGetAllZips(); 
-            console.log('subsalesNearby: searching', pool.length, 'addresses from IndexedDB');
+
           }catch(e){ console.warn('subsalesNearby: idb get all zips failed', e); } 
         }
         
@@ -715,7 +703,7 @@
     btn.setAttribute('aria-label','Switch to manual address entry');
     
     btn.addEventListener('click', ()=>{
-      console.log('subsalesNearby: manual mode activated');
+
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('address', 'Manual address entry mode activated');
       }
@@ -765,8 +753,7 @@
         alert('Location services not available in your browser');
         return;
       }
-      
-      console.log('subsalesNearby: location button clicked');
+
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('address', 'Use my location clicked');
       }
@@ -777,8 +764,7 @@
       navigator.geolocation.getCurrentPosition(async (position)=>{
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
-        
-        console.log('subsalesNearby: got coordinates', lat, lng);
+
         if(window.PWALogger && window.PWALogger.debugEnabled){
           window.PWALogger.log('address', 'GPS coordinates obtained', {lat, lng});
         }
@@ -794,7 +780,7 @@
             if(data.results && data.results[0]){
               const addr = data.results[0].formatted_address;
               inputEl.value = addr;
-              console.log('subsalesNearby: reverse geocoded to', addr);
+
               if(window.PWALogger && window.PWALogger.debugEnabled){
                 window.PWALogger.log('address', 'Address filled from GPS', {address: addr});
               }
@@ -840,7 +826,7 @@
       btn.style.cursor = 'pointer';
       btn.setAttribute('aria-label','Load address index for offline suggestions');
       btn.addEventListener('click', async ()=>{
-        console.log('subsalesNearby: load address data clicked');
+
         btn.disabled = true; btn.innerText = 'Loading…';
         
         // Try API endpoint first, fallback to static file
@@ -876,12 +862,10 @@
       const lastPrefetchSession = sessionStorage.getItem('zipPrefetchSession');
       
       if (sessionId && lastPrefetchSession === sessionId) {
-        console.log('subsalesNearby: ZIPs already prefetched this session, skipping...');
+
         return; // Already prefetched this session
       }
-      
-      console.log('subsalesNearby: Manual prefetch triggered - loading ALL served ZIPs now...');
-      
+
       // Determine API URL or fallback to static file
       const apiUrl = '/wp-json/order-manager/v1/zip-index?cb=' + Date.now();
       const staticUrl = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.pluginBase ? window.SUBSALES_PWA_CONFIG.pluginBase : './') + 'zip-index.json';
@@ -901,14 +885,13 @@
           return;
         }
         const indexData = await resp.json();
-        console.log('subsalesNearby: zip-index.json loaded, loading all ZIPs now...');
+
         await prefetchAllZips(indexData); // Wait for ALL ZIPs to load
-        console.log('subsalesNearby: ALL ZIPs loaded and ready for use!');
-        
+
         // Mark as prefetched for this session
         if (sessionId) {
           sessionStorage.setItem('zipPrefetchSession', sessionId);
-          console.log('subsalesNearby: Marked ZIPs as prefetched for session:', sessionId);
+
         }
       }catch(e){ 
         console.warn('subsalesNearby: manual prefetch failed', e); 
@@ -918,7 +901,7 @@
   };
   
   // Notify app.js that address autocomplete is ready
-  console.log('subsalesNearby: Module loaded and ready');
+
   if(typeof window.dispatchEvent === 'function'){
     window.dispatchEvent(new CustomEvent('subsalesNearbyReady'));
   }

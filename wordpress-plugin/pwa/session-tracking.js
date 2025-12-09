@@ -48,26 +48,17 @@
         timestamp: new Date().toISOString()
       }
     };
-    
-    console.log('[Session] Starting session tracking...', {
-      url: url,
-      sessionId: sessionId,
-      userName: payload.userName,
-      teamName: payload.teamName
-    });
-    
+
     try {
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
-      console.log('[Session] Response status:', resp.status);
-      
+
       if (resp.ok) {
         const result = await resp.json();
-        console.log('[Session] Started successfully:', sessionId, result);
+
         return true;
       } else {
         const errorText = await resp.text();
@@ -108,7 +99,7 @@
         };
       } catch (error) {
         // Silently fail - GPS is optional
-        console.log('GPS not available for heartbeat:', error.message);
+
       }
     }
     
@@ -147,7 +138,7 @@
           });
         }
       } else {
-        console.log('[Session] Heartbeat sent for session:', sessionId);
+
       }
     } catch(e) {
       console.error('[Session] Heartbeat error:', e);
@@ -174,7 +165,7 @@
       });
       
       if (resp.ok) {
-        console.log('[Session] Ended:', sessionId);
+
         sessionStorage.removeItem('pwa_session_id');
         return true;
       } else {
@@ -223,8 +214,7 @@
     if (window._pwaHeartbeatInterval) {
       clearInterval(window._pwaHeartbeatInterval);
     }
-    
-    console.log('[Session] Starting auto-heartbeat (30s interval)');
+
     
     window._pwaHeartbeatInterval = setInterval(() => {
       sendHeartbeat({ type: 'auto' });
@@ -282,6 +272,5 @@
     stopAutoHeartbeat: stopAutoHeartbeat,
     getSessionId: getSessionId
   };
-  
-  console.log('[Session Tracking] Module loaded');
+
 })();

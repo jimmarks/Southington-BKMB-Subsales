@@ -3,26 +3,21 @@
   'use strict';
   
   // COMPREHENSIVE DEBUG LOGGING
-  console.log('===== SUBSALES PWA LOADED =====');
-  console.log('Timestamp:', new Date().toISOString());
-  console.log('User Agent:', navigator.userAgent);
-  console.log('Online Status:', navigator.onLine);
-  
+
+
+
   // Prefer plugin-localized settings (PHP uses SUBSALES_PWA_CONFIG), fall back to legacy BKMB_PWA_CONFIG
   const cfg = window.SUBSALES_PWA_CONFIG || window.BKMB_PWA_CONFIG || {};
-  console.log('Config loaded:', cfg);
-  
+
   const apiBase = (cfg.apiBase || cfg.api_base || localStorage.getItem('API_BASE_URL') || '').replace(/\/+$/, '');
   const pluginBase = cfg.pluginBase || cfg.plugin_url || '';
   const portalBase = cfg.portalBase || '';
   const googleMapsApiKey = cfg.googleMapsApiKey || cfg.google_maps_api_key || '';
   const brandName = cfg.brandName || cfg.brand_name || 'Subsales';
   const brandingImage = cfg.brandingImage || cfg.branding_image || '';
-  
-  console.log('API Base:', apiBase);
-  console.log('Plugin Base:', pluginBase);
-  console.log('Brand Name:', brandName);
-  
+
+
+
   // Global error handler for logging
   window.addEventListener('error', function(event) {
     if (window.PWALogger) {
@@ -49,18 +44,17 @@
   let addressAutocompleteReady = false;
   let addressAutocompleteLoading = false;
   window.addEventListener('subsalesNearbyReady', function() {
-    console.log('[Prefetch] Address autocomplete module is ready');
+
     addressAutocompleteReady = true;
   });
   
   // Load address autocomplete module dynamically (only after login)
   function loadAddressAutocomplete() {
     if (addressAutocompleteReady || addressAutocompleteLoading) {
-      console.log('[LoadModule] Address autocomplete already loaded/loading');
+
       return Promise.resolve();
     }
-    
-    console.log('[LoadModule] Loading address-autocomplete.js...');
+
     addressAutocompleteLoading = true;
     
     return new Promise((resolve, reject) => {
@@ -72,7 +66,7 @@
         const script = document.createElement('script');
         script.src = base + 'address-autocomplete.js';
         script.onload = () => {
-          console.log('[LoadModule] address-autocomplete.js loaded successfully');
+
           resolve();
         };
         script.onerror = (e) => {
@@ -884,8 +878,7 @@
       };
       
       // Log to console
-      console.log('[PWA Install Analytics]', event);
-      
+
       // Store in localStorage for later sync
       const analytics = JSON.parse(localStorage.getItem('pwa_install_analytics') || '[]');
       analytics.push(event);
@@ -930,8 +923,7 @@
       deferredPrompt = e;
       // Expose to window for debugging
       try { window._deferredPWAPrompt = e; } catch(ex) {}
-      
-      console.log('PWA beforeinstallprompt event captured');
+
       trackInstallEvent('beforeinstallprompt_captured');
       
       // Show prompt if conditions met
@@ -944,7 +936,7 @@
   // Listen for successful app install
   window.addEventListener('appinstalled', (e) => {
     try {
-      console.log('PWA was installed successfully');
+
       localStorage.setItem('pwa_installed', 'true');
       trackInstallEvent('app_installed', { method: 'native' });
       
@@ -1004,7 +996,7 @@
           });
           
           alert('Install not currently available. This may be because:\n• Already installed\n• Not running on HTTPS\n• Browser doesn\'t support PWA installation\n\nCheck console for details.');
-          console.log('PWA install diagnostics', { protocol, manifestHref, swRegistrations: swRegs });
+
           return;
         }
         
@@ -1017,10 +1009,10 @@
         trackInstallEvent('install_user_choice', { outcome: choiceResult.outcome });
         
         if (choiceResult.outcome === 'accepted') {
-          console.log('User accepted the install prompt');
+
           // Note: appinstalled event will handle success UI
         } else {
-          console.log('User dismissed the install prompt');
+
         }
         
         // Clear deferred prompt
@@ -1041,7 +1033,7 @@
         localStorage.setItem('pwa_install_dismissed', 'true');
         trackInstallEvent('install_dismissed');
         hideInstallPrompt();
-        console.log('Install prompt dismissed by user');
+
       } catch(err) {
         console.warn('installDismissBtn click error', err);
       }
@@ -1367,14 +1359,14 @@
   revealAuthControls();
   
   // Load address autocomplete module and prefetch (background - non-blocking)
-  console.log('[Team Member] Loading address autocomplete module...');
+
   loadAddressAutocomplete().then(() => {
-    console.log('[Team Member] Module loaded, starting prefetch...');
+
     if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
       return window.subsalesNearby.prefetch();
     }
   }).then(() => {
-    console.log('[Team Member] Address ZIP prefetch completed');
+
   }).catch(e => {
     console.warn('[Team Member] Module load/prefetch failed:', e);
   });
@@ -1484,8 +1476,7 @@
   const userLoginBtn = qs('#userLoginBtn');
   if (userLoginBtn) {
     userLoginBtn.addEventListener('click', async () => {
-      console.log('===== USER LOGIN BUTTON CLICKED =====');
-      
+
       // Log login attempt
       if (window.PWALogger) {
         window.PWALogger.log('auth', 'User login button clicked', {
@@ -1495,7 +1486,7 @@
       
       const name = (qs('#userName') && qs('#userName').value.trim()) || '';
       const phone = (qs('#userPhone') && qs('#userPhone').value.trim()) || '';
-      console.log('Name:', name, 'Phone:', phone ? phone.substring(0,3) + '***' : '(empty)');
+
       
       if (!name || !phone) {
         console.warn('Name or phone missing');
@@ -1510,7 +1501,7 @@
       }
       
       try {
-        console.log('Calling user auth API...');
+
         // Call server to validate user
         const url = apiBase ? (apiBase + '/auth/login') : '/wp-json/order-manager/v1/auth/login';
         const resp = await fetch(url, {
@@ -1518,9 +1509,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, phone: phoneDigits })
         });
-        
-        console.log('Auth response status:', resp.status);
-        
+
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
           console.error('Login failed:', err);
@@ -1528,9 +1517,8 @@
         }
         
         const data = await resp.json();
-        console.log('Login successful, user data:', data.user);
-        console.log('Teams:', data.teams);
-        
+
+
         // Store user session data
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
@@ -1547,10 +1535,8 @@
         
         // Get salesMode to determine team vs individual behavior
         const salesMode = localStorage.getItem('salesMode') || 'legacy';
-        
-        console.log('User login successful. Current mode is ' + salesMode);
-        console.log('User has teams:', data.teams);
-        
+
+
         // Handle team selection based on salesMode
         if (salesMode === 'legacy') {
           // Team mode: Show team selector, NO individual option
@@ -1613,7 +1599,7 @@
         
         // Re-initialize PWA Logger with authenticated credentials
         if (window.PWALogger) {
-          console.log('Re-initializing PWA Logger with authenticated credentials...');
+
           try {
             await window.PWALogger.init({
               apiBase: apiBase,
@@ -1643,12 +1629,12 @@
         
         // Load address autocomplete module and prefetch ZIP data (non-blocking - happens in background)
         loadAddressAutocomplete().then(() => {
-          console.log('[Login] Address autocomplete module loaded, starting prefetch...');
+
           if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
             return window.subsalesNearby.prefetch();
           }
         }).then(() => {
-          console.log('[Login] Address ZIP prefetch completed');
+
         }).catch(e => {
           console.warn('[Login] Address autocomplete load/prefetch failed:', e);
         });
@@ -1744,14 +1730,14 @@
       updateCurrentTeamDisplay();
       
       // Load address autocomplete module and prefetch (non-blocking - happens in background)
-      console.log('[Team Selection] Loading address autocomplete module...');
+
       loadAddressAutocomplete().then(() => {
-        console.log('[Team Selection] Module loaded, starting prefetch...');
+
         if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
           return window.subsalesNearby.prefetch();
         }
       }).then(() => {
-        console.log('[Team Selection] Address ZIP prefetch completed');
+
       }).catch(e => {
         console.warn('[Team Selection] Module load/prefetch failed:', e);
       });
@@ -1824,8 +1810,7 @@
   // ========== END USER LOGIN FUNCTIONS ==========
 
   loginBtn && loginBtn.addEventListener('click', async ()=>{
-    console.log('===== LEGACY LOGIN BUTTON CLICKED =====');
-    
+
     // Log login attempt
     if (window.PWALogger) {
       window.PWALogger.log('auth', 'Legacy login button clicked', {
@@ -1835,7 +1820,7 @@
     
     const team = (qs('#teamName') && qs('#teamName').value.trim()) || '';
     const code = (qs('#teamCode') && qs('#teamCode').value.trim()) || '';
-    console.log('Team:', team, 'Code:', code ? '***' : '(empty)');
+
     
     if (!team||!code) {
       console.warn('Team or code missing');
@@ -1843,14 +1828,12 @@
     }
     
     try{
-      console.log('Calling serverLogin...');
+
       // Call server to validate
       await serverLogin(team, code);
-      console.log('serverLogin successful');
-      
+
       localStorage.setItem('teamName', team);
       localStorage.setItem('teamCode', code);
-      console.log('Credentials saved to localStorage');
 
       // session duration handling: get the admin-configured value from localized config
       try{
@@ -1919,9 +1902,7 @@
       
       const loginMode = (config && config.loginMode) || 'legacy';
       const salesMode = (config && config.salesMode) || 'legacy';
-      
-      console.log('Config loaded - loginMode:', loginMode, 'salesMode:', salesMode);
-      
+
       // Initialize PWA Logger early (before login) so we can log login attempts
       if (window.PWALogger) {
         try {
@@ -1975,24 +1956,21 @@
   // On boot, auto-restore session if not expired (wait for DOM to be ready)
   (function restoreSession(){
     const doRestore = () => {
-      console.log('[Session Restore] Checking for existing session...');
+
       try{
         const loginMode = localStorage.getItem('loginMode') || 'legacy';
-        console.log('[Session Restore] Login mode:', loginMode);
-      
+
       if (loginMode === 'user') {
         // User mode session restore
         const userId = localStorage.getItem('userId');
         const userName = localStorage.getItem('userName');
         const userPhone = localStorage.getItem('userPhone');
         const expiry = localStorage.getItem('sessionExpiry');
-        
-        console.log('[Session Restore] User session check:', {userId: !!userId, userName: !!userName, expiry: expiry});
-        
+
         if (userId && userName && userPhone && expiry) {
           const expTime = new Date(expiry).getTime();
           if (expTime && expTime > Date.now()) {
-            console.log('[Session Restore] Valid user session found - restoring...');
+
             // valid user session
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
@@ -2001,14 +1979,14 @@
             fetchAppConfigUserMode().catch(()=>{});
             
             // Load address autocomplete module and prefetch ZIP data (non-blocking)
-            console.log('[Session Restore] Loading address autocomplete module...');
+
             loadAddressAutocomplete().then(() => {
-              console.log('[Session Restore] Module loaded, starting prefetch...');
+
               if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
                 return window.subsalesNearby.prefetch();
               }
             }).then(() => {
-              console.log('[Session Restore] Address ZIP prefetch completed');
+
             }).catch(e => {
               console.warn('[Session Restore] Module load/prefetch failed:', e);
             });
@@ -2016,7 +1994,7 @@
             trySync();
             return;
           } else {
-            console.log('[Session Restore] User session expired');
+
             // expired
             try { localStorage.removeItem('sessionExpiry'); } catch(e){}
           }
@@ -2026,13 +2004,11 @@
         const team = localStorage.getItem('teamName');
         const code = localStorage.getItem('teamCode');
         const expiry = localStorage.getItem('sessionExpiry');
-        
-        console.log('[Session Restore] Legacy session check:', {team: !!team, code: !!code, expiry: expiry});
-        
+
         if (team && code && expiry) {
           const expTime = new Date(expiry).getTime();
           if (expTime && expTime > Date.now()) {
-            console.log('[Session Restore] Valid legacy session found - restoring...');
+
             // valid session
             if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
             if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
@@ -2042,14 +2018,14 @@
             fetchTeamMembers().then(members=>{ if (members && members.length) populateTeamMemberSelect(members); }).catch(()=>{});
             
             // Load address autocomplete module and prefetch ZIP data (non-blocking)
-            console.log('[Session Restore] Loading address autocomplete module...');
+
             loadAddressAutocomplete().then(() => {
-              console.log('[Session Restore] Module loaded, starting prefetch...');
+
               if (window.subsalesNearby && typeof window.subsalesNearby.prefetch === 'function') {
                 return window.subsalesNearby.prefetch();
               }
             }).then(() => {
-              console.log('[Session Restore] Address ZIP prefetch completed');
+
             }).catch(e => {
               console.warn('[Session Restore] Module load/prefetch failed:', e);
             });
@@ -2057,14 +2033,13 @@
             trySync();
             return;
           } else {
-            console.log('[Session Restore] Legacy session expired');
+
             // expired
             try { localStorage.removeItem('sessionExpiry'); } catch(e){}
           }
         }
       }
-      
-      console.log('[Session Restore] No valid session found - showing login');
+
     }catch(e){
       console.error('[Session Restore] Failed:', e);
     }
@@ -2088,8 +2063,7 @@
       const expTime = new Date(expiry).getTime();
       if (expTime && expTime < Date.now()) {
         // Session has expired - perform logout
-        console.log('Session expired - logging out');
-        
+
         // Clear session data
         const keysToRemove = ['sessionExpiry', 'userId', 'userName', 'userPhone', 
                              'selectedTeamId', 'selectedTeamName', 'userTeams',
@@ -2437,7 +2411,7 @@
             createdAt: order.createdAt,
             geo: order.geo || null
           };
-          console.log('Syncing order:', order.id, 'payload:', payload, 'headers:', headers);
+
           const resp = await fetch(url, {
             method: 'POST',
             headers: headers,
@@ -2567,12 +2541,10 @@
 
   // Show 'My orders' — local queued and remote orders for current user, today only
   async function showMyOrders(){
-    console.log('===== SHOW MY ORDERS FUNCTION CALLED =====');
-    
+
     // Get current user ID (supports both user mode and legacy mode)
     const loginMode = localStorage.getItem('loginMode') || 'legacy';
-    console.log('Login mode:', loginMode);
-    
+
     // Log function execution start
     if (window.PWALogger) {
       window.PWALogger.log('ui', 'showMyOrders() function started', {
@@ -2591,10 +2563,8 @@
       currentUserId = localStorage.getItem('teamMemberId') || '';
       currentUserName = localStorage.getItem('teamMemberName') || '';
     }
-    
-    console.log('Current User ID:', currentUserId);
-    console.log('Current User Name:', currentUserName);
-    
+
+
     // Helper function to check if order is from today
     const isToday = (dateStr) => {
       if (!dateStr) return false;
@@ -2615,15 +2585,7 @@
     const localFiltered = local; // Show all local orders - no filtering needed for offline storage
     
     // Debug logging for troubleshooting
-    console.log('My Orders Debug:', {
-      currentUserId,
-      currentUserName,
-      totalLocalOrders: local.length,
-      sampleLocalOrder: local[0],
-      loginMode,
-      note: 'Local orders are NOT filtered - showing all pending sync orders'
-    });
-    
+
     // Log to server with detailed context
     if (window.PWALogger) {
       window.PWALogger.log('ui', 'My Orders - Local orders loaded (no filtering)', {
@@ -2958,10 +2920,9 @@
 
   const myOrdersBtn = qs('#myOrdersBtn'); 
   if (myOrdersBtn) {
-    console.log('My Orders button found, attaching listener');
+
     myOrdersBtn.addEventListener('click', ()=>{ 
-      console.log('===== MY ORDERS BUTTON CLICKED =====');
-      
+
       // Log button click
       if (window.PWALogger) {
         window.PWALogger.log('ui', 'My Orders button clicked', {
@@ -2969,16 +2930,15 @@
           online: navigator.onLine
         });
       }
-      
-      console.log('Session valid check...');
+
       if(!checkSessionValid()) {
-        console.log('Session NOT valid - aborting');
+
         if (window.PWALogger) {
           window.PWALogger.log('ui', 'My Orders blocked - session invalid', {});
         }
         return;
       }
-      console.log('Session valid - calling showMyOrders()');
+
       showMyOrders(); 
     });
   } else {
@@ -2987,12 +2947,11 @@
   
   const eodBtn = qs('#eodBtn'); 
   if (eodBtn) {
-    console.log('EOD button found, attaching listener');
+
     eodBtn.addEventListener('click', async ()=>{ 
       if (window.PWASessionTracking) window.PWASessionTracking.track('eod_click');
       await logWithContext('ui', 'EOD Tally button clicked');
-      
-      console.log('===== EOD BUTTON CLICKED =====');
+
       if(!checkSessionValid()) {
         await logWithContext('ui', 'EOD blocked - session invalid');
         return;
@@ -3126,7 +3085,7 @@
               alert('Session expired. Please log in again.');
               location.reload();
             } else {
-              console.log('No session but offline - allowing continued use');
+
               if (window.smShowSnackbar) {
                 window.smShowSnackbar('Working offline', { timeout: 3000 });
               }
@@ -3149,7 +3108,7 @@
               location.reload();
             } else {
               // Offline - allow continued use without reload
-              console.log('Session expired but offline - allowing continued use');
+
               if (window.smShowSnackbar) {
                 window.smShowSnackbar('Working offline - session expired', { timeout: 3000 });
               }
