@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: Complete fundraising/subsales order management system with embedded PWA for mobile order entry. Features multi-team support, address autocomplete with GPS enrichment, delivery manifest generation with route optimization, and comprehensive audit logging. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in Subsales → Settings.
- * Version: 2.2.1.52
+ * Version: 2.2.1.53
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0

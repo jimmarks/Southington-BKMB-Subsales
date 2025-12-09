@@ -37,17 +37,19 @@
                     // Check both formats for compatibility
                     this.debugEnabled = data.debugLoggingEnabled || data.debug_logging_enabled || false;
                     this.initialized = true;
+                    
+                    console.warn('[PWA Logger] Initialized with debugEnabled:', this.debugEnabled, 'from config data:', data);
 
                     if (this.debugEnabled) {
 
-                        this.log('system', 'PWA Logger initialized', {
+                        this.log('system', 'PWA Logger initialized - Debug mode ACTIVE', {
                             user_agent: navigator.userAgent,
                             online: navigator.onLine,
                             screen: `${window.screen.width}x${window.screen.height}`,
                             has_auth: !!(this.teamName && this.userName)
                         });
                     } else {
-
+                        console.warn('[PWA Logger] Debug mode is OFF - only errors will be logged');
                     }
                 } else {
                     console.warn('[PWA Logger] Failed to check debug status, HTTP', response.status);
@@ -79,7 +81,10 @@
          * Send log to backend
          */
         async log(category, message, context = {}) {
+            console.warn('[PWA Logger] log() called:', {category, message, debugEnabled: this.debugEnabled, initialized: this.initialized});
+            
             if (!this.debugEnabled || !this.initialized) {
+                console.warn('[PWA Logger] Skipping log - debugEnabled:', this.debugEnabled, 'initialized:', this.initialized);
                 return;
             }
 
