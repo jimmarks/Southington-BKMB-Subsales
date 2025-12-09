@@ -161,7 +161,7 @@ class Subsales_Orders {
 
         $data = $request->get_json_params();
         
-        // DEBUG log: Order creation attempt
+        // Log order creation attempt
         Subsales_Database::log( 'DEBUG', 'orders', 'Create order API called', array(
             'has_order_id' => isset( $data['order_id'] ),
             'has_user_id' => isset( $data['user_id'] ),

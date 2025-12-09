@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: Complete fundraising/subsales order management system with embedded PWA for mobile order entry. Features multi-team support, address autocomplete with GPS enrichment, delivery manifest generation with route optimization, and comprehensive audit logging. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in Subsales → Settings.
- * Version: 2.2.1.50
+ * Version: 2.2.1.51
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -192,7 +192,7 @@ function subsales_deactivation_modal() {
                     </div>
                     
                     <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
-                        You can change this setting anytime in <strong>BKMB Subsales → Settings</strong>
+                        You can change this setting anytime in <strong>Subsales → Settings</strong>
                     </p>
                 <?php else : ?>
                     <p>Are you sure you want to deactivate Subsales Management?</p>
@@ -222,7 +222,7 @@ function subsales_deactivation_modal() {
                     </div>
                     
                     <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
-                        Change deletion setting in <strong>BKMB Subsales → Settings</strong>
+                        Change deletion setting in <strong>Subsales → Settings</strong>
                     </p>
                 <?php endif; ?>
             </div>
@@ -352,7 +352,6 @@ add_action( 'admin_notices', 'subsales_debug_mode_notice' );
 add_action( 'admin_footer', 'subsales_debug_mode_badge' );
 
 function subsales_debug_mode_notice() {
-    // Debug notice removed - using only the debug toggle box on logs page and floating badge
     return;
 }
 
@@ -757,7 +756,7 @@ function order_sync_maybe_show_onboarding() {
                     <p class="subsales-step-description">Choose a brand name that will appear throughout your subsales portal and mobile app.</p>
                     <div class="subsales-form-group">
                         <label for="onb_branding">Brand Name</label>
-                        <input id="onb_branding" type="text" value="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" placeholder="e.g., BKMB Subsales" />
+                        <input id="onb_branding" type="text" value="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" placeholder="e.g., Subsales, My Fundraiser" />
                         <p class="description">This will be displayed in the portal header and mobile app.</p>
                     </div>
                 </div>
@@ -2792,9 +2791,6 @@ function order_sync_fetch_orders_ajax() {
 
     wp_send_json_success( $response );
 }
-
-// AJAX endpoint to run migration helper from the admin UI (runs under current user, requires manage_options)
-/* Migration AJAX handler removed per request. Migration tools (if any) should be removed separately. */
 
 // AJAX endpoint to run initialization from the onboarding wizard
 add_action( 'wp_ajax_subsales_run_init', 'order_sync_run_init_ajax' );
