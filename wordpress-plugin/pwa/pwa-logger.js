@@ -78,6 +78,24 @@
         },
 
         /**
+         * Update debug status (called when heartbeat returns new config)
+         */
+        updateDebugStatus(enabled) {
+            const wasEnabled = this.debugEnabled;
+            this.debugEnabled = !!enabled;
+            
+            if (wasEnabled !== this.debugEnabled) {
+                console.warn('[PWA Logger] Debug mode changed:', wasEnabled, '→', this.debugEnabled);
+                
+                if (this.debugEnabled) {
+                    this.log('system', 'Debug mode enabled - now tracking all interactions', {
+                        triggered_by: 'heartbeat_config_update'
+                    });
+                }
+            }
+        },
+
+        /**
          * Send log to backend
          */
         async log(category, message, context = {}) {
@@ -207,16 +225,15 @@
 
         /**
          * Auto-instrument common interactions
+         * Always adds listeners, but checks debugEnabled when logging
          */
         instrumentUI() {
-            if (!this.debugEnabled) return;
-
             const logger = this;
 
-            // Log all button clicks
+            // Log all button clicks (check debugEnabled at click time, not setup time)
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('button');
-                if (button) {
+                if (button && logger.debugEnabled) {
                     logger.logButtonClick(
                         button.id || 'unnamed',
                         button.textContent.trim().substring(0, 50)
@@ -227,7 +244,7 @@
             // Log input changes (debounced)
             let inputTimeout;
             document.addEventListener('input', function(e) {
-                if (e.target.matches('input, textarea, select')) {
+                if (e.target.matches('input, textarea, select') && logger.debugEnabled) {
                     clearTimeout(inputTimeout);
                     inputTimeout = setTimeout(() => {
                         logger.logInput(
@@ -239,6 +256,7 @@
                 }
             });
 
+            console.warn('[PWA Logger] UI instrumentation installed - will log when debugEnabled is true');
         }
     };
 

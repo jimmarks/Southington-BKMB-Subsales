@@ -319,7 +319,8 @@ class Subsales_REST_API {
         
         return rest_ensure_response( array(
             'success' => true,
-            'message' => 'Heartbeat updated'
+            'message' => 'Heartbeat updated',
+            'debugEnabled' => get_option( 'subsales_debug_logging_enabled', false )
         ) );
     }
     

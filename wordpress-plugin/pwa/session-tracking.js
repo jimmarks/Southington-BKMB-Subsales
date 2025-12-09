@@ -138,7 +138,15 @@
           });
         }
       } else {
-
+        // Update PWALogger debug status from heartbeat response
+        try {
+          const data = await resp.json();
+          if (window.PWALogger && typeof data.debugEnabled !== 'undefined') {
+            window.PWALogger.updateDebugStatus(data.debugEnabled);
+          }
+        } catch (e) {
+          // Ignore JSON parse errors
+        }
       }
     } catch(e) {
       console.error('[Session] Heartbeat error:', e);
