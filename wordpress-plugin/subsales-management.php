@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.19
+ * Version: 2.2.1.48
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -3526,68 +3526,19 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
     // Determine display date
     $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
     
-    // Build HTML with print-optimized CSS
+    // Get the URL to the admin CSS file
+    $css_url = plugin_dir_url( __FILE__ ) . 'assets/css/admin-dashboard.css';
+    
+    // Build HTML with external CSS
     $html = '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Delivery Manifests - ' . $display_date . '</title>
-    <style>
-        /* Hide all WordPress admin elements */
-        #wpadminbar, #adminmenumain, #adminmenuback, #adminmenuwrap, 
-        .wp-toolbar, #wpfooter, .update-nag, .notice, .error, 
-        #wpbody-content > .wrap, #wpbody-content > h1, #wpbody-content > h2,
-        .wrap > h1, .wrap > h2 {
-            display: none !important;
-        }
-        
-        /* Ensure body takes full width without admin sidebar */
-        body.wp-admin { margin: 0 !important; padding: 0 !important; }
-        #wpcontent, #wpbody { margin-left: 0 !important; }
-        
-        @media print {
-            @page { margin: 0.5in 0.5in 0.75in 0.5in; }
-            .page-break { page-break-after: always; }
-            .manifest-section { page-break-before: always; }
-            .manifest-section:first-child { page-break-before: auto; }
-            .delivery-stop { page-break-inside: avoid; }
-            /* Extra insurance: hide WP elements in print */
-            #wpadminbar, #adminmenumain, #adminmenuback, #adminmenuwrap, 
-            .wp-toolbar, #wpfooter, .update-nag, .notice, .error { 
-                display: none !important; 
-            }
-            /* Hide browser-generated print header/footer (date, URL, page numbers) */
-            @page { 
-                margin-top: 0.5in; 
-                margin-bottom: 0.75in;
-            }
-        }
-        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; position: relative; }
-        h1 { font-size: 24pt; margin: 0 0 10px 0; }
-        h2 { font-size: 18pt; margin: 20px 0 10px 0; }
-        .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
-        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; background: #f9f9f9; }
-        .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
-        .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
-        .customer { font-size: 11pt; margin: 3px 0; }
-        .products { margin: 8px 0; }
-        .products-table { width: 100%; border-collapse: collapse; margin: 5px 0; }
-        .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
-        .products-table th { background: #e0e0e0; font-weight: bold; }
-        .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
-        .packing-page { margin-bottom: 40px; }
-        .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
-        .packing-table th, .packing-table td { border: 2px solid #000; padding: 12px; text-align: left; }
-        .packing-table th { background: #e0e0e0; font-weight: bold; }
-        .footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 20px; border-top: 1px solid #333; font-size: 10pt; background: white; }
-        .footer-line { margin: 2px 0; }
-        @media print {
-            .footer { position: fixed; bottom: 0.25in; }
-        }
-    </style>
+    <link rel="stylesheet" href="' . esc_url( $css_url ) . '" />
 </head>
-<body>';
+<body class="subsales-manifest-viewer">';
 
     // Generate manifest for each individual
     $manifest_index = 0;
@@ -3609,18 +3560,34 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
             }
         }
 
-        // Calculate total pages for this seller: 2 packing lists + delivery manifest pages
-        $total_pages = 2 + count( $orders );
-        $current_page = 1;
-
-        // Add section break for new seller (except first one)
-        if ( $manifest_index > 0 ) {
-            $html .= '<div class="manifest-section"></div>';
+        // Calculate number of delivery pages based on stop count
+        // Testing shows approximately 7 stops fit on first page, 8 on subsequent pages
+        // Updated based on actual usage with compact layout
+        $total_stops = count( $orders );
+        $delivery_pages = 0;
+        if ( $total_stops > 0 ) {
+            if ( $total_stops <= 7 ) {
+                $delivery_pages = 1;
+            } else {
+                // First page has 7, remaining stops divided by 8
+                $remaining_stops = $total_stops - 7;
+                $delivery_pages = 1 + ceil( $remaining_stops / 8 );
+            }
         }
+        
+        // Calculate total manifest pages for this seller
+        // 2 packing lists + 1 QR page + calculated delivery pages
+        $qr_pages = ! empty( array_filter( $all_routes, function( $route ) use ( $individual_name ) {
+            return isset( $route['seller'] ) && $route['seller'] === $individual_name;
+        } ) ) ? 1 : 0;
+        $total_manifest_pages = 2 + $qr_pages + $delivery_pages;
+
+        // Wrap seller section in container with total page count
+        $html .= '<div class="seller-section" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '" data-total-pages="' . $total_manifest_pages . '">';
         
         // FIRST PACKING LIST
-        $html .= '<div class="packing-page">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="packing-page manifest-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';;
         $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
         $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
         foreach ( $product_totals as $pt ) {
@@ -3629,14 +3596,12 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
             }
         }
         $html .= '</tbody></table>';
-        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '<div class="page-footer"></div>';
         $html .= '</div>';
-        $html .= '<div class="page-break"></div>';
-        $current_page++;
         
         // SECOND PACKING LIST (duplicate)
-        $html .= '<div class="packing-page">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="packing-page manifest-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';;
         $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
         $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
         foreach ( $product_totals as $pt ) {
@@ -3645,10 +3610,8 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
             }
         }
         $html .= '</tbody></table>';
-        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '<div class="page-footer"></div>';
         $html .= '</div>';
-        $html .= '<div class="page-break"></div>';
-        $current_page++;
         
         // ROUTE QR CODES PAGE (insert after packing lists, before delivery manifest)
         // Generate QR codes for this seller's routes only
@@ -3661,68 +3624,138 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
             
             // Extract just the body content (remove html/head tags to avoid conflicts)
             if ( preg_match( '/<body[^>]*>(.*?)<\/body>/is', $qr_page_html, $matches ) ) {
+                $html .= '<div class="qr-section manifest-page stop-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
                 $html .= $matches[1];
+                $html .= '<div class="page-footer"></div>';
+                $html .= '</div>';
             }
-            
-            $html .= '<div class="page-break"></div>';
         }
 
-        // DELIVERY MANIFEST
-        $html .= '<div>';
-        $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-        $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( (string) $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
-        $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
-
-        // Delivery stops
+        // DELIVERY MANIFEST - Split into multiple pages based on stop count
+        // First page holds 7 stops, subsequent pages hold 8 stops each
         $stop_num = 1;
-        foreach ( $orders as $order ) {
-            $html .= '<div class="delivery-stop">';
-            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
-            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            
-            if ( ! empty( $order['customer'] ) ) {
-                $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            }
-            
-            if ( ! empty( $order['phone'] ) ) {
-                $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            }
-
-            // Products for this stop
-            $html .= '<div class="products"><strong>Products:</strong>';
-            $html .= '<table class="products-table">';
-            $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
-            $has_products = false;
-            foreach ( $order['products_map'] as $pid => $qty ) {
-                if ( $qty > 0 ) {
-                    $product_name = '';
-                    foreach ( $configured_products as $p ) {
-                        if ( $p['id'] === $pid ) {
-                            $product_name = $p['name'];
-                            break;
-                        }
-                    }
-                    $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
-                    $has_products = true;
+        $current_page_stops = 0;
+        $max_stops_this_page = 7; // First page
+        $delivery_page_num = 1;
+        
+        foreach ( $orders as $order_index => $order ) {
+            // Start new delivery page if needed
+            if ( $current_page_stops === 0 ) {
+                $html .= '<div class="delivery-section manifest-page stop-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
+                
+                // Only show header on first delivery page
+                if ( $delivery_page_num === 1 ) {
+                    $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+                    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+                } else {
+                    $html .= '<h2>Delivery Manifest (continued): ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h2>';
                 }
             }
-            if ( ! $has_products ) {
-                $html .= '<tr><td colspan="2">No products</td></tr>';
-            }
-            $html .= '</tbody></table></div>';
-
+            
+            // Add stop table
+            $html .= '<table class="delivery-stop-table">';
+            
+            // Row 1: Stop # and Address on left, Notes on right (spans 2 rows)
+            $html .= '<tr>';
+            $html .= '<td colspan="2" class="stop-header">';
+            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
+            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            $html .= '</td>';
+            $html .= '<td rowspan="2" class="notes-cell">';
             if ( ! empty( $order['notes'] ) ) {
-                $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+                $html .= '<strong>Delivery Notes:</strong><br>' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' );
+            } else {
+                $html .= '&nbsp;';
             }
-
-            $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
-            $html .= '</div>';
+            $html .= '</td>';
+            $html .= '</tr>';
+            
+            // Row 2: Customer & Phone on left
+            $html .= '<tr>';
+            $html .= '<td colspan="2" class="customer-info">';
+            $customer_parts = array();
+            if ( ! empty( $order['customer'] ) ) {
+                $customer_parts[] = '<strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' );
+            }
+            if ( ! empty( $order['phone'] ) ) {
+                $customer_parts[] = '<strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' );
+            }
+            $html .= ! empty( $customer_parts ) ? implode( ' | ', $customer_parts ) : '&nbsp;';
+            $html .= '</td>';
+            $html .= '</tr>';
+            
+            // Row 3: Horizontal Products Table (Product names in header, quantities in single row)
+            $html .= '<tr>';
+            $html .= '<td colspan="3" class="products-cell">';
+            $html .= '<table class="products-horizontal">';
+            
+            // Build product header row and quantity row
+            $product_headers = array();
+            $product_quantities = array();
+            foreach ( $configured_products as $p ) {
+                $pid = $p['id'];
+                $qty = isset( $order['products_map'][ $pid ] ) ? intval( $order['products_map'][ $pid ] ) : 0;
+                $product_headers[] = '<th>' . htmlspecialchars( (string) $p['name'], ENT_QUOTES, 'UTF-8' ) . '</th>';
+                $product_quantities[] = '<td>' . $qty . '</td>';
+            }
+            
+            $html .= '<tr>' . implode( '', $product_headers ) . '</tr>';
+            $html .= '<tr>' . implode( '', $product_quantities ) . '</tr>';
+            $html .= '</table>';
+            $html .= '</td>';
+            $html .= '</tr>';
+            
+            $html .= '</table>';
+            
             $stop_num++;
-            $current_page++;
+            $current_page_stops++;
+            
+            // Close page if we've hit the limit or if this is the last stop
+            $is_last_stop = ( $order_index === count( $orders ) - 1 );
+            if ( $current_page_stops >= $max_stops_this_page || $is_last_stop ) {
+                $html .= '<div class="page-footer"></div>';
+                $html .= '</div>'; // end delivery-section
+                
+                // Reset for next page (subsequent pages hold 8 stops)
+                $current_page_stops = 0;
+                $max_stops_this_page = 8;
+                $delivery_page_num++;
+            }
         }
-        $html .= '</div>'; // end delivery manifest
+        $html .= '</div>'; // end seller-section
         $manifest_index++;
     }
+    
+    // Add JavaScript for page counting
+    $html .= '<script>
+(function() {
+    // Wait for DOM to be fully loaded
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initPageCounters);
+    } else {
+        initPageCounters();
+    }
+    
+    function initPageCounters() {
+        const sellerSections = document.querySelectorAll(".seller-section");
+        
+        sellerSections.forEach(function(section) {
+            const seller = section.getAttribute("data-seller");
+            const date = section.getAttribute("data-date");
+            const totalPages = parseInt(section.getAttribute("data-total-pages") || "0", 10);
+            const pages = section.querySelectorAll(".manifest-page");
+            
+            pages.forEach(function(page, index) {
+                const pageNum = index + 1;
+                const footer = page.querySelector(".page-footer");
+                if (footer) {
+                    footer.textContent = "Seller: " + seller + " | Page " + pageNum + " of " + totalPages + " | Date: " + date;
+                }
+            });
+        });
+    }
+})();
+</script>';
     
     $html .= '</body></html>';
 
@@ -7626,7 +7659,7 @@ add_action('admin_enqueue_scripts', 'subsales_enqueue_admin_assets');
 function subsales_enqueue_admin_assets($hook){
     // Only load on our plugin pages (basic guard: check for our page slug in $_GET)
     $load = false;
-    if ( isset($_GET['page']) && strpos($_GET['page'], 'subsales') === 0 ) $load = true;
+    if ( isset($_GET['page']) && is_string($_GET['page']) && strpos($_GET['page'], 'subsales') === 0 ) $load = true;
     if ( ! $load ) return;
     
     // Enqueue jQuery for AJAX and DOM manipulation
