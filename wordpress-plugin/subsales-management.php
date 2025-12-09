@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.0.9
+ * Version: 2.2.1.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,10 +34,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.2.0.9' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.2.1.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+
+// Load Composer autoloader for QR code library
+if ( file_exists( SUBSALES_PLUGIN_PATH . 'vendor/autoload.php' ) ) {
+    require_once SUBSALES_PLUGIN_PATH . 'vendor/autoload.php';
+}
 
 // Load modular classes
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
@@ -85,6 +90,10 @@ function subsales_activate() {
     // Ensure PWA page exists with default slug
     $slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     order_sync_ensure_pwa_page( $slug );
+    
+    // Register rewrite rules and flush
+    subsales_register_route_rewrite();
+    flush_rewrite_rules();
     
     // Set activation flag for admin notice and onboarding
     set_transient( 'subsales_activated', true, 30 );
@@ -3365,6 +3374,7 @@ function order_sync_handle_generate_delivery_pdf() {
 
     // Generate combined HTML manifest for all individuals
     $all_manifests = array();
+    $all_routes = array(); // For QR code generation
     
     foreach ( $by_individual as $individual_id => $data ) {
         $individual_name = $data['name'];
@@ -3377,10 +3387,23 @@ function order_sync_handle_generate_delivery_pdf() {
             'name' => $individual_name,
             'orders' => $optimized_orders
         );
+        
+        // Create route batches for QR codes (max 10 addresses per route)
+        $addresses = array_map( function( $order ) {
+            return $order['address'];
+        }, $optimized_orders );
+        
+        $batches = array_chunk( $addresses, 10 );
+        foreach ( $batches as $batch ) {
+            $all_routes[] = array(
+                'seller' => $individual_name,
+                'addresses' => $batch
+            );
+        }
     }
 
-    // Generate combined HTML document
-    $combined_html = order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date );
+    // Generate combined HTML document with QR codes
+    $combined_html = order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date, $all_routes );
     
     // Store HTML in transient for retrieval
     $transient_key = 'subsales_manifest_' . md5( current_time( 'mysql' ) . wp_get_current_user()->ID );
@@ -3453,8 +3476,48 @@ function order_sync_haversine_distance( $lat1, $lon1, $lat2, $lon2 ) {
     return $earth_radius * $c;
 }
 
+// Helper: Generate modern QR code with branding (using endroid/qr-code)
+function subsales_generate_qr_code( $url, $size = 300 ) {
+    // Check if endroid QR code library is available
+    if ( ! class_exists( 'Endroid\QrCode\QrCode' ) ) {
+        return ''; // Library not loaded
+    }
+    
+    try {
+        // Get branding options (for future: logo and colors from admin settings)
+        // For now, use modern styling with defaults
+        
+        $qrCode = \Endroid\QrCode\QrCode::create( $url )
+            ->setSize( $size )
+            ->setMargin( 10 )
+            ->setEncoding( new \Endroid\QrCode\Encoding\Encoding( 'UTF-8' ) )
+            ->setErrorCorrectionLevel( new \Endroid\QrCode\ErrorCorrectionLevel\ErrorCorrectionLevelHigh() )
+            ->setRoundBlockSizeMode( new \Endroid\QrCode\RoundBlockSizeMode\RoundBlockSizeModeMargin() )
+            ->setForegroundColor( new \Endroid\QrCode\Color\Color( 0, 115, 170 ) ) // Brand blue
+            ->setBackgroundColor( new \Endroid\QrCode\Color\Color( 255, 255, 255 ) );
+        
+        // Future: Add logo support
+        // $logo_path = get_option( 'subsales_qr_logo' );
+        // if ( $logo_path && file_exists( $logo_path ) ) {
+        //     $logo = \Endroid\QrCode\Logo\Logo::create( $logo_path )
+        //         ->setResizeToWidth( 60 )
+        //         ->setPunchoutBackground( true );
+        // }
+        
+        $writer = new \Endroid\QrCode\Writer\PngWriter();
+        $result = $writer->write( $qrCode );
+        
+        // Return data URI for embedding in HTML
+        return $result->getDataUri();
+        
+    } catch ( Exception $e ) {
+        error_log( 'QR Code generation error: ' . $e->getMessage() );
+        return '';
+    }
+}
+
 // Helper: Generate combined HTML manifest for all individuals
-function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '' ) {
+function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '', $all_routes = array() ) {
     // Determine display date
     $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
     
@@ -3488,6 +3551,11 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
             #wpadminbar, #adminmenumain, #adminmenuback, #adminmenuwrap, 
             .wp-toolbar, #wpfooter, .update-nag, .notice, .error { 
                 display: none !important; 
+            }
+            /* Hide browser-generated print header/footer (date, URL, page numbers) */
+            @page { 
+                margin-top: 0.5in; 
+                margin-bottom: 0.75in;
             }
         }
         body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; position: relative; }
@@ -3576,6 +3644,23 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
         $html .= '</div>';
         $html .= '<div class="page-break"></div>';
         $current_page++;
+        
+        // ROUTE QR CODES PAGE (insert after packing lists, before delivery manifest)
+        // Generate QR codes for this seller's routes only
+        $seller_routes = array_filter( $all_routes, function( $route ) use ( $individual_name ) {
+            return isset( $route['seller'] ) && $route['seller'] === $individual_name;
+        } );
+        
+        if ( ! empty( $seller_routes ) ) {
+            $qr_page_html = subsales_generate_route_qr_page( array_values( $seller_routes ), $delivery_date );
+            
+            // Extract just the body content (remove html/head tags to avoid conflicts)
+            if ( preg_match( '/<body[^>]*>(.*?)<\/body>/is', $qr_page_html, $matches ) ) {
+                $html .= $matches[1];
+            }
+            
+            $html .= '<div class="page-break"></div>';
+        }
 
         // DELIVERY MANIFEST
         $html .= '<div>';
@@ -3636,6 +3721,203 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
     
     $html .= '</body></html>';
 
+    return $html;
+}
+
+// Helper: Generate QR code page HTML for delivery routes
+function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
+    $display_date = ! empty( $delivery_date ) ? date( 'F j, Y', strtotime( $delivery_date ) ) : date( 'F j, Y' );
+    $total_addresses = 0;
+    
+    $html = '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Route QR Codes - ' . $display_date . '</title>
+    <style>
+        @media print {
+            @page { margin: 0.5in; }
+            .page-break { page-break-after: always; }
+        }
+        
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            max-width: 8.5in;
+            margin: 0 auto;
+            padding: 20px;
+            background: white;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 15px;
+            border-bottom: 3px solid #0073aa;
+        }
+        
+        .header h1 {
+            font-size: 28pt;
+            margin: 0 0 10px 0;
+            color: #0073aa;
+        }
+        
+        .header .date {
+            font-size: 14pt;
+            color: #666;
+            margin: 5px 0;
+        }
+        
+        .header .instructions {
+            font-size: 11pt;
+            color: #999;
+            margin-top: 10px;
+            font-style: italic;
+        }
+        
+        .route-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        .route-card {
+            border: 2px solid #0073aa;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .route-title {
+            font-size: 20pt;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #0073aa;
+        }
+        
+        .route-count {
+            font-size: 12pt;
+            color: #666;
+            margin-bottom: 15px;
+        }
+        
+        .qr-container {
+            margin: 15px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            display: inline-block;
+        }
+        
+        .qr-container img {
+            display: block;
+            width: 200px;
+            height: 200px;
+        }
+        
+        .scan-hint {
+            font-size: 9pt;
+            color: #999;
+            margin-top: 10px;
+            font-style: italic;
+        }
+        
+        .address-preview {
+            text-align: left;
+            font-size: 9pt;
+            line-height: 1.4;
+            max-height: 120px;
+            overflow-y: auto;
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 12px;
+            border-left: 3px solid #0073aa;
+        }
+        
+        .address-preview-item {
+            padding: 3px 0;
+            color: #333;
+        }
+        
+        .footer-info {
+            text-align: center;
+            color: #999;
+            font-size: 10pt;
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚚 Delivery Route QR Codes</h1>
+        <div class="date"><strong>Delivery Date:</strong> ' . $display_date . '</div>
+        <div class="instructions">Scan QR code with phone camera to open route in maps app</div>
+    </div>
+    
+    <div class="route-grid">';
+    
+    // Generate QR code for each route
+    foreach ( $all_routes as $idx => $route_info ) {
+        $route_number = $idx + 1;
+        $addresses = $route_info['addresses'];
+        $address_count = count( $addresses );
+        $total_addresses += $address_count;
+        
+        // Create route data for URL
+        $route_data = array(
+            'route' => $route_number,
+            'addresses' => $addresses,
+            'date' => $display_date,
+        );
+        
+        $encoded = base64_encode( json_encode( $route_data ) );
+        $route_url = home_url( '/route/' . $encoded );
+        
+        // Generate QR code
+        $qr_data_uri = subsales_generate_qr_code( $route_url, 200 );
+        
+        $html .= '<div class="route-card">';
+        $html .= '<div class="route-title">Route ' . $route_number . '</div>';
+        $html .= '<div class="route-count">' . $address_count . ' stop' . ( $address_count !== 1 ? 's' : '' ) . '</div>';
+        
+        if ( $qr_data_uri ) {
+            $html .= '<div class="qr-container">';
+            $html .= '<img src="' . esc_attr( $qr_data_uri ) . '" alt="Route ' . $route_number . ' QR Code" />';
+            $html .= '</div>';
+        } else {
+            $html .= '<div style="color: #d63031; padding: 20px;">QR Code generation failed</div>';
+        }
+        
+        $html .= '<div class="scan-hint">Point camera at code to open route</div>';
+        
+        // Address preview
+        $html .= '<div class="address-preview">';
+        foreach ( array_slice( $addresses, 0, 5 ) as $i => $addr ) {
+            $html .= '<div class="address-preview-item">' . ( $i + 1 ) . '. ' . htmlspecialchars( $addr, ENT_QUOTES, 'UTF-8' ) . '</div>';
+        }
+        if ( $address_count > 5 ) {
+            $html .= '<div class="address-preview-item" style="color: #999;">... and ' . ( $address_count - 5 ) . ' more</div>';
+        }
+        $html .= '</div>';
+        
+        $html .= '</div>'; // end route-card
+    }
+    
+    $html .= '</div>'; // end route-grid
+    
+    $html .= '<div class="footer-info">';
+    $html .= 'Generated: ' . date( 'F j, Y g:i A' ) . ' | ';
+    $html .= 'Total: ' . $total_addresses . ' addresses across ' . count( $all_routes ) . ' route' . ( count( $all_routes ) !== 1 ? 's' : '' );
+    $html .= '</div>';
+    
+    $html .= '</body></html>';
+    
     return $html;
 }
 
@@ -4707,6 +4989,272 @@ function order_sync_get_plugin_version() {
 // Serve portal assets from plugin folder at portal path
 // Use 'init' hook with priority 0 to intercept before WordPress routing
 add_action( 'init', 'subsales_serve_portal_assets', 0 );
+
+// Register rewrite rules for delivery route QR codes
+add_action( 'init', 'subsales_register_route_rewrite' );
+function subsales_register_route_rewrite() {
+    add_rewrite_rule( '^route/([^/]+)/?$', 'index.php?subsales_route=$1', 'top' );
+}
+
+// Add query var for route handler
+add_filter( 'query_vars', 'subsales_add_route_query_var' );
+function subsales_add_route_query_var( $vars ) {
+    $vars[] = 'subsales_route';
+    return $vars;
+}
+
+// Handle route page requests (mobile-friendly map chooser)
+add_action( 'template_redirect', 'subsales_handle_route_page' );
+function subsales_handle_route_page() {
+    $route_data = get_query_var( 'subsales_route' );
+    
+    if ( empty( $route_data ) ) {
+        return; // Not a route request
+    }
+    
+    // Decode the route data (base64-encoded JSON)
+    $decoded = base64_decode( $route_data, true );
+    if ( ! $decoded ) {
+        wp_die( 'Invalid route data', 'Route Error', array( 'response' => 400 ) );
+    }
+    
+    $route_info = json_decode( $decoded, true );
+    if ( ! $route_info || ! isset( $route_info['addresses'] ) || ! is_array( $route_info['addresses'] ) ) {
+        wp_die( 'Invalid route format', 'Route Error', array( 'response' => 400 ) );
+    }
+    
+    $addresses = $route_info['addresses'];
+    $route_number = isset( $route_info['route'] ) ? intval( $route_info['route'] ) : 1;
+    $delivery_date = isset( $route_info['date'] ) ? sanitize_text_field( $route_info['date'] ) : date( 'F j, Y' );
+    
+    // Build Google Maps and Apple Maps URLs
+    $google_url = 'https://www.google.com/maps/dir/' . implode( '/', array_map( 'rawurlencode', $addresses ) );
+    $apple_url = 'https://maps.apple.com/?daddr=' . implode( '&daddr=', array_map( 'rawurlencode', $addresses ) );
+    
+    // Detect device type for conditional display
+    $user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? $_SERVER['HTTP_USER_AGENT'] : '';
+    $is_ios = preg_match( '/(iPhone|iPad|iPod|Mac)/i', $user_agent );
+    
+    // Output mobile-optimized HTML
+    header( 'Content-Type: text/html; charset=utf-8' );
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="mobile-web-app-capable" content="yes">
+        <title>Route <?php echo esc_html( $route_number ); ?> - Delivery</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+                color: #fff;
+            }
+            
+            .container {
+                max-width: 500px;
+                width: 100%;
+                text-align: center;
+            }
+            
+            .header {
+                margin-bottom: 40px;
+            }
+            
+            .route-icon {
+                font-size: 60px;
+                margin-bottom: 15px;
+                animation: float 3s ease-in-out infinite;
+            }
+            
+            @keyframes float {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-10px); }
+            }
+            
+            h1 {
+                font-size: 32px;
+                font-weight: 700;
+                margin-bottom: 8px;
+                text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+            
+            .stops {
+                font-size: 18px;
+                opacity: 0.95;
+                font-weight: 500;
+            }
+            
+            .date {
+                font-size: 14px;
+                opacity: 0.8;
+                margin-top: 5px;
+            }
+            
+            .buttons {
+                margin-top: 30px;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 18px 30px;
+                font-size: 18px;
+                font-weight: 600;
+                border-radius: 16px;
+                text-decoration: none;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+                border: none;
+                cursor: pointer;
+                min-height: 60px;
+            }
+            
+            .btn:active {
+                transform: scale(0.97);
+            }
+            
+            .btn-google {
+                background: #fff;
+                color: #1a73e8;
+            }
+            
+            .btn-google:hover {
+                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+                transform: translateY(-2px);
+            }
+            
+            .btn-apple {
+                background: #000;
+                color: #fff;
+            }
+            
+            .btn-apple:hover {
+                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+                transform: translateY(-2px);
+            }
+            
+            .btn-icon {
+                font-size: 24px;
+                margin-right: 12px;
+            }
+            
+            .addresses {
+                margin-top: 40px;
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 16px;
+                padding: 20px;
+                max-height: 300px;
+                overflow-y: auto;
+                text-align: left;
+            }
+            
+            .addresses h3 {
+                font-size: 14px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 15px;
+                opacity: 0.9;
+                font-weight: 600;
+            }
+            
+            .address-item {
+                padding: 10px 0;
+                border-bottom: 1px solid rgba(255,255,255,0.15);
+                font-size: 14px;
+                line-height: 1.5;
+            }
+            
+            .address-item:last-child {
+                border-bottom: none;
+            }
+            
+            .address-number {
+                display: inline-block;
+                background: rgba(255,255,255,0.2);
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                text-align: center;
+                line-height: 24px;
+                font-size: 12px;
+                font-weight: 700;
+                margin-right: 10px;
+            }
+            
+            /* Scrollbar styling */
+            .addresses::-webkit-scrollbar {
+                width: 6px;
+            }
+            
+            .addresses::-webkit-scrollbar-track {
+                background: rgba(255,255,255,0.1);
+                border-radius: 3px;
+            }
+            
+            .addresses::-webkit-scrollbar-thumb {
+                background: rgba(255,255,255,0.3);
+                border-radius: 3px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="route-icon">🚚</div>
+                <h1>Route <?php echo esc_html( $route_number ); ?></h1>
+                <div class="stops"><?php echo count( $addresses ); ?> stops ready</div>
+                <div class="date"><?php echo esc_html( $delivery_date ); ?></div>
+            </div>
+            
+            <div class="buttons">
+                <a href="<?php echo esc_url( $google_url ); ?>" class="btn btn-google">
+                    <span class="btn-icon">📍</span>
+                    <span>Open in Google Maps</span>
+                </a>
+                
+                <?php if ( $is_ios ) : ?>
+                <a href="<?php echo esc_url( $apple_url ); ?>" class="btn btn-apple">
+                    <span class="btn-icon">🗺️</span>
+                    <span>Open in Apple Maps</span>
+                </a>
+                <?php endif; ?>
+            </div>
+            
+            <div class="addresses">
+                <h3>Route Preview</h3>
+                <?php foreach ( $addresses as $idx => $addr ) : ?>
+                    <div class="address-item">
+                        <span class="address-number"><?php echo $idx + 1; ?></span>
+                        <?php echo esc_html( $addr ); ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
 add_action( 'rest_api_init', function(){
