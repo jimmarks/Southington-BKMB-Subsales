@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title id="pageTitle">Loading...</title>
-    <link rel="manifest" href="manifest.json" />
+    <link rel="manifest" href="../wp-json/order-manager/v1/pwa/manifest" crossorigin="use-credentials" />
   <link rel="stylesheet" href="styles.css" />
     <meta name="theme-color" content="#2d6cdf" />
     <style>/* Hide auth-only controls in the PWA shell until client reveals them */
@@ -235,10 +235,15 @@
             var sessionScript = document.createElement('script');
             sessionScript.src = base + 'session-tracking.js';
             document.head.appendChild(sessionScript);
+            
+            // Load pwa-logger.js
+            var loggerScript = document.createElement('script');
+            loggerScript.src = base + 'pwa-logger.js';
+            document.head.appendChild(loggerScript);
           } else {
             // fallback to relative paths
             var st = document.createElement('script'); st.src = 'session-tracking.js'; document.head.appendChild(st);
-            var logger = document.createElement('script'); logger.src = 'pwa-logger.js'; logger.defer = true; document.head.appendChild(logger);
+            var logger = document.createElement('script'); logger.src = 'pwa-logger.js'; document.head.appendChild(logger);
           }
         }catch(e){ console.warn('failed to load scripts dynamically', e); }
       })();

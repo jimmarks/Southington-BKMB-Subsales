@@ -114,12 +114,13 @@
                     category: category,
                     message: message,
                     context: {
-                        ...context,
                         timestamp: new Date().toISOString(),
                         url: window.location.href,
-                        team: this.teamName,
-                        user: this.userName,
-                        session_id: this.sessionId
+                        ...context,
+                        // Only add if not already present to avoid overwriting
+                        team: context.team || this.teamName,
+                        user: context.user || this.userName,
+                        session_id: context.session_id || this.sessionId
                     },
                     source: 'pwa',
                     user_name: this.userName
@@ -149,7 +150,7 @@
          * Log button click
          */
         logButtonClick(buttonId, buttonText) {
-            this.log('ui', 'Button clicked', {
+            this.log('ui', `Button clicked: ${buttonText || buttonId}`, {
                 button_id: buttonId,
                 button_text: buttonText
             });

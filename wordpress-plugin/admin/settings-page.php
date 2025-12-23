@@ -56,10 +56,24 @@ function order_sync_settings_page() {
         $primary_color = isset( $_POST['primary_color'] ) ? sanitize_text_field( $_POST['primary_color'] ) : '#2d6cdf';
         $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
 
+        // PWA Icon settings
+        $pwa_app_name = isset( $_POST['pwa_app_name'] ) ? sanitize_text_field( $_POST['pwa_app_name'] ) : 'Subsales';
+        $pwa_icon_text = isset( $_POST['pwa_icon_text'] ) ? strtoupper( substr( sanitize_text_field( $_POST['pwa_icon_text'] ), 0, 4 ) ) : 'BK';
+        $pwa_icon_style = isset( $_POST['pwa_icon_style'] ) ? sanitize_text_field( $_POST['pwa_icon_style'] ) : 'simple';
+        $pwa_icon_text_color = isset( $_POST['pwa_icon_text_color'] ) ? sanitize_text_field( $_POST['pwa_icon_text_color'] ) : '#ffffff';
+        $pwa_icon_use_primary = isset( $_POST['pwa_icon_use_primary'] ) ? 1 : 0;
+        $pwa_icon_bg_color = isset( $_POST['pwa_icon_bg_color'] ) ? sanitize_text_field( $_POST['pwa_icon_bg_color'] ) : '#2d6cdf';
+
         update_option( 'subsales_branding', $branding );
         update_option( 'order_sync_style_variant', $style_variant );
         update_option( 'order_sync_primary_color', $primary_color );
         update_option( 'subsales_header_image', $header_image );
+        update_option( 'subsales_pwa_app_name', $pwa_app_name );
+        update_option( 'subsales_pwa_icon_text', $pwa_icon_text );
+        update_option( 'subsales_pwa_icon_style', $pwa_icon_style );
+        update_option( 'subsales_pwa_icon_text_color', $pwa_icon_text_color );
+        update_option( 'subsales_pwa_icon_use_primary', $pwa_icon_use_primary );
+        update_option( 'subsales_pwa_icon_bg_color', $pwa_icon_bg_color );
 
         echo '<div class="notice notice-success"><p>Branding saved!</p></div>';
     }
@@ -205,6 +219,12 @@ function order_sync_settings_page() {
     $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
     $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
     $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
+    $pwa_app_name = get_option( 'subsales_pwa_app_name', 'Subsales' );
+    $pwa_icon_text = get_option( 'subsales_pwa_icon_text', 'BK' );
+    $pwa_icon_style = get_option( 'subsales_pwa_icon_style', 'simple' );
+    $pwa_icon_text_color = get_option( 'subsales_pwa_icon_text_color', '#ffffff' );
+    $pwa_icon_use_primary = get_option( 'subsales_pwa_icon_use_primary', 1 );
+    $pwa_icon_bg_color = get_option( 'subsales_pwa_icon_bg_color', '#2d6cdf' );
     ?>
     <div class="wrap">
         <h1>Subsales Settings</h1>
@@ -439,6 +459,190 @@ function order_sync_settings_page() {
                                     var sel = document.querySelector('input[name="style_variant"]:checked');
                                     if(sel) applyBrandingVariant(sel.value);
                                     if(colorInput) applyPrimaryColor(colorInput.value);
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row" colspan="2"><h3 style="margin-top:20px;margin-bottom:10px">PWA Icon Settings</h3></th>
+                        </tr>
+                        <tr>
+                            <th scope="row">App Name (when installed)</th>
+                            <td>
+                                <input type="text" name="pwa_app_name" id="pwa_app_name" value="<?php echo esc_attr( $pwa_app_name ); ?>" class="regular-text" maxlength="30" />
+                                <p class="description">This name appears under the icon on users' home screens when they install the PWA.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Icon Text (1-4 letters)</th>
+                            <td>
+                                <input type="text" name="pwa_icon_text" id="pwa_icon_text" value="<?php echo esc_attr( $pwa_icon_text ); ?>" class="regular-text" maxlength="4" style="width:80px;text-transform:uppercase" />
+                                <p class="description">Short identifier shown on the icon itself (e.g., "BK", "SUB", "SALE").</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Icon Style</th>
+                            <td>
+                                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+                                    <label style="display:flex;align-items:center;gap:8px">
+                                        <input type="radio" name="pwa_icon_style" value="simple" <?php checked( $pwa_icon_style, 'simple' ); ?> />
+                                        <strong>Simple Text</strong> - Clean text on colored background
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:8px">
+                                        <input type="radio" name="pwa_icon_style" value="circle" <?php checked( $pwa_icon_style, 'circle' ); ?> />
+                                        <strong>Circle Background</strong> - Text in a circular frame
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:8px">
+                                        <input type="radio" name="pwa_icon_style" value="bordered" <?php checked( $pwa_icon_style, 'bordered' ); ?> />
+                                        <strong>Bordered Frame</strong> - Text with decorative border
+                                    </label>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Icon Colors</th>
+                            <td>
+                                <div style="margin-bottom:12px">
+                                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                                        <input type="checkbox" name="pwa_icon_use_primary" id="pwa_icon_use_primary" value="1" <?php checked( $pwa_icon_use_primary, 1 ); ?> />
+                                        Use Primary Color for icon background
+                                    </label>
+                                </div>
+                                <div id="pwa_custom_bg_color_wrapper" style="margin-bottom:12px;<?php echo $pwa_icon_use_primary ? 'display:none;' : ''; ?>">
+                                    <label>Custom Background Color: <input type="color" name="pwa_icon_bg_color" id="pwa_icon_bg_color" value="<?php echo esc_attr( $pwa_icon_bg_color ); ?>" /></label>
+                                </div>
+                                <div style="margin-bottom:8px">
+                                    <label>Text Color: <input type="color" name="pwa_icon_text_color" id="pwa_icon_text_color" value="<?php echo esc_attr( $pwa_icon_text_color ); ?>" /></label>
+                                </div>
+                                <p class="description">Icon colors can use the primary color above or be customized independently.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Icon Preview</th>
+                            <td>
+                                <div id="pwa_icon_preview_container" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+                                    <div>
+                                        <div style="margin-bottom:8px;font-weight:600">192x192</div>
+                                        <div id="pwa_icon_preview_192" style="width:96px;height:96px;border:1px solid #ddd;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center"></div>
+                                    </div>
+                                    <div>
+                                        <div style="margin-bottom:8px;font-weight:600">512x512</div>
+                                        <div id="pwa_icon_preview_512" style="width:128px;height:128px;border:1px solid #ddd;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center"></div>
+                                    </div>
+                                </div>
+                                <p class="description" style="margin-top:12px">Live preview of your PWA icon. Changes update in real-time.</p>
+                                <script>
+                                (function(){
+                                    function generateIconSVG(size, text, style, bgColor, textColor) {
+                                        var cornerRadius = Math.round(size * 0.125);
+                                        var fontSize = Math.round(size * 0.23);
+                                        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">';
+                                        
+                                        // Background rect
+                                        svg += '<rect width="100%" height="100%" fill="' + bgColor + '" rx="' + cornerRadius + '"/>';
+                                        
+                                        // Style-specific decorations
+                                        if (style === 'circle') {
+                                            var circleRadius = size * 0.35;
+                                            var centerX = size / 2;
+                                            var centerY = size / 2;
+                                            svg += '<circle cx="' + centerX + '" cy="' + centerY + '" r="' + circleRadius + '" fill="rgba(255,255,255,0.2)" stroke="' + textColor + '" stroke-width="3"/>';
+                                        } else if (style === 'bordered') {
+                                            var borderPadding = size * 0.1;
+                                            var borderRadius = Math.round(size * 0.08);
+                                            svg += '<rect x="' + borderPadding + '" y="' + borderPadding + '" width="' + (size - borderPadding * 2) + '" height="' + (size - borderPadding * 2) + '" fill="none" stroke="' + textColor + '" stroke-width="3" rx="' + borderRadius + '"/>';
+                                        }
+                                        
+                                        // Text
+                                        svg += '<text x="50%" y="55%" font-size="' + fontSize + '" fill="' + textColor + '" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-weight="bold">' + text + '</text>';
+                                        svg += '</svg>';
+                                        return svg;
+                                    }
+                                    
+                                    function updateIconPreview() {
+                                        try {
+                                            var textInput = document.getElementById('pwa_icon_text');
+                                            var text = textInput ? (textInput.value || 'BK').toUpperCase().substring(0, 4) : 'BK';
+                                            
+                                            var styleInput = document.querySelector('input[name="pwa_icon_style"]:checked');
+                                            var style = styleInput ? styleInput.value : 'simple';
+                                            
+                                            var usePrimaryCheckbox = document.getElementById('pwa_icon_use_primary');
+                                            var usePrimary = usePrimaryCheckbox ? usePrimaryCheckbox.checked : true;
+                                            
+                                            var primaryColorInput = document.querySelector('input[name="primary_color"]');
+                                            var customBgInput = document.getElementById('pwa_icon_bg_color');
+                                            var bgColor = usePrimary && primaryColorInput ? primaryColorInput.value : (customBgInput ? customBgInput.value : '#2d6cdf');
+                                            
+                                            var textColorInput = document.getElementById('pwa_icon_text_color');
+                                            var textColor = textColorInput ? textColorInput.value : '#ffffff';
+                                            
+                                            var svg192 = generateIconSVG(192, text, style, bgColor, textColor);
+                                            var svg512 = generateIconSVG(512, text, style, bgColor, textColor);
+                                            
+                                            var preview192 = document.getElementById('pwa_icon_preview_192');
+                                            var preview512 = document.getElementById('pwa_icon_preview_512');
+                                            
+                                            if (preview192) {
+                                                preview192.innerHTML = svg192;
+                                                var svg192El = preview192.querySelector('svg');
+                                                if (svg192El) {
+                                                    svg192El.style.width = '100%';
+                                                    svg192El.style.height = '100%';
+                                                }
+                                            }
+                                            if (preview512) {
+                                                preview512.innerHTML = svg512;
+                                                var svg512El = preview512.querySelector('svg');
+                                                if (svg512El) {
+                                                    svg512El.style.width = '100%';
+                                                    svg512El.style.height = '100%';
+                                                }
+                                            }
+                                        } catch(e) {
+                                            console.error('Icon preview error:', e);
+                                        }
+                                    }
+                                    
+                                    // Wire up all inputs with null checks
+                                    var textInput = document.getElementById('pwa_icon_text');
+                                    if (textInput) textInput.addEventListener('input', updateIconPreview);
+                                    
+                                    document.querySelectorAll('input[name="pwa_icon_style"]').forEach(function(r) {
+                                        r.addEventListener('change', updateIconPreview);
+                                    });
+                                    
+                                    var textColorInput = document.getElementById('pwa_icon_text_color');
+                                    if (textColorInput) textColorInput.addEventListener('input', updateIconPreview);
+                                    
+                                    var bgColorInput = document.getElementById('pwa_icon_bg_color');
+                                    if (bgColorInput) bgColorInput.addEventListener('input', updateIconPreview);
+                                    
+                                    var usePrimaryCheckbox = document.getElementById('pwa_icon_use_primary');
+                                    if (usePrimaryCheckbox) {
+                                        usePrimaryCheckbox.addEventListener('change', function() {
+                                            var wrapper = document.getElementById('pwa_custom_bg_color_wrapper');
+                                            if (wrapper) wrapper.style.display = this.checked ? 'none' : 'block';
+                                            updateIconPreview();
+                                        });
+                                    }
+                                    
+                                    var primaryColorInput = document.querySelector('input[name="primary_color"]');
+                                    if (primaryColorInput) {
+                                        primaryColorInput.addEventListener('input', function() {
+                                            var usePrimaryCheckbox = document.getElementById('pwa_icon_use_primary');
+                                            if (usePrimaryCheckbox && usePrimaryCheckbox.checked) {
+                                                updateIconPreview();
+                                            }
+                                        });
+                                    }
+                                    
+                                    // Initialize preview on page load
+                                    if (document.readyState === 'loading') {
+                                        document.addEventListener('DOMContentLoaded', updateIconPreview);
+                                    } else {
+                                        updateIconPreview();
+                                    }
                                 })();
                                 </script>
                             </td>

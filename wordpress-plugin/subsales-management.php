@@ -2,13 +2,13 @@
 /**
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
- * Description: Complete fundraising/subsales order management system with embedded PWA for mobile order entry. Features multi-team support, address autocomplete with GPS enrichment, delivery manifest generation with route optimization, and comprehensive audit logging. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in Subsales → Settings.
- * Version: 2.2.1.56
+ * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
+ * Version: 2.0.0.95
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
- * Tested up to: 6.9
- * Requires PHP: 8.1
+ * Tested up to: 6.4
+ * Requires PHP: 7.4
  * License: MIT
  * License URI: https://opensource.org/licenses/MIT
  * Text Domain: subsales-management
@@ -34,14 +34,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.2.1.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.95' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 
-// Load Composer autoloader for QR code library
-if ( file_exists( SUBSALES_PLUGIN_PATH . 'vendor/autoload.php' ) ) {
-    require_once SUBSALES_PLUGIN_PATH . 'vendor/autoload.php';
+// ---- Implementation (merged from legacy bkmb file) ----
+
+// Optional Composer autoload: if a vendor/autoload.php exists in the plugin directory
+// require it so composer-installed libraries (for example PhpSpreadsheet) are available.
+// This keeps the plugin functional when vendor/ isn't present (fallbacks remain).
+$subsales_vendor_autoload = __DIR__ . '/vendor/autoload.php';
+if ( file_exists( $subsales_vendor_autoload ) ) {
+    require_once $subsales_vendor_autoload;
 }
 
 // Load modular classes
@@ -69,8 +74,6 @@ Subsales_PWA::init();
 // Initialize Orders
 Subsales_Orders::init();
 
-// Early intercept for manifest viewer to prevent WordPress admin wrapper
-add_action( 'admin_init', 'subsales_intercept_manifest_viewer', 1 );
 
 // Activation/Deactivation hooks
 register_activation_hook( __FILE__, 'subsales_activate' );
@@ -90,13 +93,6 @@ function subsales_activate() {
     // Ensure PWA page exists with default slug
     $slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     order_sync_ensure_pwa_page( $slug );
-    
-    // Register rewrite rules and flush
-    subsales_register_route_rewrite();
-    flush_rewrite_rules();
-    
-    // Set flag to show rewrite flush notice (in case flush doesn't work immediately)
-    set_transient( 'subsales_needs_rewrite_flush', true, DAY_IN_SECONDS );
     
     // Set activation flag for admin notice and onboarding
     set_transient( 'subsales_activated', true, 30 );
@@ -124,28 +120,6 @@ function subsales_activate() {
 function subsales_deactivate() {
     // Nothing to do on deactivation
     // Data deletion preference is handled via modal before deactivation
-}
-
-/**
- * Check version on admin_init and flush rewrites if version changed
- * This ensures rewrite rules are updated when the plugin is updated
- */
-add_action( 'admin_init', 'subsales_check_version_and_flush' );
-function subsales_check_version_and_flush() {
-    $saved_version = get_option( 'subsales_db_version' );
-    if ( $saved_version !== SUBSALES_VERSION ) {
-        // Register the route rewrite rules
-        subsales_register_route_rewrite();
-        // Flush rewrite rules to ensure new rules take effect
-        flush_rewrite_rules();
-        // Update saved version
-        update_option( 'subsales_db_version', SUBSALES_VERSION );
-        
-        subsales_log( 'INFO', 'system', 'Rewrite rules flushed after version update', array(
-            'old_version' => $saved_version,
-            'new_version' => SUBSALES_VERSION
-        ), 'admin' );
-    }
 }
 
 /**
@@ -192,7 +166,7 @@ function subsales_deactivation_modal() {
                     </div>
                     
                     <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
-                        You can change this setting anytime in <strong>Subsales → Settings</strong>
+                        You can change this setting anytime in <strong>BKMB Subsales → Settings</strong>
                     </p>
                 <?php else : ?>
                     <p>Are you sure you want to deactivate Subsales Management?</p>
@@ -222,7 +196,7 @@ function subsales_deactivation_modal() {
                     </div>
                     
                     <p style="font-size: 12px; color: #646970; margin-top: 15px; margin-bottom: 0;">
-                        Change deletion setting in <strong>Subsales → Settings</strong>
+                        Change deletion setting in <strong>BKMB Subsales → Settings</strong>
                     </p>
                 <?php endif; ?>
             </div>
@@ -352,6 +326,7 @@ add_action( 'admin_notices', 'subsales_debug_mode_notice' );
 add_action( 'admin_footer', 'subsales_debug_mode_badge' );
 
 function subsales_debug_mode_notice() {
+    // Debug notice removed - using only the debug toggle box on logs page and floating badge
     return;
 }
 
@@ -383,26 +358,6 @@ function subsales_debug_mode_badge() {
     });
     </script>
     <?php
-}
-
-// Add admin notice to flush rewrite rules if needed
-add_action( 'admin_notices', 'subsales_route_rewrite_notice' );
-function subsales_route_rewrite_notice() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        return;
-    }
-    
-    // Check if we need to show the flush notice
-    if ( get_transient( 'subsales_needs_rewrite_flush' ) ) {
-        ?>
-        <div class="notice notice-warning is-dismissible">
-            <p><strong>Subsales Management:</strong> Route QR codes may not work until you flush rewrite rules. 
-            <a href="<?php echo admin_url( 'options-permalink.php' ); ?>">Visit Permalinks Settings</a> and click "Save Changes" (no changes needed).</p>
-        </div>
-        <?php
-        // Clear the transient after showing once
-        delete_transient( 'subsales_needs_rewrite_flush' );
-    }
 }
 
 // Auto-regenerate ZIP index on admin_init if missing but ZIP files exist
@@ -756,7 +711,7 @@ function order_sync_maybe_show_onboarding() {
                     <p class="subsales-step-description">Choose a brand name that will appear throughout your subsales portal and mobile app.</p>
                     <div class="subsales-form-group">
                         <label for="onb_branding">Brand Name</label>
-                        <input id="onb_branding" type="text" value="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" placeholder="e.g., Subsales, My Fundraiser" />
+                        <input id="onb_branding" type="text" value="<?php echo esc_attr( get_option( 'subsales_branding', 'Subsales' ) ); ?>" placeholder="e.g., BKMB Subsales" />
                         <p class="description">This will be displayed in the portal header and mobile app.</p>
                     </div>
                 </div>
@@ -1168,6 +1123,16 @@ function order_sync_admin_menu() {
         'order_sync_delivery_page'
     );
     
+    // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
+    // add_submenu_page(
+    //     'subsales-management',
+    //     'Address Extracts',
+    //     'Address Extracts',
+    //     'manage_options',
+    //     'subsales-address-extracts',
+    //     'subsales_address_extracts_page'
+    // );
+    
     add_submenu_page(
         'subsales-management',
         'System Logs',
@@ -1191,16 +1156,6 @@ function order_sync_admin_menu() {
         'subsales-pwa-sessions',
         'subsales_pwa_sessions_page'
     );
-    
-    // Hidden page for manifest viewer (not shown in menu)
-    add_submenu_page(
-        null, // Hidden from menu
-        'Delivery Manifest',
-        'Delivery Manifest',
-        'manage_options',
-        'subsales-manifest-viewer',
-        'subsales_manifest_viewer_page'
-    );
 }
 
 // AJAX handler to search/preview address across all sources
@@ -1209,7 +1164,6 @@ add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_ope
 add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
 add_action( 'wp_ajax_subsales_toggle_debug', 'subsales_toggle_debug_ajax' );
 add_action( 'wp_ajax_subsales_get_active_sessions_count', 'subsales_get_active_sessions_count_ajax' );
-add_action( 'wp_ajax_subsales_get_session_details', 'subsales_get_session_details_ajax' );
 add_action( 'wp_ajax_subsales_match_addresses_batch', 'subsales_match_addresses_batch_ajax' );
 
 // Background matching AJAX handlers
@@ -1320,40 +1274,6 @@ function subsales_get_active_sessions_count_ajax() {
     
     $active_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
     wp_send_json_success( array( 'count' => $active_count ) );
-}
-
-// AJAX handler for getting session details and heartbeat history
-function subsales_get_session_details_ajax() {
-    check_ajax_referer( 'subsales_session_details', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $session_id = isset( $_POST['session_id'] ) ? sanitize_text_field( $_POST['session_id'] ) : '';
-    
-    if ( empty( $session_id ) ) {
-        wp_send_json_error( 'Session ID required' );
-    }
-    
-    // Get session data
-    global $wpdb;
-    $sessions_table = $wpdb->prefix . 'ss_pwa_sessions';
-    $session = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$sessions_table} WHERE session_id = %s",
-        $session_id
-    ), ARRAY_A );
-    
-    if ( ! $session ) {
-        wp_send_json_error( 'Session not found' );
-    }
-    
-    // Get heartbeat history
-    $heartbeats = Subsales_Database::get_session_heartbeats( $session_id, 100 );
-    
-    wp_send_json_success( array(
-        'session' => $session,
-        'heartbeats' => $heartbeats
-    ) );
 }
 
 // AJAX handler for debug mode toggle
@@ -1611,6 +1531,126 @@ function subsales_search_address_preview() {
 
     $total = $all_results['local']['count'];
     wp_send_json_success( array( 'sources' => $all_results, 'total' => $total, 'zips_searched' => $served_zips ) );
+}
+
+// Helper: Search OpenAddresses CSV for specific address
+function subsales_search_openaddresses( $address, $zip ) {
+    $upload = wp_upload_dir();
+    $csv_path = get_option( 'subsales_openaddresses_path', trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/connecticut.csv' );
+    
+    if ( ! file_exists( $csv_path ) ) return array();
+    
+    // Extract house number from address
+    $number = '';
+    $street_search = strtolower( trim( $address ) );
+    if ( preg_match( '/^(\d+)\s+(.+)$/i', $address, $matches ) ) {
+        $number = $matches[1];
+        $street_search = strtolower( trim( $matches[2] ) );
+    }
+    
+    $results = array();
+    $handle = fopen( $csv_path, 'r' );
+    if ( $handle === false ) return array();
+    
+    $header = fgetcsv( $handle );
+    if ( ! $header ) {
+        fclose( $handle );
+        return array();
+    }
+    
+    $col_map = array();
+    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'REGION', 'POSTCODE' ) as $col ) {
+        $idx = array_search( $col, $header );
+        if ( $idx !== false ) $col_map[ $col ] = $idx;
+    }
+    
+    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
+        if ( trim( $row[ $col_map['POSTCODE'] ] ) !== $zip ) continue;
+        
+        $row_number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
+        $row_street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? strtolower( trim( $row[ $col_map['STREET'] ] ) ) : '';
+        
+        // Match by number and partial street name
+        if ( $number && $row_number !== $number ) continue;
+        if ( strpos( $row_street, $street_search ) === false && strpos( $street_search, $row_street ) === false ) continue;
+        
+        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
+        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
+        
+        $label = $row_number . ' ' . $row[ $col_map['STREET'] ];
+        if ( $unit ) $label .= ' Unit ' . $unit;
+        if ( $city ) $label .= ', ' . $city;
+        
+        $results[] = array(
+            'label' => $label,
+            'housenumber' => $row_number,
+            'street' => $row[ $col_map['STREET'] ],
+            'unit' => $unit,
+            'city' => $city,
+            'state' => isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT',
+            'zip' => $zip,
+            'lat' => isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null,
+            'lng' => isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null,
+            'source' => 'openaddresses'
+        );
+    }
+    
+    fclose( $handle );
+    return $results;
+}
+
+// Helper: Search OSM Overpass for specific address
+function subsales_search_osm_address( $address, $zip ) {
+    // Extract street name from address
+    $parts = explode( ' ', trim( $address ) );
+    $number = '';
+    $street = $address;
+    
+    if ( preg_match( '/^(\d+)\s+(.+)$/', $address, $matches ) ) {
+        $number = $matches[1];
+        $street = $matches[2];
+    }
+    
+    $ql = '[out:json][timeout:10];';
+    if ( $number ) {
+        $ql .= '(node["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];';
+        $ql .= 'way["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];);';
+    } else {
+        $ql .= '(node["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];';
+        $ql .= 'way["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];);';
+    }
+    $ql .= 'out center;';
+    
+    $resp = wp_remote_post( 'https://overpass-api.de/api/interpreter', array(
+        'body' => $ql,
+        'timeout' => 15
+    ) );
+    
+    if ( is_wp_error( $resp ) ) return array();
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    
+    $results = array();
+    if ( isset( $json['elements'] ) ) {
+        foreach ( $json['elements'] as $el ) {
+            $tags = isset( $el['tags'] ) ? $el['tags'] : array();
+            if ( empty( $tags['addr:street'] ) ) continue;
+            
+            $results[] = array(
+                'label' => ( isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] . ' ' : '' ) . $tags['addr:street'],
+                'housenumber' => isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] : '',
+                'street' => $tags['addr:street'],
+                'city' => isset( $tags['addr:city'] ) ? $tags['addr:city'] : '',
+                'state' => isset( $tags['addr:state'] ) ? $tags['addr:state'] : '',
+                'zip' => isset( $tags['addr:postcode'] ) ? $tags['addr:postcode'] : $zip,
+                'lat' => isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null ),
+                'lng' => isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null ),
+                'source' => 'osm'
+            );
+        }
+    }
+    return $results;
 }
 
 // AJAX handler to delete ZIP extract files
@@ -2302,6 +2342,208 @@ function subsales_reassign_zips_ajax() {
     ) );
 }
 
+// Helper: generate a single ZIP file by querying Overpass API for nodes/ways with addr:postcode and addr:housenumber
+function subsales_generate_zip_from_overpass( $zip, $base_dir ) {
+    $zip = preg_replace( '/[^0-9]/', '', (string) $zip );
+    if ( strlen( $zip ) !== 5 ) return array( 'error' => 'invalid_zip' );
+
+    // Two-phase query: First get addresses explicitly tagged with this postcode,
+    // then get the bounding box of the postal code area and grab all addresses within it
+    // This catches addresses that don't have addr:postcode explicitly tagged
+    
+    $ql = '[out:json][timeout:25];';
+    // Phase 1: Get all elements tagged with this postcode
+    $ql .= '(node["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    $ql .= 'way["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    $ql .= 'relation["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    // Phase 2: Get boundary/postal_code area to find addresses within it
+    $ql .= 'area["postal_code"="' . esc_attr( $zip ) . '"]->.searchArea;';
+    $ql .= '(node["addr:housenumber"]["addr:street"](area.searchArea);';
+    $ql .= 'way["addr:housenumber"]["addr:street"](area.searchArea););';
+    $ql .= ');out center;';
+
+    $overpass_url = 'https://overpass-api.de/api/interpreter';
+    $args = array(
+        'body' => $ql,
+        'timeout' => 60,
+        'headers' => array( 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8' ),
+    );
+    $resp = wp_remote_post( $overpass_url, $args );
+    if ( is_wp_error( $resp ) ) return array( 'error' => 'overpass_error', 'message' => $resp->get_error_message() );
+    $code = wp_remote_retrieve_response_code( $resp );
+    
+    // Return detailed error for non-200 responses
+    if ( $code !== 200 ) {
+        $body = wp_remote_retrieve_body( $resp );
+        $error_msg = '';
+        
+        if ( $code === 429 ) {
+            $error_msg = 'Rate limited - please wait a few minutes before trying again';
+        } elseif ( $code === 504 || $code === 503 ) {
+            $error_msg = 'Server timeout/unavailable - try again later';
+        } else {
+            $error_msg = 'HTTP ' . $code . ( $body ? ' - ' . substr( $body, 0, 100 ) : '' );
+        }
+        
+        return array( 'error' => 'overpass_status', 'status' => $code, 'message' => $error_msg );
+    }
+
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    if ( ! $json || ! isset( $json['elements'] ) ) return array( 'error' => 'no_elements', 'message' => 'No address data returned from API' );
+
+    $out = array(); $seen = array();
+    $total_elements = count( $json['elements'] );
+    $skipped = 0;
+    
+    foreach ( $json['elements'] as $el ) {
+        $tags = isset( $el['tags'] ) ? $el['tags'] : array();
+        if ( empty( $tags['addr:housenumber'] ) || empty( $tags['addr:street'] ) ) {
+            $skipped++;
+            continue;
+        }
+        
+        // Build address with unit/apartment number if present
+        $address_parts = array( $tags['addr:housenumber'] );
+        
+        // Add unit/apartment/floor/door if available
+        if ( ! empty( $tags['addr:unit'] ) ) {
+            $address_parts[] = 'Unit ' . $tags['addr:unit'];
+        } elseif ( ! empty( $tags['addr:flr'] ) ) {
+            $address_parts[] = 'Floor ' . $tags['addr:flr'];
+        }
+        
+        if ( ! empty( $tags['addr:door'] ) ) {
+            $address_parts[] = 'Door ' . $tags['addr:door'];
+        }
+        
+        $address_parts[] = $tags['addr:street'];
+        
+        $label_parts = array();
+        $label_parts[] = implode( ' ', $address_parts );
+        
+        // Add housename/building name if present
+        if ( ! empty( $tags['addr:housename'] ) ) {
+            $label_parts[] = $tags['addr:housename'];
+        }
+        
+        if ( ! empty( $tags['addr:city'] ) ) $label_parts[] = $tags['addr:city'];
+        if ( ! empty( $tags['addr:state'] ) ) $label_parts[] = $tags['addr:state'];
+        $label_parts[] = $zip;
+        $label = implode( ', ', $label_parts );
+
+        $lat = isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null );
+        $lon = isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null );
+
+        $k = md5( $label ); if ( isset( $seen[ $k ] ) ) continue; $seen[ $k ] = true;
+
+        $out[] = array( 
+            'id' => 'osm-' . $el['type'] . '-' . $el['id'], 
+            'label' => $label, 
+            'street' => $tags['addr:street'], 
+            'housenumber' => $tags['addr:housenumber'],
+            'unit' => ( ! empty( $tags['addr:unit'] ) ? $tags['addr:unit'] : '' ),
+            'floor' => ( ! empty( $tags['addr:flr'] ) ? $tags['addr:flr'] : '' ),
+            'door' => ( ! empty( $tags['addr:door'] ) ? $tags['addr:door'] : '' ),
+            'housename' => ( ! empty( $tags['addr:housename'] ) ? $tags['addr:housename'] : '' ),
+            'city' => (isset($tags['addr:city'])?$tags['addr:city']:''), 
+            'state' => (isset($tags['addr:state'])?$tags['addr:state']:''), 
+            'zip' => $zip, 
+            'lat' => $lat, 
+            'lng' => $lon 
+        );
+    }
+
+    return array( 
+        'addresses' => $out,
+        'total_elements' => $total_elements,
+        'skipped' => $skipped
+    );
+}
+
+// Helper: Fetch addresses from Nominatim geocoding service
+function subsales_fetch_openaddresses_data( $zip ) {
+    // OpenAddresses.io provides bulk CSV files with comprehensive address coverage
+    // The admin can download the full state file and extract only needed ZIP codes
+    // to create a smaller, faster-to-read filtered file
+    
+    $upload = wp_upload_dir();
+    // First try filtered file (created by "Extract ZIP Codes" button)
+    $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses.csv';
+    
+    // Fall back to full file if filtered doesn't exist
+    if ( ! file_exists( $csv_path ) ) {
+        $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses-full.csv';
+    }
+    
+    if ( ! file_exists( $csv_path ) ) {
+        return array();
+    }
+    
+    $out = array();
+    $handle = fopen( $csv_path, 'r' );
+    
+    if ( $handle === false ) return array();
+    
+    // Read header row
+    $header = fgetcsv( $handle );
+    if ( ! $header ) {
+        fclose( $handle );
+        return array();
+    }
+    
+    // Find column indices
+    $col_map = array();
+    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'DISTRICT', 'REGION', 'POSTCODE' ) as $col ) {
+        $idx = array_search( $col, $header );
+        if ( $idx !== false ) $col_map[ $col ] = $idx;
+    }
+    
+    // Read rows and filter by ZIP
+    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
+        
+        $postcode = trim( $row[ $col_map['POSTCODE'] ] );
+        if ( $postcode !== $zip ) continue;
+        
+        $number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
+        $street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? trim( $row[ $col_map['STREET'] ] ) : '';
+        
+        if ( empty( $number ) || empty( $street ) ) continue;
+        
+        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
+        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
+        $state = isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT';
+        $lat = isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null;
+        $lng = isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null;
+        
+        $label_parts = array( $number . ' ' . $street );
+        if ( $unit ) $label_parts[0] .= ' Unit ' . $unit;
+        if ( $city ) $label_parts[] = $city;
+        if ( $state ) $label_parts[] = $state;
+        $label_parts[] = $zip;
+        
+        $out[] = array(
+            'id' => 'oa-' . md5( $number . $street . $unit . $zip ),
+            'label' => implode( ', ', $label_parts ),
+            'street' => $street,
+            'housenumber' => $number,
+            'unit' => $unit,
+            'floor' => '',
+            'door' => '',
+            'housename' => '',
+            'city' => $city,
+            'state' => $state,
+            'zip' => $zip,
+            'lat' => $lat,
+            'lng' => $lng
+        );
+    }
+    
+    fclose( $handle );
+    return $out;
+}
+
 // REST API callback: serve ZIP index dynamically (always current)
 function subsales_get_zip_index_api( $request ) {
     // Get uploads directory for the ZIP data files
@@ -2410,6 +2652,99 @@ function subsales_get_generation_logs( $limit = 10 ) {
     return array_slice( $logs, 0, $limit );
 }
 
+/**
+ * Generate ZIP code JSON files from database (Phase 7)
+ * Filters to residential addresses only for PWA consumption
+ * 
+ * @param array $zip_codes Array of ZIP codes to generate
+ * @return array Results with counts per ZIP
+ */
+function subsales_generate_zip_json_from_database( $zip_codes = null ) {
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Use configured ZIPs if none provided
+    if ( $zip_codes === null ) {
+        $zip_codes = get_option( 'subsales_served_zips', array() );
+        if ( ! is_array( $zip_codes ) ) {
+            $zip_codes = array_filter( array_map( 'trim', explode( ',', $zip_codes ) ) );
+        }
+    }
+    
+    if ( empty( $zip_codes ) ) {
+        return array( 'error' => 'No ZIP codes configured' );
+    }
+    
+    $upload = wp_upload_dir();
+    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
+    
+    // Ensure directory exists
+    if ( ! is_dir( $base_dir ) ) {
+        wp_mkdir_p( $base_dir );
+    }
+    
+    $results = array();
+    
+    foreach ( $zip_codes as $zip ) {
+        // Query RESIDENTIAL addresses only for this ZIP
+        $addresses = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$addresses_table} 
+             WHERE zip = %s 
+             AND type = 'residential'
+             ORDER BY street, house_number",
+            $zip
+        ), ARRAY_A );
+        
+        // Format for PWA compatibility
+        $formatted = array();
+        foreach ( $addresses as $addr ) {
+            $label_parts = array( $addr['house_number'] . ' ' . $addr['street'] );
+            if ( ! empty( $addr['unit'] ) ) {
+                $label_parts[0] .= ' Unit ' . $addr['unit'];
+            }
+            if ( ! empty( $addr['city'] ) ) {
+                $label_parts[] = $addr['city'];
+            }
+            if ( ! empty( $addr['state'] ) ) {
+                $label_parts[] = $addr['state'];
+            }
+            $label_parts[] = $addr['zip'];
+            
+            $formatted[] = array(
+                'id' => 'db-' . $addr['id'],
+                'label' => implode( ', ', $label_parts ),
+                'street' => $addr['street'],
+                'housenumber' => $addr['house_number'],
+                'unit' => $addr['unit'],
+                'floor' => '',
+                'door' => '',
+                'housename' => '',
+                'city' => $addr['city'],
+                'state' => $addr['state'],
+                'zip' => $addr['zip'],
+                'lat' => (float) $addr['lat'],
+                'lng' => (float) $addr['lng']
+            );
+        }
+        
+        // Write JSON file
+        $file_path = trailingslashit( $base_dir ) . $zip . '.json';
+        $written = file_put_contents( $file_path, wp_json_encode( $formatted, JSON_PRETTY_PRINT ) );
+        
+        $results[ $zip ] = array(
+            'count' => count( $formatted ),
+            'file' => $file_path,
+            'bytes' => $written,
+            'source' => 'database'
+        );
+    }
+    
+    // Update zip-index.json
+    subsales_update_zip_index();
+    
+    return $results;
+}
+
 // Enqueue admin assets for settings page (media uploader for header image)
 add_action( 'admin_enqueue_scripts', 'order_sync_admin_assets' );
 function order_sync_admin_assets( $hook ) {
@@ -2438,14 +2773,24 @@ function order_sync_admin_assets( $hook ) {
 }
 
 // Teams and Orders pages, DB functions, REST routes, etc. (merged implementation)
+// Implementation merged from legacy files; shortcode name is 'subsales_pwa'.
 
+// -- Teams management, orders page, DB creation and helpers --
+// ============================================================
 // DATABASE WRAPPER FUNCTIONS (for backward compatibility)
+// All database operations delegated to Subsales_Database class
+// ============================================================
+
 function order_sync_create_table() {
     Subsales_Database::create_tables();
 }
 
 function order_sync_add_team( $name, $access_code, $description = '', $status = 'active' ) {
     return Subsales_Database::add_team( $name, $access_code, $description, $status );
+}
+
+function order_sync_remove_team( $team_id ) {
+    return Subsales_Database::remove_team( $team_id );
 }
 
 function order_sync_get_teams() {
@@ -2460,15 +2805,56 @@ function subsales_log( $level, $category, $message, $context = array(), $source 
     Subsales_Database::log( $level, $category, $message, $context, $source, $user_id, $user_name );
 }
 
+function subsales_log_order( $action, $order_id, $user_id = null, $user_name = '', $context = array(), $source = 'admin' ) {
+    Subsales_Database::log_order( $action, $order_id, $user_id, $user_name, $context, $source );
+}
+
 function subsales_log_auth( $action, $user_id = null, $user_name = '', $context = array(), $source = 'pwa' ) {
     Subsales_Database::log_auth( $action, $user_id, $user_name, $context, $source );
+}
+
+function subsales_log_api_error( $endpoint, $error_message, $context = array(), $source = 'api' ) {
+    Subsales_Database::log_api_error( $endpoint, $error_message, $context, $source );
+}
+
+function subsales_cleanup_old_logs() {
+    Subsales_Database::cleanup_old_logs();
+}
+
+function subsales_check_debug_timeout() {
+    Subsales_Database::check_debug_timeout();
+}
+
+function subsales_log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
+    return Subsales_Database::log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason, $source );
+}
+
+function order_sync_add_team_member( $team_id, $name, $email, $role = 'member' ) {
+    return Subsales_Database::add_team_member( $team_id, $name, $email, $role );
+}
+
+function order_sync_remove_team_member( $member_id ) {
+    return Subsales_Database::remove_team_member( $member_id );
+}
+
+function order_sync_get_team_members_by_team( $team_id ) {
+    return Subsales_Database::get_team_members_by_team( $team_id );
 }
 
 function order_sync_verify_team_member( $email, $team_id ) {
     return Subsales_Database::verify_team_member( $email, $team_id );
 }
 
+// ============================================================
+// End of Database Wrapper Functions
+// ============================================================
+
+
+// ============================================================
 // REST API ROUTES
+// Routes now registered via Subsales_REST_API class
+// Handler functions remain below for compatibility
+// ============================================================
 
 
 // AJAX endpoint for admin orders filtering/pagination
@@ -2728,11 +3114,11 @@ function order_sync_fetch_orders_ajax() {
                 $entered_by_name = $user_row->name;
             }
         }
-        // Normalize created_at to site-local timezone for display and timestamp calculations.
-        // Stored DB values may be in GMT/UTC; use get_date_from_gmt() to convert to site local time.
+        // Normalize created_at to site-local timezone for display.
+        // Orders are stored in GMT, convert to local time for display.
         $created_gmt = isset( $r['created_at'] ) ? $r['created_at'] : null;
         if ( $created_gmt ) {
-            // get_date_from_gmt returns a formatted date string in the site's timezone
+            // Convert from GMT to local time using WordPress timezone
             $created_local_str = get_date_from_gmt( $created_gmt );
             $created_ts = strtotime( $created_local_str );
             $created_formatted = date_i18n( 'M j, Y g:i A', $created_ts );
@@ -2791,6 +3177,9 @@ function order_sync_fetch_orders_ajax() {
 
     wp_send_json_success( $response );
 }
+
+// AJAX endpoint to run migration helper from the admin UI (runs under current user, requires manage_options)
+/* Migration AJAX handler removed per request. Migration tools (if any) should be removed separately. */
 
 // AJAX endpoint to run initialization from the onboarding wizard
 add_action( 'wp_ajax_subsales_run_init', 'order_sync_run_init_ajax' );
@@ -2945,9 +3334,14 @@ function order_sync_handle_generate_admin_csv() {
 
     global $wpdb;
     $table = $wpdb->prefix . 'ss_orders';
-    
-    // Fetch all non-deleted orders
-    $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
+    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+    }
 
     $configured_products = order_sync_get_products_config();
 
@@ -3316,11 +3710,17 @@ function order_sync_handle_generate_delivery_pdf() {
         wp_die( 'Could not geocode starting address. Please check your Google Maps API key and address.' );
     }
 
-    // Fetch ALL orders (delivery_date is for display only, not filtering)
-    $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
+    // Fetch orders
+    if ( ! empty( $delivery_date ) ) {
+        $start_dt = $delivery_date . ' 00:00:00';
+        $end_dt = $delivery_date . ' 23:59:59';
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
+    }
 
     if ( empty( $rows ) ) {
-        $msg = rawurlencode( 'No orders found' );
+        $msg = rawurlencode( 'No orders found for ' . ( $delivery_date ?: 'all dates' ) );
         wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
         exit;
     }
@@ -3371,17 +3771,17 @@ function order_sync_handle_generate_delivery_pdf() {
         $total_qty = array_sum( array_values( $products_map ) );
         if ( $total_qty <= 0 ) continue;
 
-        $address = isset( $od['address'] ) ? (string) $od['address'] : '';
-        $unitFloorApt = isset( $od['unitFloorApt'] ) ? (string) $od['unitFloorApt'] : '';
+        $address = isset( $od['address'] ) ? $od['address'] : '';
+        $unitFloorApt = isset( $od['unitFloorApt'] ) ? $od['unitFloorApt'] : '';
         if ( ! empty( $unitFloorApt ) ) {
             $address .= ', ' . $unitFloorApt;
         }
         
         if ( empty( $address ) ) continue;
 
-        $customer = isset( $od['customer'] ) ? (string) $od['customer'] : ( isset( $od['customerName'] ) ? (string) $od['customerName'] : '' );
-        $phone = isset( $od['cellNumber'] ) ? (string) $od['cellNumber'] : ( isset( $od['phone'] ) ? (string) $od['phone'] : '' );
-        $notes = isset( $od['notes'] ) ? (string) $od['notes'] : '';
+        $customer = isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['customerName'] ) ? $od['customerName'] : '' );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['phone'] ) ? $od['phone'] : '' );
+        $notes = isset( $od['notes'] ) ? $od['notes'] : '';
 
         // Geocode address
         $coords = order_sync_geocode_address( $address );
@@ -3413,9 +3813,8 @@ function order_sync_handle_generate_delivery_pdf() {
         exit;
     }
 
-    // Generate combined HTML manifest for all individuals
-    $all_manifests = array();
-    $all_routes = array(); // For QR code generation
+    // Generate HTML manifests for each individual
+    $html_files = array();
     
     foreach ( $by_individual as $individual_id => $data ) {
         $individual_name = $data['name'];
@@ -3424,35 +3823,40 @@ function order_sync_handle_generate_delivery_pdf() {
         // Optimize route using nearest-neighbor algorithm
         $optimized_orders = order_sync_optimize_route( $orders, $start_coords );
 
-        $all_manifests[] = array(
-            'name' => $individual_name,
-            'orders' => $optimized_orders
-        );
+        // Generate HTML for printing
+        $html_content = order_sync_generate_manifest_html( $individual_name, $optimized_orders, $start_address, $configured_products, $delivery_date );
         
-        // Create route batches for QR codes (max 10 addresses per route)
-        $addresses = array_map( function( $order ) {
-            return $order['address'];
-        }, $optimized_orders );
-        
-        $batches = array_chunk( $addresses, 10 );
-        foreach ( $batches as $batch ) {
-            $all_routes[] = array(
-                'seller' => $individual_name,
-                'addresses' => $batch
-            );
-        }
+        $filename = 'manifest-' . sanitize_file_name( $individual_name ) . '-' . date('Ymd') . '.html';
+        $html_files[ $filename ] = $html_content;
     }
 
-    // Generate combined HTML document with QR codes
-    $combined_html = order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date, $all_routes );
-    
-    // Store HTML in transient for retrieval
-    $transient_key = 'subsales_manifest_' . md5( current_time( 'mysql' ) . wp_get_current_user()->ID );
-    set_transient( $transient_key, $combined_html, 300 ); // 5 minutes expiry
-    
-    // Redirect to viewer page
-    $viewer_url = add_query_arg( 'manifest_key', $transient_key, admin_url( 'admin.php?page=subsales-manifest-viewer' ) );
-    wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&manifest_url=' . urlencode( $viewer_url ) ) );
+    // If single individual, show HTML page directly
+    if ( count( $html_files ) === 1 ) {
+        $content = array_values( $html_files )[0];
+        
+        header( 'Content-Type: text/html; charset=UTF-8' );
+        echo $content;
+        exit;
+    }
+
+    // Multiple individuals - create ZIP
+    $zipname = sys_get_temp_dir() . '/manifests-' . time() . '.zip';
+    $za = new ZipArchive();
+    if ( $za->open( $zipname, ZipArchive::CREATE | ZipArchive::OVERWRITE ) !== true ) {
+        wp_die( 'Could not create zip' );
+    }
+
+    foreach ( $html_files as $filename => $content ) {
+        $za->addFromString( $filename, $content );
+    }
+    $za->close();
+
+    // Send ZIP
+    header( 'Content-Type: application/zip' );
+    header( 'Content-Disposition: attachment; filename="delivery-manifests-' . date('Ymd_His') . '.zip"' );
+    header( 'Content-Length: ' . filesize( $zipname ) );
+    readfile( $zipname );
+    @unlink( $zipname );
     exit;
 }
 
@@ -3517,244 +3921,183 @@ function order_sync_haversine_distance( $lat1, $lon1, $lat2, $lon2 ) {
     return $earth_radius * $c;
 }
 
-// Helper: Generate combined HTML manifest for all individuals
-function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '', $all_routes = array() ) {
+// Helper: Generate HTML manifest for printing
+function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products, $delivery_date = '' ) {
+    
+    // Calculate product totals for packing list
+    $product_totals = array();
+    foreach ( $configured_products as $p ) {
+        $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
+    }
+
+    foreach ( $orders as $order ) {
+        foreach ( $order['products_map'] as $pid => $qty ) {
+            if ( isset( $product_totals[ $pid ] ) ) {
+                $product_totals[ $pid ]['qty'] += $qty;
+            }
+        }
+    }
+
+    // Calculate total pages: 2 for packing lists + number of delivery stops
+    $total_pages = 2 + count( $orders );
+    
     // Determine display date
     $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
     
-    // Get the URL to the admin CSS file
-    $css_url = plugin_dir_url( __FILE__ ) . 'assets/css/admin-dashboard.css';
-    
-    // Build HTML with external CSS
+    // Build HTML content with print-optimized CSS
     $html = '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delivery Manifests - ' . $display_date . '</title>
-    <link rel="stylesheet" href="' . esc_url( $css_url ) . '" />
+    <title>Delivery Manifest - ' . esc_html( $individual_name ) . '</title>
+    <style>
+        /* Print-optimized styles */
+        @media print {
+            @page { 
+                margin: 0.5in 0.5in 1in 0.5in; 
+                size: letter portrait;
+            }
+            body { margin: 0; }
+            .no-print { display: none !important; }
+            .manifest-section { page-break-after: always; }
+            .manifest-section:last-child { page-break-after: auto; }
+        }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; font-size: 12pt; }
+        h1 { font-size: 24pt; margin: 0 0 10px 0; }
+        h2 { font-size: 18pt; margin: 20px 0 10px 0; }
+        .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
+        .page-number { font-size: 14pt; color: #666; margin-top: 10px; text-align: center; }
+        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; page-break-inside: avoid; background: #f9f9f9; }
+        .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
+        .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
+        .customer { font-size: 11pt; margin: 3px 0; }
+        .products { margin: 8px 0; }
+        .products-table { width: 100%; border-collapse: collapse; margin: 5px 0; }
+        .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
+        .products-table th { background: #e0e0e0; font-weight: bold; }
+        .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
+        .packing-list { margin-top: 40px; }
+        .manifest-section { page-break-before: always; }
+        .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
+        .packing-table th, .packing-table td { border: 3px solid #000; padding: 15px; text-align: left; }
+        .packing-table th { background: #f0f0f0; font-weight: bold; }
+        .packing-table .total-row { font-weight: bold; background: #d0d0d0; font-size: 24pt; }
+        .footer { position: fixed; bottom: 0; left: 0.5in; right: 0.5in; height: 0.6in; font-size: 10pt; border-top: 1px solid #999; padding-top: 10px; }
+        .footer-left { float: left; width: 50%; text-align: left; }
+        .footer-right { float: right; width: 50%; text-align: right; }
+    </style>
 </head>
-<body class="subsales-manifest-viewer">';
+<body>';
 
-    // Generate manifest for each individual
-    $manifest_index = 0;
-    foreach ( $all_manifests as $manifest ) {
-        $individual_name = $manifest['name'];
-        $orders = $manifest['orders'];
-        
-        // Calculate product totals for this individual's packing list
-        $product_totals = array();
-        foreach ( $configured_products as $p ) {
-            $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
+    // First Packing List (PAGE 1)
+    $html .= '<div class="manifest-page packing-list">';
+    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<table class="packing-table">';
+    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
+    $html .= '<tbody>';
+    
+    $grand_total = 0;
+    foreach ( $product_totals as $pid => $data ) {
+        if ( $data['qty'] > 0 ) {
+            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
+            $grand_total += $data['qty'];
         }
-
-        foreach ( $orders as $order ) {
-            foreach ( $order['products_map'] as $pid => $qty ) {
-                if ( isset( $product_totals[ $pid ] ) ) {
-                    $product_totals[ $pid ]['qty'] += $qty;
-                }
-            }
-        }
-
-        // Calculate number of delivery pages based on stop count
-        // Testing shows approximately 7 stops fit on first page, 8 on subsequent pages
-        // Updated based on actual usage with compact layout
-        $total_stops = count( $orders );
-        $delivery_pages = 0;
-        if ( $total_stops > 0 ) {
-            if ( $total_stops <= 7 ) {
-                $delivery_pages = 1;
-            } else {
-                // First page has 7, remaining stops divided by 8
-                $remaining_stops = $total_stops - 7;
-                $delivery_pages = 1 + ceil( $remaining_stops / 8 );
-            }
-        }
-        
-        // Calculate total manifest pages for this seller
-        // 2 packing lists + 1 QR page + calculated delivery pages
-        $qr_pages = ! empty( array_filter( $all_routes, function( $route ) use ( $individual_name ) {
-            return isset( $route['seller'] ) && $route['seller'] === $individual_name;
-        } ) ) ? 1 : 0;
-        $total_manifest_pages = 2 + $qr_pages + $delivery_pages;
-
-        // Wrap seller section in container with total page count
-        $html .= '<div class="seller-section" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '" data-total-pages="' . $total_manifest_pages . '">';
-        
-        // FIRST PACKING LIST
-        $html .= '<div class="packing-page manifest-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';;
-        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
-        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
-        foreach ( $product_totals as $pt ) {
-            if ( $pt['qty'] > 0 ) {
-                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
-            }
-        }
-        $html .= '</tbody></table>';
-        $html .= '<div class="page-footer"></div>';
-        $html .= '</div>';
-        
-        // SECOND PACKING LIST (duplicate)
-        $html .= '<div class="packing-page manifest-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';;
-        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
-        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
-        foreach ( $product_totals as $pt ) {
-            if ( $pt['qty'] > 0 ) {
-                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
-            }
-        }
-        $html .= '</tbody></table>';
-        $html .= '<div class="page-footer"></div>';
-        $html .= '</div>';
-        
-        // ROUTE QR CODES PAGE (insert after packing lists, before delivery manifest)
-        // Generate QR codes for this seller's routes only
-        $seller_routes = array_filter( $all_routes, function( $route ) use ( $individual_name ) {
-            return isset( $route['seller'] ) && $route['seller'] === $individual_name;
-        } );
-        
-        if ( ! empty( $seller_routes ) ) {
-            $qr_page_html = subsales_generate_route_qr_page( array_values( $seller_routes ), $delivery_date );
-            
-            // Extract just the body content (remove html/head tags to avoid conflicts)
-            if ( preg_match( '/<body[^>]*>(.*?)<\/body>/is', $qr_page_html, $matches ) ) {
-                $html .= '<div class="qr-section manifest-page stop-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
-                $html .= $matches[1];
-                $html .= '<div class="page-footer"></div>';
-                $html .= '</div>';
-            }
-        }
-
-        // DELIVERY MANIFEST - Split into multiple pages based on stop count
-        // First page holds 7 stops, subsequent pages hold 8 stops each
-        $stop_num = 1;
-        $current_page_stops = 0;
-        $max_stops_this_page = 7; // First page
-        $delivery_page_num = 1;
-        
-        foreach ( $orders as $order_index => $order ) {
-            // Start new delivery page if needed
-            if ( $current_page_stops === 0 ) {
-                $html .= '<div class="delivery-section manifest-page stop-page" data-seller="' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '" data-date="' . $display_date . '">';
-                
-                // Only show header on first delivery page
-                if ( $delivery_page_num === 1 ) {
-                    $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-                    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
-                } else {
-                    $html .= '<h2>Delivery Manifest (continued): ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h2>';
-                }
-            }
-            
-            // Add stop table
-            $html .= '<table class="delivery-stop-table">';
-            
-            // Row 1: Stop # and Address on left, Notes on right (spans 2 rows)
-            $html .= '<tr>';
-            $html .= '<td colspan="2" class="stop-header">';
-            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
-            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            $html .= '</td>';
-            $html .= '<td rowspan="2" class="notes-cell">';
-            if ( ! empty( $order['notes'] ) ) {
-                $html .= '<strong>Delivery Notes:</strong><br>' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' );
-            } else {
-                $html .= '&nbsp;';
-            }
-            $html .= '</td>';
-            $html .= '</tr>';
-            
-            // Row 2: Customer & Phone on left
-            $html .= '<tr>';
-            $html .= '<td colspan="2" class="customer-info">';
-            $customer_parts = array();
-            if ( ! empty( $order['customer'] ) ) {
-                $customer_parts[] = '<strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' );
-            }
-            if ( ! empty( $order['phone'] ) ) {
-                $customer_parts[] = '<strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' );
-            }
-            $html .= ! empty( $customer_parts ) ? implode( ' | ', $customer_parts ) : '&nbsp;';
-            $html .= '</td>';
-            $html .= '</tr>';
-            
-            // Row 3: Horizontal Products Table (Product names in header, quantities in single row)
-            $html .= '<tr>';
-            $html .= '<td colspan="3" class="products-cell">';
-            $html .= '<table class="products-horizontal">';
-            
-            // Build product header row and quantity row
-            $product_headers = array();
-            $product_quantities = array();
-            foreach ( $configured_products as $p ) {
-                $pid = $p['id'];
-                $qty = isset( $order['products_map'][ $pid ] ) ? intval( $order['products_map'][ $pid ] ) : 0;
-                $product_headers[] = '<th>' . htmlspecialchars( (string) $p['name'], ENT_QUOTES, 'UTF-8' ) . '</th>';
-                $product_quantities[] = '<td>' . $qty . '</td>';
-            }
-            
-            $html .= '<tr>' . implode( '', $product_headers ) . '</tr>';
-            $html .= '<tr>' . implode( '', $product_quantities ) . '</tr>';
-            $html .= '</table>';
-            $html .= '</td>';
-            $html .= '</tr>';
-            
-            $html .= '</table>';
-            
-            $stop_num++;
-            $current_page_stops++;
-            
-            // Close page if we've hit the limit or if this is the last stop
-            $is_last_stop = ( $order_index === count( $orders ) - 1 );
-            if ( $current_page_stops >= $max_stops_this_page || $is_last_stop ) {
-                $html .= '<div class="page-footer"></div>';
-                $html .= '</div>'; // end delivery-section
-                
-                // Reset for next page (subsequent pages hold 8 stops)
-                $current_page_stops = 0;
-                $max_stops_this_page = 8;
-                $delivery_page_num++;
-            }
-        }
-        $html .= '</div>'; // end seller-section
-        $manifest_index++;
     }
     
-    // Add JavaScript for page counting
-    $html .= '<script>
-(function() {
-    // Wait for DOM to be fully loaded
-    if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", initPageCounters);
-    } else {
-        initPageCounters();
+    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
+    $html .= '</tbody></table>';
+    $html .= '<div class="footer">';
+    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="footer-right">Page 1 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+    $html .= '</div>';
+    $html .= '</div>';
+    
+    // Second Packing List (PAGE 2)
+    $html .= '<div class="manifest-page packing-list">';
+    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<table class="packing-table">';
+    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
+    $html .= '<tbody>';
+    
+    foreach ( $product_totals as $pid => $data ) {
+        if ( $data['qty'] > 0 ) {
+            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
+        }
     }
     
-    function initPageCounters() {
-        const sellerSections = document.querySelectorAll(".seller-section");
+    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
+    $html .= '</tbody></table>';
+    $html .= '<div class="footer">';
+    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="footer-right">Page 2 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+    $html .= '</div>';
+    $html .= '</div>';
+
+    // Delivery Manifest (SUBSEQUENT PAGES)
+    $html .= '<div class="manifest-page">';
+    $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+
+    $html .= '</div>'; // Close delivery manifest header page
+    
+    // Delivery stops - each on its own page
+    $stop_num = 1;
+    $page_num = 3; // Start at page 3 (two packing lists are pages 1-2)
+    foreach ( $orders as $order ) {
+        $html .= '<div class="manifest-page">';
+        $html .= '<div class="delivery-stop">';
+        $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
+        $html .= '<div class="address">' . htmlspecialchars( $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         
-        sellerSections.forEach(function(section) {
-            const seller = section.getAttribute("data-seller");
-            const date = section.getAttribute("data-date");
-            const totalPages = parseInt(section.getAttribute("data-total-pages") || "0", 10);
-            const pages = section.querySelectorAll(".manifest-page");
-            
-            pages.forEach(function(page, index) {
-                const pageNum = index + 1;
-                const footer = page.querySelector(".page-footer");
-                if (footer) {
-                    footer.textContent = "Seller: " + seller + " | Page " + pageNum + " of " + totalPages + " | Date: " + date;
+        if ( ! empty( $order['customer'] ) ) {
+            $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+        }
+        
+        if ( ! empty( $order['phone'] ) ) {
+            $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+        }
+
+        // Products for this stop
+        $html .= '<div class="products"><strong>Products:</strong>';
+        $html .= '<table class="products-table">';
+        $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
+        $has_products = false;
+        foreach ( $order['products_map'] as $pid => $qty ) {
+            if ( $qty > 0 ) {
+                $product_name = '';
+                foreach ( $configured_products as $p ) {
+                    if ( $p['id'] === $pid ) {
+                        $product_name = $p['name'];
+                        break;
+                    }
                 }
-            });
-        });
+                $html .= '<tr><td>' . htmlspecialchars( $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
+                $has_products = true;
+            }
+        }
+        if ( ! $has_products ) {
+            $html .= '<tr><td colspan="2">No products</td></tr>';
+        }
+        $html .= '</tbody></table></div>';
+
+        if ( ! empty( $order['notes'] ) ) {
+            $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+        }
+
+        $html .= '</div>'; // Close delivery-stop
+        $html .= '<div class="footer">';
+        $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+        $html .= '<div class="footer-right">Page ' . $page_num . ' of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '</div>';
+        $html .= '</div>'; // Close manifest-page
+        $stop_num++;
+        $page_num++;
     }
-})();
-</script>';
     
     $html .= '</body></html>';
-
+    
     return $html;
 }
 
@@ -4315,12 +4658,27 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
     }
     
-    // User-based auth: X-User-ID (with optional X-Team-ID)
+    // Legacy auth: X-Team-Name + X-Access-Code
+    $team_name = $request->get_header( 'X-Team-Name' );
+    $access_code = $request->get_header( 'X-Access-Code' );
+    
+    if ( ! empty( $team_name ) || ! empty( $access_code ) ) {
+        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+        if ( $team ) {
+            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+            return true;
+        }
+        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
+        return false;
+    }
+    
+    // User-based auth: X-User-ID + X-Team-ID (Phase 4)
     $user_id = $request->get_header( 'X-User-ID' );
     $team_id = $request->get_header( 'X-Team-ID' );
     
-    if ( ! empty( $user_id ) ) {
+    if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
         $members_table = $wpdb->prefix . 'ss_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
         
         // Verify user exists
         $user = $wpdb->get_row( $wpdb->prepare(
@@ -4333,40 +4691,19 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
             return false;
         }
         
-        // If team_id is provided and not -1 (individual mode), verify user belongs to team
-        if ( ! empty( $team_id ) && $team_id !== '-1' ) {
-            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-            $assignment = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-                intval( $user_id ),
-                intval( $team_id )
-            ));
-            
-            if ( $assignment ) {
-                error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
-                return true;
-            }
-            
-            error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
-            return false;
-        }
+        // Verify user belongs to the team
+        $assignment = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            intval( $user_id ),
+            intval( $team_id )
+        ));
         
-        // Individual mode (team_id is -1 or empty) - user exists, allow access
-        error_log( 'Subsales: perm_check individual mode ok user_id=' . $user_id );
-        return true;
-    }
-    
-    // Legacy Team auth: X-Team-Name + X-Access-Code (both required)
-    $team_name = $request->get_header( 'X-Team-Name' );
-    $access_code = $request->get_header( 'X-Access-Code' );
-    
-    if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-        if ( $team ) {
-            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+        if ( $assignment ) {
+            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
             return true;
         }
-        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
+        
+        error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
         return false;
     }
     
@@ -4385,12 +4722,22 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
     return current_user_can( 'edit_posts' );
 }
 
-/**
- * Check if user has admin permissions for WordPress REST API requests
- * Used by admin-only REST endpoints like order history, restore, tally
- */
+// Admin-only permission callback for sensitive operations (edit, delete, restore, history)
 function order_sync_check_admin_permissions( WP_REST_Request $request ) {
-    return current_user_can( 'manage_options' );
+    // Check if user is logged into WordPress admin with edit permissions
+    if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+        return true;
+    }
+    
+    // Optionally support API key authentication for admin operations
+    $api_key = $request->get_header( 'X-API-Key' );
+    $stored_key = get_option( 'order_sync_api_key', '' );
+    
+    if ( ! empty( $api_key ) && ! empty( $stored_key ) && hash_equals( $stored_key, $api_key ) ) {
+        return true;
+    }
+    
+    return false;
 }
 
 // Orders REST callbacks (get_orders, get_order_by_id, create_order, update_order, delete_order)
@@ -4431,6 +4778,14 @@ function tally_orders( $request ) {
     return Subsales_Orders::tally_orders( $request );
 }
 
+// Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
+function order_manager_get_server_time( WP_REST_Request $request ) {
+    $ts = current_time( 'timestamp' );
+    $date = date( 'Y-m-d', $ts );
+    $gmt_offset = floatval( get_option( 'gmt_offset', 0 ) );
+    return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
+}
+
 /**
  * Teams & User Management Functions (Backward Compatibility Wrappers)
  * All team/user functionality now handled by Subsales_Teams class
@@ -4446,6 +4801,46 @@ function verify_team_access( WP_REST_Request $request ) {
 
 function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
     return Subsales_Teams::get_team_members_endpoint( $request );
+}
+
+function order_sync_create_user( WP_REST_Request $request ) {
+    return Subsales_Teams::create_user( $request );
+}
+
+function order_sync_get_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_users( $request );
+}
+
+function order_sync_get_user_by_id( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_by_id( $request );
+}
+
+function order_sync_update_user( WP_REST_Request $request ) {
+    return Subsales_Teams::update_user( $request );
+}
+
+function order_sync_delete_user( WP_REST_Request $request ) {
+    return Subsales_Teams::delete_user( $request );
+}
+
+function order_sync_search_users( WP_REST_Request $request ) {
+    return Subsales_Teams::search_users( $request );
+}
+
+function order_sync_get_user_teams( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_teams( $request );
+}
+
+function order_sync_assign_user_to_team( WP_REST_Request $request ) {
+    return Subsales_Teams::assign_user_to_team( $request );
+}
+
+function order_sync_remove_user_from_team( WP_REST_Request $request ) {
+    return Subsales_Teams::remove_user_from_team( $request );
+}
+
+function order_sync_get_team_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_users( $request );
 }
 
 /**
@@ -4496,17 +4891,6 @@ function get_app_config( WP_REST_Request $request ) {
         'loginMode' => $login_mode,
         'salesMode' => $sales_mode,
         'debugLoggingEnabled' => $debug_logging_enabled
-    ), 200 );
-}
-
-/**
- * Get server time for client synchronization
- */
-function order_manager_get_server_time( WP_REST_Request $request ) {
-    return new WP_REST_Response( array(
-        'timestamp' => time(),
-        'datetime' => current_time( 'mysql' ),
-        'timezone' => wp_timezone_string()
     ), 200 );
 }
 
@@ -4835,279 +5219,7 @@ function order_sync_get_plugin_version() {
 }
 
 // Serve portal assets from plugin folder at portal path
-// Use 'init' hook with priority 0 to intercept before WordPress routing
-add_action( 'init', 'subsales_serve_portal_assets', 0 );
-
-// Register rewrite rules for delivery route QR codes
-add_action( 'init', 'subsales_register_route_rewrite' );
-function subsales_register_route_rewrite() {
-    // Pattern captures base64 string including padding (=) characters
-    // Use $matches[1] to capture the base64 data
-    add_rewrite_rule( '^route/([A-Za-z0-9+/=]+)/?$', 'index.php?subsales_route=$matches[1]', 'top' );
-}
-
-// Add query var for route handler
-add_filter( 'query_vars', 'subsales_add_route_query_var' );
-function subsales_add_route_query_var( $vars ) {
-    $vars[] = 'subsales_route';
-    return $vars;
-}
-
-// Handle route page requests (mobile-friendly map chooser)
-add_action( 'template_redirect', 'subsales_handle_route_page' );
-function subsales_handle_route_page() {
-    $route_data = get_query_var( 'subsales_route' );
-    
-    if ( empty( $route_data ) ) {
-        return; // Not a route request
-    }
-    
-    // Strip any trailing slashes WordPress may have added, but keep = padding for base64
-    $route_data = rtrim( $route_data, '/' );
-    
-    // Decode the route data (base64-encoded JSON)
-    $decoded = base64_decode( $route_data, true );
-    if ( ! $decoded ) {
-        wp_die( 'Invalid route data', 'Route Error', array( 'response' => 400 ) );
-    }
-    
-    $route_info = json_decode( $decoded, true );
-    if ( ! $route_info || ! isset( $route_info['addresses'] ) || ! is_array( $route_info['addresses'] ) ) {
-        wp_die( 'Invalid route format', 'Route Error', array( 'response' => 400 ) );
-    }
-    
-    $addresses = $route_info['addresses'];
-    $route_number = isset( $route_info['route'] ) ? intval( $route_info['route'] ) : 1;
-    $delivery_date = isset( $route_info['date'] ) ? sanitize_text_field( $route_info['date'] ) : date( 'F j, Y' );
-    
-    // Build Google Maps and Apple Maps URLs
-    $google_url = 'https://www.google.com/maps/dir/' . implode( '/', array_map( 'rawurlencode', $addresses ) );
-    $apple_url = 'https://maps.apple.com/?daddr=' . implode( '&daddr=', array_map( 'rawurlencode', $addresses ) );
-    
-    // Detect device type for conditional display
-    $user_agent = isset( $_SERVER['HTTP_USER_AGENT'] ) ? $_SERVER['HTTP_USER_AGENT'] : '';
-    $is_ios = preg_match( '/(iPhone|iPad|iPod|Mac)/i', $user_agent );
-    
-    // Output mobile-optimized HTML
-    header( 'Content-Type: text/html; charset=utf-8' );
-    ?>
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="mobile-web-app-capable" content="yes">
-        <title>Route <?php echo esc_html( $route_number ); ?> - Delivery</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                min-height: 100vh;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-                color: #fff;
-            }
-            
-            .container {
-                max-width: 500px;
-                width: 100%;
-                text-align: center;
-            }
-            
-            .header {
-                margin-bottom: 40px;
-            }
-            
-            .route-icon {
-                font-size: 60px;
-                margin-bottom: 15px;
-                animation: float 3s ease-in-out infinite;
-            }
-            
-            @keyframes float {
-                0%, 100% { transform: translateY(0); }
-                50% { transform: translateY(-10px); }
-            }
-            
-            h1 {
-                font-size: 32px;
-                font-weight: 700;
-                margin-bottom: 8px;
-                text-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            }
-            
-            .stops {
-                font-size: 18px;
-                opacity: 0.95;
-                font-weight: 500;
-            }
-            
-            .date {
-                font-size: 14px;
-                opacity: 0.8;
-                margin-top: 5px;
-            }
-            
-            .buttons {
-                margin-top: 30px;
-                display: flex;
-                flex-direction: column;
-                gap: 15px;
-            }
-            
-            .btn {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 18px 30px;
-                font-size: 18px;
-                font-weight: 600;
-                border-radius: 16px;
-                text-decoration: none;
-                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-                box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-                border: none;
-                cursor: pointer;
-                min-height: 60px;
-            }
-            
-            .btn:active {
-                transform: scale(0.97);
-            }
-            
-            .btn-google {
-                background: #fff;
-                color: #1a73e8;
-            }
-            
-            .btn-google:hover {
-                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-                transform: translateY(-2px);
-            }
-            
-            .btn-apple {
-                background: #000;
-                color: #fff;
-            }
-            
-            .btn-apple:hover {
-                box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-                transform: translateY(-2px);
-            }
-            
-            .btn-icon {
-                font-size: 24px;
-                margin-right: 12px;
-            }
-            
-            .addresses {
-                margin-top: 40px;
-                background: rgba(255,255,255,0.1);
-                backdrop-filter: blur(10px);
-                border-radius: 16px;
-                padding: 20px;
-                max-height: 300px;
-                overflow-y: auto;
-                text-align: left;
-            }
-            
-            .addresses h3 {
-                font-size: 14px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                margin-bottom: 15px;
-                opacity: 0.9;
-                font-weight: 600;
-            }
-            
-            .address-item {
-                padding: 10px 0;
-                border-bottom: 1px solid rgba(255,255,255,0.15);
-                font-size: 14px;
-                line-height: 1.5;
-            }
-            
-            .address-item:last-child {
-                border-bottom: none;
-            }
-            
-            .address-number {
-                display: inline-block;
-                background: rgba(255,255,255,0.2);
-                width: 24px;
-                height: 24px;
-                border-radius: 50%;
-                text-align: center;
-                line-height: 24px;
-                font-size: 12px;
-                font-weight: 700;
-                margin-right: 10px;
-            }
-            
-            /* Scrollbar styling */
-            .addresses::-webkit-scrollbar {
-                width: 6px;
-            }
-            
-            .addresses::-webkit-scrollbar-track {
-                background: rgba(255,255,255,0.1);
-                border-radius: 3px;
-            }
-            
-            .addresses::-webkit-scrollbar-thumb {
-                background: rgba(255,255,255,0.3);
-                border-radius: 3px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <div class="route-icon">🚚</div>
-                <h1>Route <?php echo esc_html( $route_number ); ?></h1>
-                <div class="stops"><?php echo count( $addresses ); ?> stops ready</div>
-                <div class="date"><?php echo esc_html( $delivery_date ); ?></div>
-            </div>
-            
-            <div class="buttons">
-                <a href="<?php echo esc_url( $google_url ); ?>" class="btn btn-google">
-                    <span class="btn-icon">📍</span>
-                    <span>Open in Google Maps</span>
-                </a>
-                
-                <?php if ( $is_ios ) : ?>
-                <a href="<?php echo esc_url( $apple_url ); ?>" class="btn btn-apple">
-                    <span class="btn-icon">🗺️</span>
-                    <span>Open in Apple Maps</span>
-                </a>
-                <?php endif; ?>
-            </div>
-            
-            <div class="addresses">
-                <h3>Route Preview</h3>
-                <?php foreach ( $addresses as $idx => $addr ) : ?>
-                    <div class="address-item">
-                        <span class="address-number"><?php echo $idx + 1; ?></span>
-                        <?php echo esc_html( $addr ); ?>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-        </div>
-    </body>
-    </html>
-    <?php
-    exit;
-}
+add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
 add_action( 'rest_api_init', function(){
@@ -5178,134 +5290,9 @@ function subsales_haversine_distance( $lat1, $lon1, $lat2, $lon2 ){
     return $R * $c;
 }
 function subsales_serve_portal_assets() {
-    // Skip during installation, updates, and admin operations
-    if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
-        return;
-    }
-    
-    // Early exit for admin pages, wp-json, and other non-portal requests
-    $req_uri = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '';
-    if ( empty( $req_uri ) ||
-         strpos( $req_uri, '/wp-admin/' ) !== false || 
-         strpos( $req_uri, '/wp-json/' ) !== false || 
-         strpos( $req_uri, 'wp-login.php' ) !== false ||
-         $req_uri === '/favicon.ico' ) {
-        return;
-    }
-    
-    $portal_slug = get_option( 'order_sync_portal_slug', '' );
-    $req_path_raw = parse_url( $req_uri, PHP_URL_PATH );
-    $req_path = $req_path_raw ? trim( $req_path_raw, '/' ) : '';
-    
-    // Redirect /subsales-portal to /subsales-portal/ for service worker scope consistency
-    if ( $portal_slug && $req_path === $portal_slug && substr( $req_uri, -1 ) !== '/' ) {
-        wp_redirect( home_url( '/' . $portal_slug . '/' ), 301 );
-        exit;
-    }
-    
-    // Handle direct PWA access at /wp-content/plugins/subsales-management/pwa/
-    $pwa_base_path_raw = parse_url( SUBSALES_PLUGIN_URL . 'pwa/', PHP_URL_PATH );
-    $pwa_base_path = $pwa_base_path_raw ? trim( $pwa_base_path_raw, '/' ) : '';
-    
-    // Serve service worker for direct PWA access
-    if ( $req_path === $pwa_base_path . '/service-worker.js' || $req_path === rtrim($pwa_base_path, '/') . '/service-worker.js' ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
-        if ( file_exists( $file ) ) {
-            header( 'Content-Type: application/javascript' );
-            header( 'Cache-Control: public, max-age=3600' );
-            header( 'Access-Control-Allow-Origin: *' );
-            header( 'Service-Worker-Allowed: /' );
-            readfile( $file );
-            exit;
-        }
-    }
-    
-    // Serve other PWA assets (styles, scripts, manifest, icons) for direct PWA access
-    if ( strpos( $req_path, $pwa_base_path ) === 0 ) {
-        $rel_path = substr( $req_path, strlen( $pwa_base_path ) );
-        $rel_path = ltrim( $rel_path, '/' );
-        
-        if ( $rel_path && $rel_path !== 'index.html' ) {
-            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
-            if ( file_exists( $file ) && is_file( $file ) ) {
-                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
-                switch ( $ext ) {
-                    case 'js': $ct = 'application/javascript'; break;
-                    case 'css': $ct = 'text/css'; break;
-                    case 'json': $ct = 'application/json'; break;
-                    case 'svg': $ct = 'image/svg+xml'; break;
-                    case 'png': $ct = 'image/png'; break;
-                    case 'jpg':
-                    case 'jpeg': $ct = 'image/jpeg'; break;
-                    case 'webp': $ct = 'image/webp'; break;
-                    case 'ico': $ct = 'image/x-icon'; break;
-                    default: $ct = 'application/octet-stream';
-                }
-                header( 'Content-Type: ' . $ct );
-                header( 'Cache-Control: public, max-age=86400' );
-                header( 'Access-Control-Allow-Origin: *' );
-                readfile( $file );
-                exit;
-            }
-        }
-    }
-    
-    if ( $req_path === $pwa_base_path || $req_path === $pwa_base_path . '/index.html' || rtrim($req_path, '/') === rtrim($pwa_base_path, '/') ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
-        if ( file_exists( $file ) ) {
-            $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
-            $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
-
-            $settings = array(
-                'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
-                'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-                'portalBase' => esc_url_raw( home_url( '/' . ( $portal_slug ?: 'subsales-portal' ) . '/' ) ),
-                'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
-                'brandName' => get_option( 'subsales_branding', 'Subsales' ),
-                'brandingImage' => $header_image_url
-            );
-            // Include configured products so portal bootstraps with current product list
-            $settings['products'] = order_sync_get_products_config();
-
-            $html_content = file_get_contents( $file );
-            if ( $html_content === false ) {
-                error_log( '[Subsales] Failed to read index.html' );
-                return;
-            }
-            $html = $html_content;
-            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
-            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
-            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
-            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
-            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
-            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
-            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            // If replacement didn't find the exact marker, inject config before </head>
-            if ( $new_html === $html ) {
-                $pos = stripos( $html, '</head>' );
-                if ( $pos !== false ) {
-                    $new_html = substr_replace( $html, $inject . "\n<script src=\"" . $app_src . "\"></script>\n", $pos, 0 );
-                } else {
-                    // fallback: prepend to document
-                    $new_html = $inject . "\n<script src=\"" . $app_src . "\"></script>\n" . $html;
-                }
-            }
-            $html = $new_html;
-            // Serve index publicly
-            header( 'Content-Type: text/html; charset=utf-8' );
-            header( 'Cache-Control: public, max-age=300' );
-            header( 'Access-Control-Allow-Origin: *' );
-            echo $html;
-            exit;
-        }
-    }
-    
-    if ( empty( $portal_slug ) ) return;
-    $portal_base_raw = parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH );
-    $portal_base = $portal_base_raw ? trim( $portal_base_raw, '/' ) : '';
+    $portal_slug = get_option( 'order_sync_portal_slug', '' ); if ( empty( $portal_slug ) ) return;
+    $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
+    $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
 
     // Also serve manifest at the site root (/manifest.json) to handle cases where the browser requests it from /
     if ( $req_path === 'manifest.json' ) {
@@ -5332,57 +5319,19 @@ function subsales_serve_portal_assets() {
         }
     }
 
-    // Serve service worker for portal access (check both with and without leading slash)
-    if ( $req_path === $portal_base . '/service-worker.js' || $req_path === rtrim($portal_base, '/') . '/service-worker.js' ) {
-        error_log( '[Subsales Debug] Service worker requested at portal path - serving from: ' . SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js' );
+    if ( $req_path === $portal_base . '/service-worker.js' ) {
         $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
         if ( file_exists( $file ) ) {
-            // Clear any previous output and set explicit 200 status
-            status_header( 200 );
-            header( 'Content-Type: application/javascript; charset=utf-8' );
-            header( 'Cache-Control: no-cache, must-revalidate' );
+            // Serve publicly with permissive caching and CORS so browsers can register the SW without auth issues
+            header( 'Content-Type: application/javascript' );
+            header( 'Cache-Control: public, max-age=3600' );
             header( 'Access-Control-Allow-Origin: *' );
-            header( 'Service-Worker-Allowed: /' );
             readfile( $file );
             exit;
-        } else {
-            error_log( '[Subsales Debug] Service worker file NOT FOUND at: ' . $file );
-        }
-    }
-
-    // Serve other PWA assets at portal path (app.js, styles.css, manifest.json, icons, etc.)
-    if ( strpos( $req_path, $portal_base ) === 0 && $req_path !== $portal_base && $req_path !== $portal_base . '/' && $req_path !== $portal_base . '/index.html' ) {
-        $rel_path = substr( $req_path, strlen( $portal_base ) );
-        $rel_path = ltrim( $rel_path, '/' );
-        
-        if ( $rel_path ) {
-            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
-            if ( file_exists( $file ) && is_file( $file ) ) {
-                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
-                switch ( $ext ) {
-                    case 'js': $ct = 'application/javascript'; break;
-                    case 'css': $ct = 'text/css'; break;
-                    case 'json': $ct = 'application/json'; break;
-                    case 'svg': $ct = 'image/svg+xml'; break;
-                    case 'png': $ct = 'image/png'; break;
-                    case 'jpg':
-                    case 'jpeg': $ct = 'image/jpeg'; break;
-                    case 'webp': $ct = 'image/webp'; break;
-                    case 'ico': $ct = 'image/x-icon'; break;
-                    default: $ct = 'application/octet-stream';
-                }
-                status_header( 200 );
-                header( 'Content-Type: ' . $ct );
-                header( 'Cache-Control: public, max-age=86400' );
-                header( 'Access-Control-Allow-Origin: *' );
-                readfile( $file );
-                exit;
-            }
         }
     }
 
     if ( $req_path === $portal_base || $req_path === $portal_base . '/index.html' || $req_path === $portal_base . '/' ) {
-        // Serve PWA directly instead of redirecting
         $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
         if ( file_exists( $file ) ) {
             $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
@@ -5391,21 +5340,21 @@ function subsales_serve_portal_assets() {
             $settings = array(
                 'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
                 'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-                'portalBase' => esc_url_raw( home_url( '/' . $portal_slug . '/' ) ),
+                'portalBase' => esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) ),
                 'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
                 'brandName' => get_option( 'subsales_branding', 'Subsales' ),
                 'brandingImage' => $header_image_url
             );
-            // Include configured products
+            // Include configured products so portal bootstraps with current product list
             $settings['products'] = order_sync_get_products_config();
 
             $html = file_get_contents( $file );
             $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
             $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
+            // Rewrite relative stylesheet hrefs to absolute plugin path to avoid portal-relative 404s
             $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
             $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            // If replacement didn't find the exact marker, inject config before </head>
+            // If replacement didn't find the exact marker (different spacing/paths), inject config before </head>
             if ( $new_html === $html ) {
                 $pos = stripos( $html, '</head>' );
                 if ( $pos !== false ) {
@@ -5416,12 +5365,11 @@ function subsales_serve_portal_assets() {
                 }
             }
             $html = $new_html;
-            // Serve index publicly
+            // Serve index publicly so the portal can be loaded without authentication
             header( 'Content-Type: text/html; charset=utf-8' );
             header( 'Cache-Control: public, max-age=300' );
             header( 'Access-Control-Allow-Origin: *' );
-            echo $html;
-            exit;
+            echo $html; exit;
         }
     }
 
@@ -5884,59 +5832,220 @@ function subsales_address_extracts_page() {
     <?php
 }
 
-// Admin Delivery page - Moved to admin/delivery-page.php
-require_once SUBSALES_PLUGIN_PATH . 'admin/delivery-page.php';
+// Admin Delivery page: single-day delivery exports and preview
+function order_sync_delivery_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+    $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
+    // Preflight summary: compute total product orders and unique addresses
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'ss_orders';
+    $configured_products = order_sync_get_products_config();
+    $product_totals = array();
+    foreach ( $configured_products as $p ) { $product_totals[ $p['id'] ] = 0; }
+    $rows_all = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+    $pre_total_orders = 0;
+    $by_address_pf = array();
+    if ( $rows_all ) {
+        foreach ( $rows_all as $rr ) {
+            $od = json_decode( $rr['order_data'], true );
+            if ( ! is_array( $od ) ) $od = array();
+            $products_map = array();
+            foreach ( $configured_products as $pconf ) { $products_map[ $pconf['id'] ] = 0; }
+            if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                foreach ( $od['products'] as $pr ) {
+                    $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                    $pid = isset( $pr['id'] ) ? $pr['id'] : null;
+                    if ( $qty > 0 && $pid ) {
+                        if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                        $products_map[ $pid ] += $qty;
+                    }
+                }
+            } else {
+                foreach ( $configured_products as $p ) {
+                    $pid = $p['id'];
+                    $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                    foreach ( $labels as $k ) {
+                        if ( isset( $od[ $k ] ) ) {
+                            $q = intval( $od[ $k ] );
+                            if ( $q > 0 ) {
+                                if ( ! isset( $products_map[ $pid ] ) ) $products_map[ $pid ] = 0;
+                                $products_map[ $pid ] += $q;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            $total_qty = array_sum( array_values( $products_map ) );
+            if ( $total_qty <= 0 ) continue;
+            $pre_total_orders++;
+            $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
+            $addr_norm = order_sync_normalize_address( $address_raw );
+            if ( empty( $addr_norm ) ) continue;
+            if ( ! isset( $by_address_pf[ $addr_norm ] ) ) $by_address_pf[ $addr_norm ] = array();
+            $by_address_pf[ $addr_norm ][] = $rr['order_id'];
+            // accumulate product totals
+            foreach ( $products_map as $pid => $q ) { if ( $q > 0 ) $product_totals[ $pid ] += $q; }
+        }
+    }
+    $pre_unique_addresses = count( $by_address_pf );
+    ?>
+    <div class="wrap">
+        <h1>Delivery</h1>
+        <p class="description">Delivery exports and driver manifest workflows. Donations are excluded. Addresses will be combined by normalized address. By default exports include all orders unless a delivery date is specified.</p>
+        <div style="margin:12px 0; padding:12px; background:#fff; border:1px solid #e5e5e5;">
+            <strong>Preflight summary</strong>
+            <p style="margin:6px 0">Total product orders: <strong><?php echo intval( $pre_total_orders ); ?></strong></p>
+            <p style="margin:6px 0">Unique delivery addresses: <strong><?php echo intval( $pre_unique_addresses ); ?></strong></p>
+            <?php if ( ! empty( $configured_products ) ): ?>
+                <table class="widefat" style="max-width:800px; margin-top:8px;">
+                    <thead><tr><th>Product</th><th style="text-align:right">Total Qty</th></tr></thead>
+                    <tbody>
+                    <?php foreach ( $configured_products as $p ) : ?>
+                        <tr>
+                            <td><?php echo esc_html( $p['name'] ); ?></td>
+                            <td style="text-align:right"><?php echo intval( $product_totals[ $p['id'] ] ); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <!-- Administrative CSV: admin creates their own routes -> simple CSV export (no driver assignment) -->
+        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <?php wp_nonce_field( 'subsales_generate_admin_csv' ); ?>
+            <input type="hidden" name="action" value="subsales_generate_admin_csv" />
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Administrative CSV (no routing)</th>
+                    <td>
+                        <p class="description">Create a CSV export you can open in a spreadsheet to design your own routes. This export contains one row per normalized address and per-product columns.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Delivery date (optional)</th>
+                    <td><input type="date" name="delivery_date" value="" /></td>
+                </tr>
+            </table>
+            <p class="submit"><button class="button">Generate Administrative CSV</button></p>
+        </form>
 
-// Early intercept function to catch manifest viewer requests before WordPress admin loads
-function subsales_intercept_manifest_viewer() {
-    // Check if this is a manifest viewer request
-    if ( ! isset( $_GET['page'] ) || $_GET['page'] !== 'subsales-manifest-viewer' ) {
-        return;
-    }
-    
-    // Permission check
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( 'Insufficient permissions' );
-    }
-    
-    $manifest_key = isset( $_GET['manifest_key'] ) ? sanitize_text_field( $_GET['manifest_key'] ) : '';
-    
-    if ( empty( $manifest_key ) ) {
-        wp_die( 'No manifest key provided' );
-    }
-    
-    $html = get_transient( $manifest_key );
-    
-    if ( $html === false ) {
-        wp_die( 'Manifest not found or expired. Please generate a new manifest.' );
-    }
-    
-    // Delete transient after retrieval for security
-    delete_transient( $manifest_key );
-    
-    // Clear all output buffers to prevent WordPress from wrapping the HTML
-    while ( ob_get_level() > 0 ) {
-        ob_end_clean();
-    }
-    
-    // Send headers to prevent caching and set content type
-    nocache_headers();
-    header( 'Content-Type: text/html; charset=UTF-8' );
-    
-    // Output the standalone HTML document
-    echo $html;
-    
-    // Exit immediately to prevent WordPress from rendering admin interface
-    exit;
+        <!-- Driver manifests workflow: individual-based routing and PDF generation -->
+        <h2 style="margin-top:18px">Generate Individual Delivery Manifests</h2>
+        <p class="description">Generate optimized delivery routes for each team member based on their orders. Creates individual PDF manifests with packing lists.</p>
+        <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+            <?php wp_nonce_field( 'subsales_generate_delivery' ); ?>
+            <input type="hidden" name="action" value="subsales_generate_delivery_pdf" />
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Starting address (depot)</th>
+                    <td><input type="text" name="start_address" id="sdm_start_address" class="regular-text" value="<?php echo $start_addr; ?>" placeholder="Street, City, ZIP" required />
+                    <p class="description">All routes will start from this location</p></td>
+                </tr>
+                <tr>
+                    <th scope="row">Delivery date (optional)</th>
+                    <td><input type="date" name="delivery_date" id="sdm_delivery_date" value="" />
+                    <p class="description">Leave blank to include all orders</p></td>
+                </tr>
+            </table>
+            <p class="submit">
+                <button type="submit" class="button button-primary">Generate Individual Manifests (PDF)</button>
+            </p>
+        </form>
+
+        <div id="subsales_preview_modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:99999;">
+            <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:90%; max-width:1000px; height:80%; background:#fff; border-radius:6px; overflow:hidden;">
+                <div style="padding:8px; background:#f5f5f5; border-bottom:1px solid #e5e5e5; display:flex; align-items:center; justify-content:space-between;">
+                    <strong>Route preview</strong>
+                    <div>
+                        <button id="subsales_preview_close" class="button">Close</button>
+                    </div>
+                </div>
+                <div id="subsales_preview_map" style="width:100%; height:calc(100% - 44px);"></div>
+            </div>
+        </div>
+
+        <script>
+        (function(){
+            const ajaxUrl = ajaxurl;
+            const previewNonce = <?php echo json_encode( wp_create_nonce( 'subsales_delivery_preview' ) ); ?>;
+            const previewBtn = document.getElementById('sdm_preview_btn');
+            const modal = document.getElementById('subsales_preview_modal');
+            const closeBtn = document.getElementById('subsales_preview_close');
+            let mapInstance = null;
+            let googleApiLoaded = false;
+
+            function loadGoogleMaps(key){
+                return new Promise(function(resolve,reject){
+                    if ( window.google && window.google.maps ) return resolve(window.google.maps);
+                    const s = document.createElement('script');
+                    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key);
+                    s.async = true; s.defer = true;
+                    s.onload = function(){ googleApiLoaded = true; resolve(window.google.maps); };
+                    s.onerror = function(){ reject(new Error('Failed to load Google Maps')); };
+                    document.head.appendChild(s);
+                });
+            }
+
+            function buildColor(i){
+                const palette = ['#1E90FF','#FF4500','#32CD32','#FFD700','#8A2BE2','#FF1493','#00CED1','#FF8C00','#00BFFF','#228B22'];
+                return palette[i % palette.length];
+            }
+
+            function renderPreview(data){
+                const products = data.products || [];
+                const drivers = data.drivers || {};
+                const apiKey = data.api_key || '';
+                if ( ! apiKey ) { alert('No Google Maps API key configured in Settings → Overall.'); return; }
+                loadGoogleMaps(apiKey).then(function(gmaps){
+                    modal.style.display = 'block';
+                    // create map
+                    if ( mapInstance ) { /* reuse center */ }
+                    const mapDiv = document.getElementById('subsales_preview_map');
+                    mapDiv.innerHTML = '';
+                    mapInstance = new gmaps.Map(mapDiv, { zoom: 12, center: { lat: 41.0, lng: -73.0 } });
+                    const bounds = new gmaps.LatLngBounds();
+                    Object.keys(drivers).forEach(function(dk, idx){
+                        const rows = drivers[dk];
+                        const path = [];
+                        rows.forEach(function(r, ridx){
+                            if ( r.lat && r.lng ) {
+                                const pos = { lat: parseFloat(r.lat), lng: parseFloat(r.lng) };
+                                path.push(pos);
+                                const marker = new gmaps.Marker({ position: pos, map: mapInstance, title: r.address_raw, label: String(idx+1) });
+                                bounds.extend(pos);
+                            }
+                        });
+                        if ( path.length > 0 ) {
+                            const poly = new gmaps.Polyline({ path: path, geodesic: true, strokeColor: buildColor(idx), strokeOpacity: 0.8, strokeWeight: 3 });
+                            poly.setMap(mapInstance);
+                        }
+                    });
+                    if ( ! bounds.isEmpty() ) mapInstance.fitBounds(bounds);
+                }).catch(function(err){ alert('Map load error: ' + err.message); });
+            }
+
+            previewBtn && previewBtn.addEventListener('click', function(){
+                const fd = new FormData();
+                fd.append('action','subsales_delivery_preview');
+                fd.append('_ajax_nonce', previewNonce);
+                fd.append('start_address', document.getElementById('sdm_start_address').value || '');
+                fd.append('delivery_date', document.getElementById('sdm_delivery_date').value || '');
+                fd.append('driver_count', document.getElementById('sdm_driver_count').value || '2');
+                fetch(ajaxUrl, { method:'POST', body: fd }).then(r=>r.json()).then(function(j){
+                    if ( ! j || ! j.success ) { alert('Preview error: ' + (j && j.data ? j.data : 'Unknown')); return; }
+                    renderPreview(j.data);
+                }).catch(function(e){ alert('Fetch error: ' + e.message); });
+            });
+            closeBtn && closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
+        })();
+        </script>
+
+        <h2 style="margin-top:24px">Geocoding & limits</h2>
+        <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
+    </div>
+    <?php
 }
-
-// Manifest viewer page (kept for menu registration, but actual output handled by early intercept)
-function subsales_manifest_viewer_page() {
-    // This function is now just a placeholder since the intercept handles everything
-    // If we somehow get here, show an error
-    echo '<div class="wrap"><h1>Manifest Viewer</h1><p>Please access manifests through the delivery page.</p></div>';
-}
-
 
 // Handle generate delivery export (admin POST)
 add_action( 'admin_post_subsales_generate_delivery', 'order_sync_handle_generate_delivery' );
@@ -6253,6 +6362,80 @@ function subsales_logs_page() {
     <div class="wrap subsales-logs-page">
         <h1>System Logs</h1>
         
+        <!-- Debug Diagnostics -->
+        <?php if ( isset( $_GET['diagnostics'] ) && $_GET['diagnostics'] === '1' ): ?>
+        <div class="notice notice-info" style="padding: 20px; margin: 20px 0;">
+            <h2>🔍 Debug System Diagnostics</h2>
+            
+            <h3>Option Values:</h3>
+            <table class="wp-list-table widefat" style="margin: 10px 0;">
+                <tr>
+                    <td><strong>subsales_debug_logging_enabled</strong></td>
+                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_enabled', 'NOT SET' ) ); ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>subsales_debug_logging_started</strong></td>
+                    <td><code><?php var_dump( get_option( 'subsales_debug_logging_started', 'NOT SET' ) ); ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>Current Time</strong></td>
+                    <td><code><?php echo time(); ?></code> (<?php echo date( 'Y-m-d H:i:s', time() ); ?>)</td>
+                </tr>
+                <tr>
+                    <td><strong>Started Time</strong></td>
+                    <td><code><?php echo $debug_started; ?></code> 
+                        <?php if ( $debug_started ): ?>
+                            (<?php echo date( 'Y-m-d H:i:s', $debug_started ); ?>)
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <td><strong>Elapsed Seconds</strong></td>
+                    <td><code><?php echo $debug_started ? ( time() - $debug_started ) : 'N/A'; ?></code></td>
+                </tr>
+                <tr>
+                    <td><strong>Remaining Seconds</strong></td>
+                    <td><code><?php echo $debug_remaining; ?></code></td>
+                </tr>
+            </table>
+            
+            <h3>Calculated Values:</h3>
+            <pre><?php
+                echo "debug_enabled: " . var_export( $debug_enabled, true ) . "\n";
+                echo "debug_started: " . var_export( $debug_started, true ) . "\n";
+                echo "debug_remaining: " . var_export( $debug_remaining, true ) . "\n";
+                echo "24 hours in seconds: 86400\n";
+                if ( $debug_started ) {
+                    echo "Should expire at: " . date( 'Y-m-d H:i:s', $debug_started + 86400 ) . "\n";
+                }
+            ?></pre>
+            
+            <h3>Test Log Entry:</h3>
+            <?php
+                // Write a test log with DEBUG level
+                $test_time = time();
+                Subsales_Database::log( 'DEBUG', 'system', 'Diagnostics test log entry at ' . date('Y-m-d H:i:s', $test_time), array(
+                    'test_id' => $test_time,
+                    'debug_enabled' => $debug_enabled,
+                    'debug_started' => $debug_started
+                ), 'diagnostics' );
+                echo '<p style="color: green;">✓ Test DEBUG log written at ' . date('Y-m-d H:i:s', $test_time) . '</p>';
+            ?>
+            
+            <h3>Recent Logs from Database:</h3>
+            <?php
+                global $wpdb;
+                $logs_table = $wpdb->prefix . 'ss_logs';
+                $recent_logs = $wpdb->get_results( "SELECT * FROM {$logs_table} ORDER BY created_at DESC LIMIT 5", ARRAY_A );
+                echo '<pre>';
+                print_r( $recent_logs );
+                echo '</pre>';
+            ?>
+            
+            <p><a href="?page=subsales-logs" class="button">Back to Logs (without diagnostics)</a></p>
+        </div>
+        <?php endif; ?>
+        
         <!-- Debug Mode Toggle -->
         <div class="subsales-debug-toggle" style="background: #fff; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; border: 1px solid #ddd; border-left: 4px solid <?php echo $debug_enabled ? '#ffc107' : '#ddd'; ?>; padding: 15px; margin: 20px 0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -6264,6 +6447,7 @@ function subsales_logs_page() {
                             (<?php echo gmdate( 'H:i:s', $debug_remaining ); ?> remaining)
                         </span>
                     <?php endif; ?>
+                    <a href="?page=subsales-logs&diagnostics=1" class="button button-small" style="margin-left: 15px;">Run Diagnostics</a>
                 </div>
                 <button id="toggle-debug-btn" class="button button-<?php echo $debug_enabled ? 'secondary' : 'primary'; ?>">
                     <?php echo $debug_enabled ? 'Disable Debug Mode' : 'Enable Debug Mode'; ?>
@@ -6470,13 +6654,28 @@ function subsales_logs_page() {
         
         // View context modal
         $('.view-context-btn').on('click', function() {
-            const context = $(this).data('context');
-            try {
-                const formatted = JSON.stringify(JSON.parse(context), null, 2);
-                $('#context-content').text(formatted);
-            } catch(e) {
-                $('#context-content').text(context);
+            let context = $(this).data('context');
+            
+            // If context is already an object (jQuery auto-parsed it), stringify it
+            if (typeof context === 'object') {
+                try {
+                    const formatted = JSON.stringify(context, null, 2);
+                    $('#context-content').text(formatted);
+                } catch(e) {
+                    $('#context-content').text(String(context));
+                }
+            } else if (typeof context === 'string') {
+                // If it's a string, try to parse and format it
+                try {
+                    const formatted = JSON.stringify(JSON.parse(context), null, 2);
+                    $('#context-content').text(formatted);
+                } catch(e) {
+                    $('#context-content').text(context);
+                }
+            } else {
+                $('#context-content').text(String(context));
             }
+            
             $('#context-modal').css('display', 'flex');
         });
         
@@ -6694,7 +6893,8 @@ function subsales_pwa_sessions_page() {
                     <th style="width: 150px;">User/Team</th>
                     <th style="width: 120px;">Login</th>
                     <th style="width: 120px;">Last Heartbeat</th>
-                    <th style="width: 120px;">Session Expires</th>
+                    <th style="width: 120px;">Logout</th>
+                    <th style="width: 80px;">Duration</th>
                     <th style="width: 80px;">Status</th>
                     <th>User Agent</th>
                     <th style="width: 100px;">IP</th>
@@ -6702,7 +6902,7 @@ function subsales_pwa_sessions_page() {
             </thead>
             <tbody>
                 <?php if ( empty( $sessions ) ): ?>
-                    <tr><td colspan="8" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
+                    <tr><td colspan="9" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
                 <?php else: ?>
                     <?php foreach ( $sessions as $session ): 
                         $login_time = strtotime( $session['login_at'] );
@@ -6728,35 +6928,17 @@ function subsales_pwa_sessions_page() {
                             'ended' => '#6c757d'
                         );
                         $status_color = isset( $status_colors[ $display_status ] ) ? $status_colors[ $display_status ] : '#ccc';
-                        
-                        // Calculate session expires remaining time
-                        $expiry_display = '—';
-                        if ( $session['session_expiry'] && $display_status !== 'ended' ) {
-                            $expiry_time = strtotime( $session['session_expiry'] );
-                            $time_remaining = $expiry_time - $current_time;
-                            
-                            if ( $time_remaining > 0 ) {
-                                $hours = floor( $time_remaining / 3600 );
-                                $minutes = floor( ( $time_remaining % 3600 ) / 60 );
-                                $expiry_display = sprintf( '%dh %dm', $hours, $minutes );
-                            } else {
-                                $expiry_display = '<span style="color: #dc3545;">Expired</span>';
-                            }
-                        }
                     ?>
                     <tr>
-                        <td>
-                            <a href="#" class="view-session-details" data-session-id="<?php echo esc_attr( $session['session_id'] ); ?>" style="text-decoration: none; color: #2271b1;">
-                                <small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small>
-                            </a>
-                        </td>
+                        <td><small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small></td>
                         <td>
                             <strong><?php echo esc_html( $session['user_name'] ?: '(Unknown)' ); ?></strong><br>
                             <small style="color: #666;"><?php echo esc_html( $session['team_name'] ?: 'No Team' ); ?></small>
                         </td>
                         <td><?php echo date( 'M j, g:i a', $login_time ); ?></td>
                         <td><?php echo date( 'M j, g:i a', strtotime( $session['last_heartbeat'] ) ); ?></td>
-                        <td><?php echo $expiry_display; ?></td>
+                        <td><?php echo $logout_time ? date( 'M j, g:i a', $logout_time ) : '—'; ?></td>
+                        <td><?php echo gmdate( 'H:i:s', $duration ); ?></td>
                         <td>
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?php echo $status_color; ?>; margin-right: 5px;"></span>
                             <?php echo esc_html( ucfirst( $display_status ) ); ?>
@@ -6782,24 +6964,8 @@ function subsales_pwa_sessions_page() {
         
         <p style="margin-top: 20px; color: #666; font-style: italic;">
             💡 <strong>Tip:</strong> Sessions are automatically marked as "idle" after 5 minutes of no heartbeat. 
-            Active sessions send a heartbeat every 30 seconds from the app. Click a Session ID to view heartbeat history and GPS tracking.
+            Active sessions send a heartbeat every 30 seconds from the app.
         </p>
-    </div>
-    
-    <!-- Session Detail Modal -->
-    <div id="session-detail-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 100000; overflow: auto;">
-        <div style="max-width: 900px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-            <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0;">Session Details</h2>
-                <button id="close-session-modal" class="button" style="font-size: 20px; line-height: 1;">&times;</button>
-            </div>
-            <div id="session-detail-content" style="padding: 20px;">
-                <div style="text-align: center; padding: 40px;">
-                    <span class="spinner is-active" style="float: none; margin: 0;"></span>
-                    <p>Loading session data...</p>
-                </div>
-            </div>
-        </div>
     </div>
     
     <style>
@@ -6811,20 +6977,12 @@ function subsales_pwa_sessions_page() {
             vertical-align: middle;
             margin-right: 5px;
         }
-        .view-session-details:hover {
-            text-decoration: underline !important;
-        }
     </style>
     
     <script>
     jQuery(document).ready(function($) {
         // Auto-refresh active sessions every 10 seconds
         let autoRefreshInterval = setInterval(function() {
-            // Don't refresh if modal is open
-            if ($('#session-detail-modal').is(':visible')) {
-                console.log('Auto-refresh skipped - modal is open');
-                return;
-            }
             location.reload();
         }, 10000);
         
@@ -6833,115 +6991,11 @@ function subsales_pwa_sessions_page() {
             location.reload();
         });
         
-        // Stop auto-refresh when user interacts with filters or modal
+        // Stop auto-refresh when user interacts with filters
         $('select, input').on('focus', function() {
             clearInterval(autoRefreshInterval);
             console.log('Auto-refresh paused while editing filters');
         });
-        
-        // View session details
-        $('.view-session-details').on('click', function(e) {
-            e.preventDefault();
-            const sessionId = $(this).data('session-id');
-            
-            // Show modal
-            $('#session-detail-modal').fadeIn(200);
-            
-            // Load session data via AJAX
-            $.ajax({
-                url: ajaxurl,
-                method: 'POST',
-                data: {
-                    action: 'subsales_get_session_details',
-                    nonce: '<?php echo wp_create_nonce( 'subsales_session_details' ); ?>',
-                    session_id: sessionId
-                },
-                success: function(response) {
-                    if (response.success) {
-                        displaySessionDetails(response.data);
-                    } else {
-                        $('#session-detail-content').html('<div class="notice notice-error"><p>Error loading session data.</p></div>');
-                    }
-                },
-                error: function() {
-                    $('#session-detail-content').html('<div class="notice notice-error"><p>Failed to load session data.</p></div>');
-                }
-            });
-        });
-        
-        // Close modal
-        $('#close-session-modal, #session-detail-modal').on('click', function(e) {
-            if (e.target === this) {
-                $('#session-detail-modal').fadeOut(200);
-            }
-        });
-        
-        function displaySessionDetails(data) {
-            const session = data.session;
-            const heartbeats = data.heartbeats;
-            
-            let html = '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">';
-            html += '<div><strong>User:</strong> ' + (session.user_name || 'Unknown') + '</div>';
-            html += '<div><strong>Team:</strong> ' + (session.team_name || 'No Team') + '</div>';
-            html += '<div><strong>Login:</strong> ' + session.login_at + '</div>';
-            html += '<div><strong>Last Heartbeat:</strong> ' + session.last_heartbeat + '</div>';
-            html += '<div><strong>Session Expires:</strong> ' + (session.session_expiry || 'N/A') + '</div>';
-            html += '<div><strong>Status:</strong> ' + session.status + '</div>';
-            html += '<div><strong>IP Address:</strong> ' + session.ip_address + '</div>';
-            html += '<div><strong>User Agent:</strong> ' + session.user_agent + '</div>';
-            html += '</div>';
-            
-            html += '<h3 style="margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px;">Heartbeat History (' + heartbeats.length + ' records)</h3>';
-            
-            if (heartbeats.length > 0) {
-                html += '<div style="max-height: 400px; overflow-y: auto;">';
-                html += '<table class="widefat striped">';
-                html += '<thead><tr>';
-                html += '<th>Timestamp</th>';
-                html += '<th>GPS Location</th>';
-                html += '<th>Accuracy</th>';
-                html += '<th>Activity</th>';
-                html += '</tr></thead><tbody>';
-                
-                heartbeats.forEach(function(hb) {
-                    html += '<tr>';
-                    html += '<td>' + hb.heartbeat_at + '</td>';
-                    
-                    if (hb.gps_latitude && hb.gps_longitude) {
-                        const mapsUrl = 'https://www.google.com/maps?q=' + hb.gps_latitude + ',' + hb.gps_longitude;
-                        html += '<td><a href="' + mapsUrl + '" target="_blank">' + hb.gps_latitude + ', ' + hb.gps_longitude + '</a></td>';
-                        html += '<td>' + (hb.gps_accuracy ? Math.round(hb.gps_accuracy) + 'm' : 'N/A') + '</td>';
-                    } else {
-                        html += '<td>—</td><td>—</td>';
-                    }
-                    
-                    const activity = hb.activity_data ? JSON.parse(hb.activity_data) : {};
-                    let activityDisplay = 'None';
-                    
-                    if (activity.type) {
-                        // Auto heartbeat
-                        activityDisplay = '<span style="color: #666;">Auto (' + activity.type + ')</span>';
-                    } else if (activity.events && Array.isArray(activity.events)) {
-                        // User activity events
-                        const eventTypes = activity.events.map(e => e.action).join(', ');
-                        activityDisplay = '<strong>' + activity.events.length + ' event' + (activity.events.length > 1 ? 's' : '') + ':</strong> ' + eventTypes;
-                    } else if (Object.keys(activity).length > 0) {
-                        // Unknown activity format - show keys
-                        activityDisplay = Object.keys(activity).join(', ');
-                    }
-                    
-                    html += '<td>' + activityDisplay + '</td>';
-                    html += '</tr>';
-                });
-                
-                html += '</tbody></table>';
-                html += '</div>';
-            } else {
-                html += '<p style="color: #666; font-style: italic;">No heartbeat data available.</p>';
-            }
-            
-            $('#session-detail-content').html(html);
-        }
     });
     </script>
     <?php
@@ -6977,6 +7031,44 @@ function order_sync_main_page() {
                 <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
             </div>
         </div>
+        
+        <!-- OPTION 2: Segmented Control Style (COMMENT OUT OPTION 1 AND UNCOMMENT TO USE)
+        <div class="subsales-mode-controls subsales-option-2" style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 30px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <strong style="font-size: 14px;">Sales Mode:</strong>
+                <div class="subsales-segmented-control">
+                    <input type="radio" name="salesModeRadio" id="salesModeTeam" value="legacy" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'legacy' ); ?> />
+                    <label for="salesModeTeam">Team</label>
+                    <input type="radio" name="salesModeRadio" id="salesModeIndividual" value="user" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'user' ); ?> />
+                    <label for="salesModeIndividual">Individual</label>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
+                <strong style="font-size: 14px;">Active Users:</strong>
+                <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
+            </div>
+        </div>
+        -->
+        
+        <!-- OPTION 3: Minimal Badge Style (COMMENT OUT OPTION 1 AND UNCOMMENT TO USE)
+        <div class="subsales-mode-controls subsales-option-3" style="background: #f0f6fc; padding: 12px 15px; border-left: 4px solid #2271b1; margin-bottom: 20px; display: flex; align-items: center; gap: 25px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 13px; color: #1d2327;">Sales Mode:</strong>
+                <div class="subsales-badge-toggle">
+                    <button type="button" class="subsales-badge-btn" data-value="legacy">Team</button>
+                    <button type="button" class="subsales-badge-btn active" data-value="user">Individual</button>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
+                <span style="font-size: 13px; color: #1d2327; font-weight: 500;">Active Users:</span>
+                <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 12px; cursor: pointer; font-weight: 600; min-width: 20px; text-align: center;" title="Click to view app sessions">0</span>
+            </div>
+        </div>
+        -->
         
         <style>
         /* OPTION 1: Compact Inline Toggle Styles */
@@ -7044,6 +7136,65 @@ function order_sync_main_page() {
             color: #2c3338;
         }
         
+        /* OPTION 2: Segmented Control Styles */
+        .subsales-segmented-control {
+            display: inline-flex;
+            background: #f0f0f0;
+            border-radius: 6px;
+            padding: 2px;
+        }
+        .subsales-segmented-control input[type="radio"] {
+            display: none;
+        }
+        .subsales-segmented-control label {
+            padding: 4px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+            color: #50575e;
+            margin: 0;
+        }
+        .subsales-segmented-control input[type="radio"]:checked + label {
+            background: #2271b1;
+            color: #fff;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .subsales-segmented-control label:hover {
+            color: #2271b1;
+        }
+        .subsales-segmented-control input[type="radio"]:checked + label:hover {
+            color: #fff;
+        }
+        
+        /* OPTION 3: Badge Toggle Styles */
+        .subsales-badge-toggle {
+            display: inline-flex;
+            gap: 6px;
+        }
+        .subsales-badge-btn {
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid #c3c4c7;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #2c3338;
+        }
+        .subsales-badge-btn:hover {
+            border-color: #2271b1;
+            color: #2271b1;
+        }
+        .subsales-badge-btn.active {
+            background: #2271b1;
+            border-color: #2271b1;
+            color: #fff;
+            box-shadow: 0 1px 3px rgba(34, 113, 177, 0.3);
+        }
+        
         /* Common styles */
         .subsales-chip {
             display: inline-block;
@@ -7077,11 +7228,29 @@ function order_sync_main_page() {
         
         <script>
         (function($) {
-            // Toggle switch handler
+            // OPTION 1: Toggle switch handler
             $('#salesModeToggle').on('change', function() {
                 const mode = this.checked ? 'user' : 'legacy';
                 updateSalesMode(mode);
             });
+            
+            // OPTION 2: Segmented control handler
+            $('input[name="salesModeRadio"]').on('change', function() {
+                const mode = this.value;
+                updateSalesMode(mode);
+            });
+            
+            // OPTION 3: Badge toggle handler
+            $('.subsales-badge-btn').on('click', function() {
+                const mode = $(this).data('value');
+                $('.subsales-badge-btn').removeClass('active');
+                $(this).addClass('active');
+                updateSalesMode(mode);
+            });
+            
+            // Initialize option 3 active state
+            const currentMode = <?php echo wp_json_encode( get_option( 'subsales_sales_mode', 'legacy' ) ); ?>;
+            $('.subsales-badge-btn[data-value="' + currentMode + '"]').addClass('active');
             
             // Common update function
             function updateSalesMode(mode) {
@@ -7211,14 +7380,8 @@ function order_sync_main_page() {
                     }
                 }
                 ?>
-                <!-- Row 1: Orders, Teams, Members, Address -->
+                <!-- Row 1: Teams, Members, Orders, Address Data -->
                 <div class="subsales-top-row">
-                    <div class="postbox subsales-box">
-                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
-                        <div class="inside">
-                            <p class="stat-value"><?php echo intval( $order_count ); ?></p>
-                        </div>
-                    </div>
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-groups" aria-hidden="true"></span> Teams</h2></div>
                         <div class="inside">
@@ -7229,6 +7392,12 @@ function order_sync_main_page() {
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-admin-users" aria-hidden="true"></span> Members</h2></div>
                         <div class="inside">
                             <p class="stat-value"><?php echo intval( $member_count ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo intval( $order_count ); ?></p>
                         </div>
                     </div>
                     <?php
@@ -7317,10 +7486,10 @@ function order_sync_main_page() {
                     </div>
                 </div>
                 
-                <!-- Row 2: Sales, Donations, Cash, Checks -->
+                <!-- Row 2: Product Sales, Donations, Cash, Checks -->
                 <div class="subsales-financial-row">
                     <div class="postbox subsales-box">
-                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales</h2></div>
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Product Sales</h2></div>
                         <div class="inside">
                             <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
                         </div>
@@ -7591,7 +7760,7 @@ add_action('admin_enqueue_scripts', 'subsales_enqueue_admin_assets');
 function subsales_enqueue_admin_assets($hook){
     // Only load on our plugin pages (basic guard: check for our page slug in $_GET)
     $load = false;
-    if ( isset($_GET['page']) && is_string($_GET['page']) && strpos($_GET['page'], 'subsales') === 0 ) $load = true;
+    if ( isset($_GET['page']) && strpos($_GET['page'], 'subsales') === 0 ) $load = true;
     if ( ! $load ) return;
     
     // Enqueue jQuery for AJAX and DOM manipulation
@@ -7604,8 +7773,940 @@ function subsales_enqueue_admin_assets($hook){
     }
 }
 
-// Admin settings page - extracted to separate file
-require_once SUBSALES_PLUGIN_PATH . 'admin/settings-page.php';
+// Admin settings page
+function order_sync_settings_page() {
+    // Check user capabilities
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    // Handle per-panel form submission
+    if ( isset( $_POST['save_overall'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $api_key = isset( $_POST['api_key'] ) ? sanitize_text_field( $_POST['api_key'] ) : '';
+        $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
+        $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
+        $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
+        $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
+
+        $old_slug = get_option( 'order_sync_portal_slug', '' );
+        update_option( 'order_sync_google_maps_api_key', $api_key );
+        update_option( 'order_sync_interval', $sync_interval );
+        update_option( 'order_sync_portal_slug', $portal_slug );
+        update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'order_sync_login_mode', $login_mode );
+
+        if ( $portal_slug !== $old_slug ) {
+            order_sync_ensure_pwa_page( $portal_slug );
+            flush_rewrite_rules();
+        }
+
+        echo '<div class="notice notice-success"><p>Overall settings saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_branding'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $branding = isset( $_POST['subsales_branding'] ) ? sanitize_text_field( $_POST['subsales_branding'] ) : '';
+        $style_variant = isset( $_POST['style_variant'] ) ? sanitize_text_field( $_POST['style_variant'] ) : 'default';
+        $primary_color = isset( $_POST['primary_color'] ) ? sanitize_text_field( $_POST['primary_color'] ) : '#2d6cdf';
+        $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
+
+        update_option( 'subsales_branding', $branding );
+        update_option( 'order_sync_style_variant', $style_variant );
+        update_option( 'order_sync_primary_color', $primary_color );
+        update_option( 'subsales_header_image', $header_image );
+
+        echo '<div class="notice notice-success"><p>Branding saved!</p></div>';
+    }
+
+    if ( isset( $_POST['save_products'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        // Handle products: repeatable fields product_name[], product_price[], product_visible[], product_id[]
+        if ( isset( $_POST['product_name'] ) && is_array( $_POST['product_name'] ) ) {
+            $names = $_POST['product_name'];
+            $prices = isset( $_POST['product_price'] ) && is_array( $_POST['product_price'] ) ? $_POST['product_price'] : array();
+            $visibles = isset( $_POST['product_visible'] ) && is_array( $_POST['product_visible'] ) ? $_POST['product_visible'] : array();
+            $ids = isset( $_POST['product_id'] ) && is_array( $_POST['product_id'] ) ? $_POST['product_id'] : array();
+            $products = array();
+            $count = 0;
+            for ( $i = 0; $i < count( $names ) && $count < 10; $i++ ) {
+                $name = sanitize_text_field( $names[ $i ] );
+                if ( empty( $name ) ) continue;
+                $price_raw = isset( $prices[ $i ] ) ? $prices[ $i ] : '0';
+                $price = floatval( preg_replace( '/[^0-9.\\-]/', '', $price_raw ) );
+                $price = round( $price, 2 );
+                $id = isset( $ids[ $i ] ) ? sanitize_title( $ids[ $i ] ) : sanitize_title( $name );
+                if ( empty( $id ) ) $id = 'p' . time() . $i;
+                $suffix = 1;
+                $base_id = $id;
+                while ( in_array( $id, array_column( $products, 'id' ) ) ) { $id = $base_id . '-' . $suffix; $suffix++; }
+                $visible = in_array( (string)$i, $visibles, true ) || in_array( $id, $visibles, true ) || ( isset( $visibles[ $i ] ) && $visibles[ $i ] );
+                $products[] = array( 'id' => $id, 'name' => $name, 'price' => number_format( $price, 2, '.', '' ), 'visible' => $visible ? 1 : 0 );
+                $count++;
+            }
+            update_option( 'order_sync_products', wp_json_encode( $products ) );
+            echo '<div class="notice notice-success"><p>Products saved!</p></div>';
+        }
+    }
+
+    if ( isset( $_POST['save_zipcodes'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        // Handle ZIP codes configuration
+        if ( isset( $_POST['zipcode_list'] ) ) {
+            $zipcode_input = sanitize_textarea_field( $_POST['zipcode_list'] );
+            // Parse comma or newline separated ZIPs
+            $zipcodes = preg_split( '/[,\s\n]+/', $zipcode_input, -1, PREG_SPLIT_NO_EMPTY );
+            // Validate and clean ZIPs
+            $valid_zips = array();
+            foreach ( $zipcodes as $zip ) {
+                $zip = trim( $zip );
+                if ( preg_match( '/^\d{5}$/', $zip ) ) {
+                    $valid_zips[] = $zip;
+                }
+            }
+            update_option( 'subsales_served_zips', array_unique( $valid_zips ) );
+            echo '<div class="notice notice-success"><p>ZIP codes saved! (' . count( $valid_zips ) . ' valid ZIP codes)</p></div>';
+        }
+    }
+    
+    if ( isset( $_POST['save_deletion_settings'] ) ) {
+        check_admin_referer( 'order_sync_settings_nonce' );
+        $delete_on_uninstall = isset( $_POST['subsales_delete_on_uninstall'] ) ? sanitize_text_field( $_POST['subsales_delete_on_uninstall'] ) : 'yes';
+        
+        if ( $delete_on_uninstall !== 'yes' && $delete_on_uninstall !== 'no' ) {
+            $delete_on_uninstall = 'yes'; // Default to safe option
+        }
+        
+        update_option( 'subsales_delete_on_uninstall', $delete_on_uninstall );
+        delete_transient( 'subsales_show_deletion_prompt' ); // Clear any pending prompt
+        
+        subsales_log( 'INFO', 'system', 'Data deletion preference updated', array( 'choice' => $delete_on_uninstall ), 'admin' );
+        
+        if ( $delete_on_uninstall === 'yes' ) {
+            echo '<div class="notice notice-warning"><p><strong>⚠️ Data deletion enabled.</strong> All plugin data will be permanently deleted when you delete this plugin.</p></div>';
+        } else {
+            echo '<div class="notice notice-success"><p><strong>✅ Data preservation enabled.</strong> Your data will be kept safe even if you delete the plugin.</p></div>';
+        }
+    }
+
+    // Handle clear data action (danger zone)
+    if ( isset( $_POST['clear_data'] ) ) {
+        check_admin_referer( 'order_sync_clear_nonce' );
+        if ( ! current_user_can( 'manage_options' ) ) {
+            echo '<div class="notice notice-error"><p>Insufficient permissions to clear data.</p></div>';
+        } else {
+            global $wpdb;
+            $cleared = array();
+            
+            // Check which items were selected
+            if ( isset( $_POST['clear_orders'] ) && $_POST['clear_orders'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_orders';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Orders';
+                }
+            }
+            
+            if ( isset( $_POST['clear_teams'] ) && $_POST['clear_teams'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Teams';
+                }
+            }
+            
+            if ( isset( $_POST['clear_members'] ) && $_POST['clear_members'] === '1' ) {
+                $members_table = $wpdb->prefix . 'ss_team_members';
+                $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$members_table}'" ) === $members_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$members_table}" );
+                }
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$user_teams_table}'" ) === $user_teams_table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$user_teams_table}" );
+                }
+                $cleared[] = 'Team Members';
+            }
+            
+            if ( isset( $_POST['clear_addresses'] ) && $_POST['clear_addresses'] === '1' ) {
+                $table = $wpdb->prefix . 'ss_addresses';
+                if ( $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table ) {
+                    $wpdb->query( "TRUNCATE TABLE {$table}" );
+                    $cleared[] = 'Addresses';
+                }
+            }
+            
+            if ( isset( $_POST['clear_settings'] ) && $_POST['clear_settings'] === '1' ) {
+                order_sync_clear_settings();
+                $cleared[] = 'Settings';
+            }
+            
+            if ( ! empty( $cleared ) ) {
+                $items = implode( ', ', $cleared );
+                echo '<div class="notice notice-success"><p><strong>✅ Data cleared successfully:</strong> ' . esc_html( $items ) . '</p></div>';
+            } else {
+                echo '<div class="notice notice-warning"><p><strong>⚠️ No items selected.</strong> Please select at least one item to clear.</p></div>';
+            }
+        }
+    }
+
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    $sync_interval = get_option( 'order_sync_interval', 300 );
+    $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
+    $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 0 );
+    $branding = get_option( 'subsales_branding', 'Subsales' );
+    $style_variant = get_option( 'order_sync_style_variant', 'default' );
+    $primary_color = get_option( 'order_sync_primary_color', '#2d6cdf' );
+    $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
+    $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
+    $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
+    ?>
+    <div class="wrap">
+        <h1>Subsales Settings</h1>
+        
+        <h2 class="nav-tab-wrapper">
+            <a href="#tab-overall" class="nav-tab nav-tab-active" data-target="#tab-overall">Overall Settings</a>
+            <a href="#tab-branding" class="nav-tab" data-target="#tab-branding">Branding / Look &amp; Feel</a>
+            <a href="#tab-products" class="nav-tab" data-target="#tab-products">Products</a>
+            <a href="#tab-address_extracts" class="nav-tab" data-target="#tab-address_extracts">Address Management</a>
+            <a href="#tab-backup_restore" class="nav-tab" data-target="#tab-backup_restore">Backup / Restore</a>
+            <a href="#tab-system_info" class="nav-tab" data-target="#tab-system_info">System Info</a>
+        </h2>
+        
+        <style>
+        .subsales-tab-panel { display: none; margin-top: 20px; }
+        .subsales-tab-panel.active { display: block; }
+        </style>
+        
+        <script>
+        (function($) {
+            $(document).ready(function() {
+                function showPanel(target) {
+                    $('.subsales-tab-panel').removeClass('active');
+                    $(target).addClass('active');
+                    $('.nav-tab').removeClass('nav-tab-active');
+                    $('.nav-tab[data-target="' + target + '"]').addClass('nav-tab-active');
+                }
+                
+                $('.nav-tab').on('click', function(e) {
+                    e.preventDefault();
+                    var target = $(this).data('target');
+                    showPanel(target);
+                    if (history && history.replaceState) {
+                        history.replaceState(null, null, target);
+                    }
+                });
+                
+                // Initialize from hash or show first panel
+                var hash = window.location.hash;
+                if (hash && $(hash).length) {
+                    showPanel(hash);
+                } else {
+                    showPanel('#tab-overall');
+                }
+            });
+        })(jQuery);
+        </script>
+    <?php if ( ! empty( $_GET['subsales_import_result'] ) ) :
+            $raw = sanitize_text_field( wp_unslash( $_GET['subsales_import_result'] ) );
+            // decode if it was rawurlencoded
+            $raw = rawurldecode( $raw );
+        ?>
+            <div class="notice notice-success"><p><strong>Import result:</strong> <?php echo esc_html( $raw ); ?></p></div>
+        <?php endif; ?>
+        
+        
+        <!-- Main Settings Panels -->
+            <div class="subsales-tab-panels">
+                <div id="tab-overall" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="overall" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Google Maps API Key</th>
+                            <td>
+                                <input type="text" id="mapsApiKey" name="api_key" value="<?php echo esc_attr( $api_key ); ?>" class="regular-text" />
+                                <p class="description">Enter your Google Maps API key. This will be shared with mobile clients after login for map functionality.</p>
+                                <p class="description">Need a key? <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Create a Google Maps API key</a> in Google Cloud Console (enable Maps JavaScript / Geocoding APIs).</p>
+                                <p>
+                                    <button type="button" id="test_maps_key_btn" class="button">Test key</button>
+                                    <span id="maps_test_status" style="margin-left:12px; font-weight:600"></span>
+                                </p>
+                                <div id="maps_test_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
+                                <script>
+                                (function(){
+                                    const ajaxUrl = ajaxurl;
+                                    const nonce = <?php echo json_encode( wp_create_nonce( 'subsales_test_maps_key' ) ); ?>;
+                                    function setStatus(s){ document.getElementById('maps_test_status').textContent = s; }
+                                    document.getElementById('test_maps_key_btn').addEventListener('click', function(){
+                                        const key = document.getElementById('mapsApiKey').value || '';
+                                        const fd = new FormData();
+                                        fd.append('action','subsales_test_maps_key');
+                                        fd.append('nonce', nonce);
+                                        fd.append('key', key);
+                                        const out = document.getElementById('maps_test_output'); out.style.display='block'; out.textContent='Testing...'; setStatus('Testing...');
+                                        fetch(ajaxUrl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+                                            if (!j) { out.textContent = 'No response'; setStatus('Error'); return; }
+                                            if (!j.success) {
+                                                out.textContent = 'Error: ' + (j.data || 'Unknown'); setStatus('Invalid'); return;
+                                            }
+                                            const d = j.data;
+                                            out.textContent = JSON.stringify(d, null, 2);
+                                            setStatus(d.status || 'OK');
+                                        }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; setStatus('Error'); });
+                                    });
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Sync Interval (seconds)</th>
+                            <td>
+                                <input type="number" name="sync_interval" value="<?php echo esc_attr( $sync_interval ); ?>" min="60" />
+                                <p class="description">How often to sync orders (minimum 60 seconds).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Portal Slug</th>
+                            <td>
+                                <input type="text" name="portal_slug" value="<?php echo esc_attr( $portal_slug ); ?>" class="regular-text" />
+                                <p class="description">The public slug (URL path) where the PWA will be available. Default: <code>subsales-portal</code>.</p>
+                                <p class="description">Portal URL: <strong><?php echo esc_url( $portal_url ); ?></strong></p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Default session duration</th>
+                            <td>
+                                <select name="session_duration">
+                                    <option value="120000" <?php selected( 120000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 minutes (Test)</option>
+                                    <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
+                                    <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                                </select>
+                                <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Login Mode</th>
+                            <td>
+                                <fieldset>
+                                    <label style="display: block; margin-bottom: 10px;">
+                                        <input type="radio" name="login_mode" value="legacy" <?php checked( $login_mode, 'legacy' ); ?> />
+                                        <strong>Legacy Login (Team + Code)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users enter a team name and access code to login. Original authentication method.
+                                        </p>
+                                    </label>
+                                    <label style="display: block; margin-top: 10px;">
+                                        <input type="radio" name="login_mode" value="user" <?php checked( $login_mode, 'user' ); ?> />
+                                        <strong>User-Based Login (Name + Phone)</strong>
+                                        <p class="description" style="margin-left: 24px; margin-top: 4px;">
+                                            Users search by name and verify with phone number, then select their team. Requires users to be created in the Teams → Users tab.
+                                        </p>
+                                    </label>
+                                </fieldset>
+                                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-top: 12px;">
+                                    <strong>⚠️ Important:</strong> Changing the login mode will affect how users authenticate in the PWA.
+                                    Make sure your users know which method to use after switching.
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Overall Settings', 'primary', 'save_overall', false ); ?></p>
+                    </form>
+                </div>
+
+                <div id="tab-branding" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="branding" />
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Branding / Group name</th>
+                            <td>
+                                <input type="text" name="subsales_branding" value="<?php echo esc_attr( $branding ); ?>" class="regular-text" />
+                                <p class="description">Optional branding string that will be shown in the PWA header and admin pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Header image</th>
+                            <td>
+                                <input type="hidden" id="subsales_header_image" name="subsales_header_image" value="<?php echo esc_attr( $header_image_id ); ?>" />
+                                <div id="subsales_header_preview" style="margin-bottom:8px;<?php echo $header_image_url ? '' : 'display:none;'; ?>">
+                                    <?php if ( $header_image_url ): ?>
+                                        <img src="<?php echo esc_url( $header_image_url ); ?>" style="max-width:200px;height:auto;border:1px solid #ddd;padding:4px;background:#fff" />
+                                    <?php endif; ?>
+                                </div>
+                                <button type="button" class="button" id="subsales_header_select">Select image</button>
+                                <button type="button" class="button" id="subsales_header_remove" <?php echo $header_image_url ? '' : 'style="display:none;"'; ?>>Remove image</button>
+                                <p class="description">Optional header image that will be shown in the PWA header on mobile clients.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Style options</th>
+                            <td>
+                                <p class="description">Choose a visual style for the PWA. Samples are shown below; primary color can be customized.</p>
+                                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="default" <?php checked( $style_variant, 'default' ); ?> /> Default</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="flat" <?php checked( $style_variant, 'flat' ); ?> /> Flat</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="rounded" <?php checked( $style_variant, 'rounded' ); ?> /> Rounded</label>
+                                    <label style="display:flex;align-items:center;gap:8px"><input type="radio" name="style_variant" value="dark" <?php checked( $style_variant, 'dark' ); ?> /> Dark</label>
+                                </div>
+                                <div id="branding_samples" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Button sample</div>
+                                        <button id="branding_button_sample" class="subsales-branding-button" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;border:none;padding:8px 12px;border-radius:6px">Primary</button>
+                                    </div>
+                                    <div class="branding-sample-box" style="padding:8px;border:1px solid #eee;border-radius:6px;min-width:160px">
+                                        <div style="margin-bottom:6px;font-weight:600">Header sample</div>
+                                        <div id="branding_header_sample" class="subsales-branding-header" style="background:<?php echo esc_attr( $primary_color ); ?>;color:#fff;padding:8px;border-radius:4px;text-align:center"><?php echo esc_html( $branding ); ?></div>
+                                    </div>
+                                </div>
+                                <p style="margin-top:8px">Primary color: <input type="color" name="primary_color" value="<?php echo esc_attr( $primary_color ); ?>" /></p>
+                                <p class="description">These options control how the embedded PWA will style buttons and header on mobile clients.</p>
+                                <script>
+                                (function(){
+                                    function applyBrandingVariant(variant){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(!btn || !hdr) return;
+                                        // remove existing variant classes
+                                        btn.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        hdr.classList.remove('branding-variant-default','branding-variant-flat','branding-variant-rounded','branding-variant-dark');
+                                        var cls = 'branding-variant-' + (variant || 'default');
+                                        btn.classList.add(cls);
+                                        hdr.classList.add(cls);
+                                    }
+                                    function applyPrimaryColor(color){
+                                        var btn = document.getElementById('branding_button_sample');
+                                        var hdr = document.getElementById('branding_header_sample');
+                                        if(btn) btn.style.background = color;
+                                        if(hdr) hdr.style.background = color;
+                                    }
+                                    // wire radio buttons
+                                    var radios = document.querySelectorAll('input[name="style_variant"]');
+                                    radios.forEach(function(r){ r.addEventListener('change', function(e){ applyBrandingVariant(e.target.value); }); });
+                                    // wire color input
+                                    var colorInput = document.querySelector('input[name="primary_color"]');
+                                    if(colorInput){ colorInput.addEventListener('input', function(e){ applyPrimaryColor(e.target.value); }); }
+                                    // initialize on load
+                                    var sel = document.querySelector('input[name="style_variant"]:checked');
+                                    if(sel) applyBrandingVariant(sel.value);
+                                    if(colorInput) applyPrimaryColor(colorInput.value);
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Branding', 'primary', 'save_branding', false ); ?></p>
+                    </form>
+                </div>
+                
+                <?php
+                // Products configuration (repeatable control)
+                $configured_products = order_sync_get_products_config();
+                ?>
+                <div id="tab-products" class="subsales-tab-panel">
+                    <form method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
+                    <input type="hidden" name="panel" value="products" />
+                    <table class="form-table">
+                        <tr>
+                            <td>
+                                <div id="products_repeatable">
+                                    <table id="products_table" class="widefat subsales-products-table">
+                                <thead><tr><th class="col-name">Name</th><th class="col-price">Price (USD)</th><th class="col-visible">Visible</th><th class="col-actions">Actions</th></tr></thead>
+                                <tbody>
+                                <?php if ( ! empty( $configured_products ) ) : ?>
+                                    <?php foreach ( $configured_products as $idx => $p ) : ?>
+                                        <tr data-index="<?php echo intval( $idx ); ?>">
+                                            <td>
+                                                <input type="text" name="product_name[]" class="regular-text product-name" value="<?php echo esc_attr( $p['name'] ?? '' ); ?>" />
+                                                <input type="hidden" name="product_id[]" class="product-id" value="<?php echo esc_attr( $p['id'] ?? '' ); ?>" />
+                                            </td>
+                                            <td><input type="text" name="product_price[]" class="regular-text product-price" value="<?php echo esc_attr( $p['price'] ?? '0.00' ); ?>" /></td>
+                                            <td class="col-center"><input type="checkbox" name="product_visible[]" value="<?php echo esc_attr( $p['id'] ?? $idx ); ?>" <?php checked( 1, intval( $p['visible'] ?? 0 ) ); ?> /></td>
+                                            <td class="col-center"><button type="button" class="button button-link remove-product">Remove</button></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                                </tbody>
+                            </table>
+                            <p><button type="button" id="add_product_btn" class="button">Add product</button> <span class="description">Max 10 products.</span></p>
+                        </div>
+                        <script>
+                        (function(){
+                            var maxProducts = 10;
+                            function slugify(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').substr(0,60); }
+                            function createRow(name, price, id, visible){
+                                var tbody = document.querySelector('#products_table tbody');
+                                if (!tbody) return null;
+                                var current = tbody.querySelectorAll('tr').length;
+                                if (current >= maxProducts) { alert('Maximum products reached ('+maxProducts+')'); return null; }
+                                var tr = document.createElement('tr');
+                                var tdName = document.createElement('td');
+                                var nameInput = document.createElement('input'); nameInput.type='text'; nameInput.name='product_name[]'; nameInput.className='regular-text product-name'; nameInput.value = name || '';
+                                var idInput = document.createElement('input'); idInput.type='hidden'; idInput.name='product_id[]'; idInput.className='product-id'; idInput.value = id || '';
+                                tdName.appendChild(nameInput); tdName.appendChild(idInput);
+
+                                var tdPrice = document.createElement('td');
+                                var priceInput = document.createElement('input'); priceInput.type='text'; priceInput.name='product_price[]'; priceInput.className='regular-text product-price'; priceInput.value = price || '0.00';
+                                tdPrice.appendChild(priceInput);
+
+                                var tdVis = document.createElement('td'); tdVis.className='col-center';
+                                var visInput = document.createElement('input'); visInput.type='checkbox'; visInput.name='product_visible[]'; visInput.checked = !!visible; visInput.value = id || '';
+                                tdVis.appendChild(visInput);
+
+                                var tdAct = document.createElement('td'); tdAct.className='col-center';
+                                var remBtn = document.createElement('button'); remBtn.type='button'; remBtn.className='button button-link remove-product'; remBtn.textContent='Remove';
+                                tdAct.appendChild(remBtn);
+
+                                tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdVis); tr.appendChild(tdAct);
+                                // wire events
+                                nameInput.addEventListener('input', function(){
+                                    var slug = slugify(nameInput.value) || ('p'+Date.now());
+                                    idInput.value = slug;
+                                    // keep the visible checkbox value in sync with id
+                                    try{ visInput.value = slug; }catch(e){}
+                                });
+                                remBtn.addEventListener('click', function(){ tr.parentNode.removeChild(tr); });
+                                tbody.appendChild(tr);
+                                return tr;
+                            }
+                            document.getElementById('add_product_btn').addEventListener('click', function(){ createRow('', '0.00', 'p' + Date.now(), true); });
+                            document.querySelectorAll('#products_table .remove-product').forEach(function(b){ b.addEventListener('click', function(){ var tr = b.closest('tr'); tr && tr.parentNode.removeChild(tr); }); });
+                        })();
+                        </script>
+                            </td>
+                        </tr>
+                    </table>
+                    <p class="submit"><?php submit_button( 'Save Products', 'primary', 'save_products', false ); ?></p>
+                    </form>
+                </div>
+
+                <div id="tab-address_extracts" class="subsales-tab-panel">
+                    <h2 style="margin-top:18px">📍 Address Management</h2>
+                    <p>Manage your service area configuration, upload address data, and generate JSON extracts for the PWA.</p>
+                    
+                    <?php
+                    // Include the modern dashboard
+                    include plugin_dir_path( __FILE__ ) . 'admin/address-management-dashboard.php';
+                    ?>
+                </div>
+
+                <div id="tab-backup_restore" class="subsales-tab-panel">
+            <h2 style="margin-top:18px">💾 Backup & Restore</h2>
+            <p>Export all plugin data for backup or migrate to another WordPress site. Import previously exported backups to restore data.</p>
+            
+            <!-- Export Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📤 Export Data</h3>
+                <?php $export_nonce = wp_create_nonce( 'subsales_export_nonce' ); ?>
+                
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
+                    <a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup_combined&_wpnonce=' . $export_nonce ) ); ?>">
+                        📦 Export Complete Backup (ZIP)
+                    </a>
+                </div>
+                
+                <details style="margin-top: 15px;">
+                    <summary style="cursor: pointer; font-weight: 600;">Individual Exports</summary>
+                    <div style="padding: 15px; margin-top: 10px; background: #f6f7f7; border-radius: 4px;">
+                        <p style="margin-top: 0;">Export individual components separately:</p>
+                        <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_orders&_wpnonce=' . $export_nonce ) ); ?>">Orders (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_teams&_wpnonce=' . $export_nonce ) ); ?>">Teams (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_members&_wpnonce=' . $export_nonce ) ); ?>">Members (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_addresses&_wpnonce=' . $export_nonce ) ); ?>">Addresses (CSV)</a>
+                            <a class="button" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_settings&_wpnonce=' . $export_nonce ) ); ?>">Settings (CSV)</a>
+                        </div>
+                    </div>
+                </details>
+                
+                <div style="background: #e7f3ff; border-left: 4px solid #0071a1; padding: 12px; margin-top: 15px;">
+                    <p style="margin: 0;"><strong>💡 Tip:</strong> The complete backup ZIP includes all orders, teams, members, addresses, and settings. Perfect for site migrations or scheduled backups.</p>
+                </div>
+            </div>
+            
+            <!-- Import Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <h3 style="margin-top: 0;">📥 Import Data</h3>
+                
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                    <?php wp_nonce_field( 'subsales_import_nonce' ); ?>
+                    <input type="hidden" name="action" value="subsales_import_backup" />
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">Backup File</th>
+                            <td>
+                                <input type="file" name="backup_file" accept="text/csv,text/plain,application/zip,.zip" required style="margin-bottom: 10px;" />
+                                <p class="description">Upload a ZIP backup (complete) or individual CSV file</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Import Options</th>
+                            <td>
+                                <label style="display: block; margin-bottom: 10px;">
+                                    <input type="checkbox" name="import_update_existing" value="1" />
+                                    Update existing records (match by ID) - otherwise skip duplicates
+                                </label>
+                                <p class="description" style="margin: 8px 0 0 0; padding: 8px; background: #e7f7e7; border-left: 3px solid #46b450;">
+                                    <strong>🗺️ Auto-Geocoding Enabled:</strong> Addresses without lat/lng coordinates will be automatically geocoded using Google Maps API. 
+                                    ZIP codes will be validated against coordinates and auto-corrected if mismatched.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <button type="submit" class="button button-primary button-large">Import Backup</button>
+                    </p>
+                </form>
+            </div>
+            
+            <!-- Destructive Restore Section -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">⚠️ Advanced: Full Restore (Destructive)</h3>
+                <p><strong>Warning:</strong> This will clear existing data before importing. Only use this when restoring from a known good backup.</p>
+                
+                <details>
+                    <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">Show Restore Options</summary>
+                    <div style="padding: 15px; margin-top: 10px; border: 1px solid #ddd; border-radius: 4px;">
+                        <form id="subsales-destructive-restore" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                            <?php wp_nonce_field( 'subsales_restore_nonce' ); ?>
+                            <input type="hidden" name="action" value="subsales_restore_and_import" />
+                            
+                            <table class="form-table">
+                                <tr>
+                                    <th scope="row">Backup File</th>
+                                    <td><input type="file" name="backup_file" accept="application/zip,.zip,text/csv,text/plain" required /></td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Clear Before Import</th>
+                                    <td>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="both" checked />
+                                            <strong>Everything</strong> - Clear all orders, teams, members, addresses, and settings
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="data" />
+                                            <strong>Data Only</strong> - Clear orders, teams, members, and addresses (keep settings)
+                                        </label>
+                                        <label style="display: block; margin: 8px 0;">
+                                            <input type="radio" name="restore_target" value="settings" />
+                                            <strong>Settings Only</strong> - Clear settings (keep data)
+                                        </label>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th scope="row">Confirmation</th>
+                                    <td>
+                                        <label style="font-weight: 600;">
+                                            <input type="checkbox" id="confirm_clear_restore" />
+                                            I understand this will permanently delete the selected data before importing
+                                        </label>
+                                    </td>
+                                </tr>
+                            </table>
+                            
+                            <p class="submit">
+                                <button id="subsales-restore-btn" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>⚠️ Restore from Backup</button>
+                            </p>
+                        </form>
+                        
+                        <script>
+                        (function(){
+                            var chk = document.getElementById('confirm_clear_restore');
+                            var btn = document.getElementById('subsales-restore-btn');
+                            var form = document.getElementById('subsales-destructive-restore');
+                            var radios = form ? form.querySelectorAll('input[name="restore_target"]') : null;
+                            
+                            if ( chk && btn ) {
+                                chk.addEventListener('change', function(){ btn.disabled = !chk.checked; });
+                            }
+                            
+                            if ( form ) {
+                                form.addEventListener('submit', function(e){
+                                    if ( ! chk.checked ) {
+                                        e.preventDefault();
+                                        alert('Please confirm the destructive restore by checking the box.');
+                                        return false;
+                                    }
+                                    
+                                    var sel = 'both';
+                                    if ( radios ) {
+                                        radios.forEach(function(r){ if ( r.checked ) sel = r.value; });
+                                    }
+                                    
+                                    var msg = 'This will permanently delete the selected plugin data before importing. Are you sure?';
+                                    if ( sel === 'both' ) {
+                                        msg = '⚠️ PERMANENT ACTION\n\nThis will delete ALL plugin data (orders, teams, members, addresses, and settings) before importing.\n\nThis cannot be undone.\n\nAre you absolutely sure?';
+                                    } else if ( sel === 'data' ) {
+                                        msg = 'This will permanently delete ALL orders, teams, members, and addresses before importing. Settings will be preserved. Are you sure?';
+                                    } else if ( sel === 'settings' ) {
+                                        msg = 'This will permanently delete all plugin settings before importing. Data (orders, teams, etc.) will be preserved. Are you sure?';
+                                    }
+                                    
+                                    if ( ! confirm(msg) ) {
+                                        e.preventDefault();
+                                        return false;
+                                    }
+                                });
+                            }
+                        })();
+                        </script>
+                    </div>
+                </details>
+            </div>
+            
+            <!-- Clear data form -->
+            <div style="background: #fff; border: 1px solid #c3c4c7; border-left: 4px solid #d63638; border-radius: 4px; padding: 20px; margin-top: 20px;">
+                <h3 style="margin-top: 0; color: #d63638;">🗑️ Clear Data (Danger Zone)</h3>
+                <p><strong>Warning:</strong> Select what you want to permanently delete. This action cannot be undone.</p>
+                
+                <form id="subsales-clear-data-form" method="post" action="">
+                    <?php wp_nonce_field( 'order_sync_clear_nonce' ); ?>
+                    
+                    <div style="background: #f6f7f7; border: 1px solid #c3c4c7; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <p style="margin: 0 0 10px 0; font-weight: 600;">Select data to clear:</p>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_orders" value="1" class="subsales-clear-checkbox" />
+                            <strong>Orders</strong> - All order data and customer information
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_teams" value="1" class="subsales-clear-checkbox" />
+                            <strong>Teams</strong> - All teams and access codes
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_members" value="1" class="subsales-clear-checkbox" />
+                            <strong>Team Members</strong> - All users and team assignments
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_addresses" value="1" class="subsales-clear-checkbox" />
+                            <strong>Addresses</strong> - All address data and geocoding results
+                        </label>
+                        
+                        <label style="display: block; margin: 8px 0; padding: 8px; background: #fff; border-radius: 4px; cursor: pointer;">
+                            <input type="checkbox" name="clear_settings" value="1" class="subsales-clear-checkbox" />
+                            <strong>Settings</strong> - All plugin configuration and options
+                        </label>
+                        
+                        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <label style="cursor: pointer; font-weight: 600;">
+                                <input type="checkbox" id="subsales-select-all-clear" />
+                                Select All
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div id="subsales-clear-warning" style="background: #fcf0f1; border: 1px solid #d63638; padding: 12px; margin: 15px 0; border-radius: 4px; display: none;">
+                        <p style="margin: 0; color: #d63638;"><strong>⚠️ Warning:</strong> <span id="subsales-clear-warning-text">Please select at least one item to clear.</span></p>
+                    </div>
+                    
+                    <p style="font-size: 12px; color: #646970; margin: 10px 0;">
+                        <strong>Note:</strong> This does NOT delete plugin files, ZIP extracts, or database tables (only truncates/clears their data).
+                    </p>
+                    
+                    <p>
+                        <button id="subsales-clear-data-btn" name="clear_data" type="submit" class="button button-large" style="background: #d63638; border-color: #d63638; color: #fff;" disabled>Clear Selected Data</button>
+                    </p>
+                </form>
+                
+                <script>
+                (function(){
+                    var form = document.getElementById('subsales-clear-data-form');
+                    var checkboxes = document.querySelectorAll('.subsales-clear-checkbox');
+                    var selectAllCheckbox = document.getElementById('subsales-select-all-clear');
+                    var clearBtn = document.getElementById('subsales-clear-data-btn');
+                    var warningBox = document.getElementById('subsales-clear-warning');
+                    var warningText = document.getElementById('subsales-clear-warning-text');
+                    
+                    function updateWarningAndButton() {
+                        var selected = [];
+                        checkboxes.forEach(function(cb) {
+                            if (cb.checked) {
+                                var label = cb.parentElement.querySelector('strong');
+                                if (label) selected.push(label.textContent);
+                            }
+                        });
+                        
+                        if (selected.length === 0) {
+                            clearBtn.disabled = true;
+                            warningBox.style.display = 'none';
+                        } else {
+                            clearBtn.disabled = false;
+                            warningBox.style.display = 'block';
+                            
+                            var itemsList = selected.join(', ');
+                            warningText.textContent = 'You are about to permanently delete: ' + itemsList + '. This cannot be undone.';
+                        }
+                    }
+                    
+                    // Wire up checkboxes
+                    checkboxes.forEach(function(cb) {
+                        cb.addEventListener('change', updateWarningAndButton);
+                    });
+                    
+                    // Wire up select all
+                    if (selectAllCheckbox) {
+                        selectAllCheckbox.addEventListener('change', function() {
+                            checkboxes.forEach(function(cb) {
+                                cb.checked = selectAllCheckbox.checked;
+                            });
+                            updateWarningAndButton();
+                        });
+                    }
+                    
+                    // Form submission confirmation
+                    if (form) {
+                        form.addEventListener('submit', function(e) {
+                            var selected = [];
+                            checkboxes.forEach(function(cb) {
+                                if (cb.checked) {
+                                    var label = cb.parentElement.querySelector('strong');
+                                    if (label) selected.push(label.textContent);
+                                }
+                            });
+                            
+                            if (selected.length === 0) {
+                                e.preventDefault();
+                                alert('Please select at least one item to clear.');
+                                return false;
+                            }
+                            
+                            var itemsList = selected.join(', ');
+                            var msg = '⚠️ PERMANENT ACTION\n\n';
+                            msg += 'This will permanently delete the following:\n';
+                            msg += '• ' + selected.join('\n• ') + '\n\n';
+                            msg += 'This cannot be undone.\n\n';
+                            msg += 'Are you absolutely sure?';
+                            
+                            if (!confirm(msg)) {
+                                e.preventDefault();
+                                return false;
+                            }
+                        });
+                    }
+                    
+                    // Initial state
+                    updateWarningAndButton();
+                })();
+                </script>
+            </div>
+                </div>
+
+                <div id="tab-system_info" class="subsales-tab-panel">
+            <h2>System Information</h2>
+        <table class="form-table">
+            <tr>
+                <th scope="row">Plugin Version</th>
+                <td><?php echo esc_html( order_sync_get_plugin_version() ); ?></td>
+            </tr>
+            <tr>
+                <th scope="row">WordPress Version</th>
+                <td><?php echo get_bloginfo( 'version' ); ?></td>
+            </tr>
+            <tr>
+                <th scope="row">PHP Version</th>
+                <td><?php echo PHP_VERSION; ?></td>
+            </tr>
+            <tr>
+                <th scope="row">PhpSpreadsheet</th>
+                <td>
+                    <?php
+                    $ps_version = null;
+                    // Try Composer InstalledVersions first (if available)
+                    if ( class_exists( '\\Composer\\InstalledVersions' ) ) {
+                        try {
+                            if ( method_exists( '\\Composer\\InstalledVersions', 'getPrettyVersion' ) ) {
+                                $ps_version = \Composer\InstalledVersions::getPrettyVersion( 'phpoffice/phpspreadsheet' );
+                            }
+                        } catch ( Exception $e ) {
+                            $ps_version = null;
+                        }
+                    }
+                    // Fallback: detect presence of the main class
+                    if ( ! $ps_version && class_exists( 'PhpOffice\\PhpSpreadsheet\\Spreadsheet' ) ) {
+                        $ps_version = 'installed';
+                    }
+
+                    if ( $ps_version ) {
+                        echo esc_html( $ps_version );
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">DomPDF</th>
+                <td>
+                    <?php
+                    $dompdf_path = plugin_dir_path( __FILE__ ) . 'vendor/dompdf/autoload.inc.php';
+                    if ( file_exists( $dompdf_path ) ) {
+                        echo '<span style="color:green">Installed</span>';
+                        // Try to get version
+                        require_once $dompdf_path;
+                        if ( defined( 'Dompdf\\VERSION' ) ) {
+                            echo ' (v' . esc_html( Dompdf\VERSION ) . ')';
+                        }
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">Database Tables</th>
+                <td>
+                    <?php
+                    global $wpdb;
+                    $tables = array(
+                        $wpdb->prefix . 'ss_orders' => 'Orders',
+                        $wpdb->prefix . 'ss_teams' => 'Teams',
+                        $wpdb->prefix . 'ss_team_members' => 'Team Members',
+                        $wpdb->prefix . 'ss_user_teams' => 'User-Team Assignments'
+                    );
+                    
+                    foreach ( $tables as $table => $name ) {
+                        $exists = $wpdb->get_var( "SHOW TABLES LIKE '{$table}'" ) === $table;
+                        echo '<span style="color: ' . ( $exists ? 'green' : 'red' ) . ';">● ' . $name . '</span><br>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">Database Schema</th>
+                <td>
+                    <p>Run this to update database constraints and fix legacy user data:</p>
+                    <form method="post" action="">
+                        <?php wp_nonce_field( 'subsales_migrate_db' ); ?>
+                        <button type="submit" name="run_db_migration" class="button button-primary">Run Database Migration</button>
+                    </form>
+                    <p class="description">This will: 1) Set default phones for users with NULL/empty phones, 2) Add NOT NULL constraint to phone, 3) Add UNIQUE constraint to phone, 4) Remove UNIQUE constraint from email.</p>
+                    <?php
+                    if ( isset( $_POST['run_db_migration'] ) ) {
+                        check_admin_referer( 'subsales_migrate_db' );
+                        if ( current_user_can( 'manage_options' ) ) {
+                            // Run the table creation function which includes migration logic
+                            order_sync_create_table();
+                            echo '<div class="notice notice-success inline" style="margin-top: 10px;"><p>Database migration completed successfully!</p></div>';
+                        }
+                    }
+                    ?>
+                </td>
+            </tr>
+        </table>
+                </div>
+    </div> <!-- .wrap -->
+    <?php
+}
 
 // ========================================
 // IMPORT/EXPORT FUNCTIONS FOR USERS & TEAMS
@@ -9688,16 +10789,36 @@ function order_sync_orders_page() {
                 geo: originalData.geo || null
             };
             
-            // Collect products
+            // Collect products - PRESERVE ORIGINAL PRICES from price_snapshot or products array
             const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
+            const originalProducts = originalData.products || [];
+            const priceSnapshot = originalData.price_snapshot || {};
+            
             for (const p of configuredProducts) {
                 const qty = parseInt(form.elements['product_' + p.id].value) || 0;
+                
+                // Price priority: 1) price_snapshot, 2) original product, 3) current config
+                let price = p.price; // Default to current config
+                if (priceSnapshot[p.id] !== undefined) {
+                    price = priceSnapshot[p.id]; // Best: use price snapshot
+                } else {
+                    const originalProduct = originalProducts.find(op => String(op.id) === String(p.id));
+                    if (originalProduct) {
+                        price = originalProduct.price; // Fallback: use original product price
+                    }
+                }
+                
                 data.products.push({
                     id: p.id,
                     name: p.name,
-                    price: p.price,
+                    price: price,
                     qty: qty
                 });
+            }
+            
+            // Preserve price_snapshot for future edits
+            if (Object.keys(priceSnapshot).length > 0) {
+                data.price_snapshot = priceSnapshot;
             }
             
             try {

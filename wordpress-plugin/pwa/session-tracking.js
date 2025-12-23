@@ -142,11 +142,25 @@
         try {
           const data = await resp.json();
           console.warn('[Session] Heartbeat response:', data);
-          if (window.PWALogger && typeof data.debugEnabled !== 'undefined') {
-            console.warn('[Session] Updating PWALogger debugEnabled to:', data.debugEnabled);
-            window.PWALogger.updateDebugStatus(data.debugEnabled);
+          
+          // Wait for PWALogger to be available (it loads with defer)
+          if (typeof data.debugEnabled !== 'undefined') {
+            let attempts = 0;
+            const maxAttempts = 20; // Max 2 seconds
+            const waitForLogger = () => {
+              if (window.PWALogger) {
+                console.warn('[Session] Updating PWALogger debugEnabled to:', data.debugEnabled);
+                window.PWALogger.updateDebugStatus(data.debugEnabled);
+              } else if (attempts < maxAttempts) {
+                attempts++;
+                setTimeout(waitForLogger, 100);
+              } else {
+                console.warn('[Session] PWALogger never loaded after 2 seconds, giving up');
+              }
+            };
+            waitForLogger();
           } else {
-            console.warn('[Session] Not updating PWALogger - exists:', !!window.PWALogger, 'has debugEnabled:', typeof data.debugEnabled !== 'undefined');
+            console.warn('[Session] No debugEnabled in response');
           }
         } catch (e) {
           console.error('[Session] Error parsing heartbeat response:', e);

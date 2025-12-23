@@ -2680,8 +2680,7 @@
 
     modal.innerHTML = `<div class="inlay-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;"><div style="flex:1;min-width:280px;"> <h4>Local (pending sync)</h4>${localHtml}${exportButtonsHtml}</div><div style="flex:1;min-width:280px;"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
     const closeBtn = qs('#closeMyOrdersBtn'); 
-    if (closeBtn) closeBtn.addEventListener('click', async ()=>{ 
-      await logWithContext('ui', 'My Orders modal closed');
+    if (closeBtn) closeBtn.addEventListener('click', ()=>{ 
       modal.classList.add('hidden'); 
     });
 
