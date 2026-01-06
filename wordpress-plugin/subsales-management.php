@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.0.0.95
+ * Version: 2.0.0.96
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -1902,6 +1902,237 @@ function subsales_generate_zip_extracts() {
     wp_send_json_success( $results );
 }
 
+// AJAX handler to upload and process ZIP boundaries shapefile (Census ZCTA)
+add_action( 'wp_ajax_subsales_upload_zip_boundaries', 'subsales_upload_zip_boundaries_ajax' );
+function subsales_upload_zip_boundaries_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_upload_address', 'nonce' );
+    
+    if ( ! isset( $_FILES['boundaries_file'] ) || $_FILES['boundaries_file']['error'] !== UPLOAD_ERR_OK ) {
+        wp_send_json_error( 'File upload failed' );
+    }
+    
+    $file = $_FILES['boundaries_file'];
+    $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+    
+    if ( $file_ext !== 'zip' ) {
+        wp_send_json_error( 'Invalid file type. Please upload a ZIP file containing ZCTA shapefile.' );
+    }
+    
+    // Parse ZCTA shapefile and extract polygons for configured ZIPs
+    $result = subsales_parse_zcta_shapefile( $file['tmp_name'] );
+    
+    if ( is_wp_error( $result ) ) {
+        wp_send_json_error( $result->get_error_message() );
+    }
+    
+    // Log the operation
+    subsales_log( 'INFO', 'zip', 'ZIP boundaries uploaded', array(
+        'zip_count' => $result['zip_count'],
+        'zips' => $result['zips'],
+        'missing_zips' => $result['missing_zips']
+    ), 'admin' );
+    
+    wp_send_json_success( $result );
+}
+
+// Parse Census ZCTA shapefile and cache ZIP polygons
+function subsales_parse_zcta_shapefile( $zip_file_path ) {
+    // Get configured ZIPs
+    $configured_zips = subsales_get_served_zips();
+    
+    if ( empty( $configured_zips ) ) {
+        return new WP_Error( 'no_zips', 'No ZIP codes configured. Please configure ZIP codes first.' );
+    }
+    
+    // Create temporary extraction directory
+    $upload_dir = wp_upload_dir();
+    $temp_dir = trailingslashit( $upload_dir['basedir'] ) . 'subsales-temp-zcta-' . time();
+    
+    if ( ! wp_mkdir_p( $temp_dir ) ) {
+        return new WP_Error( 'mkdir_failed', 'Could not create temporary directory' );
+    }
+    
+    // Extract ZIP file
+    $zip = new ZipArchive();
+    if ( $zip->open( $zip_file_path ) !== true ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'zip_open_failed', 'Could not open ZIP file' );
+    }
+    
+    $zip->extractTo( $temp_dir );
+    $zip->close();
+    
+    // Find shapefile base name
+    $files = scandir( $temp_dir );
+    $base_name = null;
+    
+    foreach ( $files as $file ) {
+        if ( pathinfo( $file, PATHINFO_EXTENSION ) === 'shp' ) {
+            $base_name = pathinfo( $file, PATHINFO_FILENAME );
+            break;
+        }
+    }
+    
+    if ( ! $base_name ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'no_shp_file', 'No .shp file found in ZIP archive' );
+    }
+    
+    $dbf_file = $temp_dir . '/' . $base_name . '.dbf';
+    $shp_file = $temp_dir . '/' . $base_name . '.shp';
+    
+    if ( ! file_exists( $dbf_file ) || ! file_exists( $shp_file ) ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'missing_files', 'Missing required .dbf or .shp files' );
+    }
+    
+    // Parse ZCTA shapefile
+    $result = subsales_extract_zip_polygons( $dbf_file, $shp_file, $configured_zips );
+    
+    // Cleanup
+    subsales_cleanup_temp_dir( $temp_dir );
+    
+    if ( is_wp_error( $result ) ) {
+        return $result;
+    }
+    
+    // Cache the polygons
+    update_option( 'subsales_zip_polygons', $result['polygons'], false );
+    
+    // Check for missing ZIPs
+    $missing_zips = array_diff( $configured_zips, array_keys( $result['polygons'] ) );
+    
+    return array(
+        'zip_count' => count( $result['polygons'] ),
+        'zips' => array_keys( $result['polygons'] ),
+        'missing_zips' => $missing_zips,
+        'message' => 'Successfully loaded ' . count( $result['polygons'] ) . ' ZIP boundary polygons'
+    );
+}
+
+// Extract ZIP polygons from ZCTA shapefile for configured ZIPs only
+function subsales_extract_zip_polygons( $dbf_file, $shp_file, $target_zips ) {
+    // Parse DBF to get ZIP codes
+    $dbf_data = Subsales_Shapefile_Parser::parse_dbf( $dbf_file );
+    if ( is_wp_error( $dbf_data ) ) {
+        return $dbf_data;
+    }
+    
+    // Parse SHP to get polygon geometries
+    $geometries = subsales_parse_zcta_geometries( $shp_file );
+    if ( is_wp_error( $geometries ) ) {
+        return $geometries;
+    }
+    
+    // Match records with geometries and extract only target ZIPs
+    $polygons = array();
+    $count = min( count( $dbf_data ), count( $geometries ) );
+    
+    for ( $i = 0; $i < $count; $i++ ) {
+        $record = $dbf_data[ $i ];
+        
+        // Try different possible field names for ZIP code
+        $zip = null;
+        foreach ( array( 'ZCTA5CE20', 'ZCTA5CE10', 'ZCTA5', 'ZIPCODE', 'ZIP', 'GEOID' ) as $field ) {
+            if ( isset( $record[ $field ] ) && ! empty( $record[ $field ] ) ) {
+                $zip = trim( $record[ $field ] );
+                // Extract 5-digit ZIP if it's longer (like GEOID)
+                if ( strlen( $zip ) > 5 ) {
+                    $zip = substr( $zip, -5 );
+                }
+                break;
+            }
+        }
+        
+        if ( ! $zip || ! in_array( $zip, $target_zips ) ) {
+            continue; // Skip if not one of our configured ZIPs
+        }
+        
+        // Store polygon for this ZIP
+        $polygons[ $zip ] = $geometries[ $i ];
+    }
+    
+    return array(
+        'polygons' => $polygons,
+        'total_processed' => $count
+    );
+}
+
+// Parse ZCTA shapefile geometries (simplified polygon extraction)
+function subsales_parse_zcta_geometries( $shp_file ) {
+    $fh = fopen( $shp_file, 'rb' );
+    if ( ! $fh ) {
+        return new WP_Error( 'shp_open_failed', 'Could not open SHP file' );
+    }
+    
+    // Read SHP header
+    fseek( $fh, 0 );
+    $header = fread( $fh, 100 );
+    
+    // Verify file code
+    $file_code = unpack( 'N', substr( $header, 0, 4 ) )[1];
+    if ( $file_code !== 9994 ) {
+        fclose( $fh );
+        return new WP_Error( 'invalid_shp', 'Invalid SHP file header' );
+    }
+    
+    // Read all polygon records
+    $geometries = array();
+    fseek( $fh, 100 ); // Skip header
+    
+    while ( ! feof( $fh ) ) {
+        $record_header = fread( $fh, 8 );
+        if ( strlen( $record_header ) < 8 ) break;
+        
+        $content_length = unpack( 'N', substr( $record_header, 4, 4 ) )[1];
+        $content = fread( $fh, $content_length * 2 );
+        
+        if ( strlen( $content ) < 4 ) break;
+        
+        $shape_type = unpack( 'V', substr( $content, 0, 4 ) )[1];
+        
+        // Extract bounding box and representative points for polygon (type 5)
+        if ( $shape_type === 5 && strlen( $content ) >= 44 ) {
+            // Extract bounding box (min/max coordinates)
+            $bbox = unpack( 'd4', substr( $content, 4, 32 ) );
+            
+            $geometries[] = array(
+                'type' => 'polygon',
+                'bbox' => array(
+                    'min_x' => $bbox[1],
+                    'min_y' => $bbox[2],
+                    'max_x' => $bbox[3],
+                    'max_y' => $bbox[4]
+                ),
+                'center_x' => ( $bbox[1] + $bbox[3] ) / 2,
+                'center_y' => ( $bbox[2] + $bbox[4] ) / 2
+            );
+        }
+    }
+    
+    fclose( $fh );
+    
+    return $geometries;
+}
+
+// Helper function to cleanup temp directory
+function subsales_cleanup_temp_dir( $dir ) {
+    if ( ! is_dir( $dir ) ) {
+        return;
+    }
+    
+    $files = array_diff( scandir( $dir ), array( '.', '..' ) );
+    foreach ( $files as $file ) {
+        $path = $dir . '/' . $file;
+        is_dir( $path ) ? subsales_cleanup_temp_dir( $path ) : @unlink( $path );
+    }
+    
+    @rmdir( $dir );
+}
+
 // AJAX handler to upload and process address files
 add_action( 'wp_ajax_subsales_upload_address_file', 'subsales_upload_address_file_ajax' );
 function subsales_upload_address_file_ajax() {
@@ -2129,30 +2360,64 @@ function subsales_process_shapefile_upload( $file_path ) {
     ), false );
 }
 
-// Border-based ZIP assignment (100x faster than individual API calls)
-// Uses spatial point-in-polygon logic based on coordinate boundaries
+// Border-based ZIP assignment (IMPROVED: Uses polygon matching when available, falls back to sampling)
+// Checks for cached ZIP polygons first, uses precise point-in-polygon if available
 function subsales_assign_zips_by_borders( $addresses ) {
-    // Get configured ZIP codes and their boundaries
+    // Get configured ZIP codes
     $served_zips = subsales_get_served_zips();
     
     if ( empty( $served_zips ) ) {
-        // No ZIPs configured - assign default Southington ZIP
+        // No ZIPs configured - cannot assign
         foreach ( $addresses as &$addr ) {
-            $addr['zip'] = '06479'; // Default Southington
-            $addr['confidence'] = 'low';
+            $addr['zip'] = '';
+            $addr['confidence'] = 'none';
         }
         return $addresses;
     }
     
-    // Get ZIP boundaries from database (if we have them) or use reverse geocoding for first pass
+    // PRIORITY 1: Check if we have ZIP polygons loaded (from ZCTA shapefile)
+    $zip_polygons = get_option( 'subsales_zip_polygons', array() );
+    
+    if ( ! empty( $zip_polygons ) ) {
+        // Use polygon-based assignment (most accurate, zero API calls)
+        subsales_log( 'INFO', 'zip', 'Using polygon-based ZIP assignment', array(
+            'polygon_count' => count( $zip_polygons ),
+            'address_count' => count( $addresses )
+        ), 'system' );
+        
+        foreach ( $addresses as &$addr ) {
+            $lat = floatval( $addr['lat'] );
+            $lng = floatval( $addr['lng'] );
+            
+            $matched_zip = subsales_find_zip_by_polygon( $lat, $lng, $zip_polygons );
+            
+            if ( $matched_zip ) {
+                $addr['zip'] = $matched_zip;
+                $addr['confidence'] = 'high';
+            } else {
+                // Point not in any polygon - find nearest
+                $addr['zip'] = subsales_find_nearest_zip_polygon_center( $lat, $lng, $zip_polygons );
+                $addr['confidence'] = 'medium';
+            }
+        }
+        
+        return $addresses;
+    }
+    
+    // PRIORITY 2: Check if we have boundary boxes from previous sampling
     $zip_boundaries = subsales_get_zip_boundaries( $served_zips );
     
     if ( empty( $zip_boundaries ) ) {
         // First time - build boundaries from reverse geocoding a sample
+        subsales_log( 'INFO', 'zip', 'No boundaries available, building from sample', array(
+            'address_count' => count( $addresses ),
+            'configured_zips' => $served_zips
+        ), 'system' );
+        
         $zip_boundaries = subsales_build_zip_boundaries_from_sample( $addresses, $served_zips );
     }
     
-    // Assign ZIPs using spatial matching
+    // PRIORITY 3: Use boundary box matching (less accurate but fast)
     foreach ( $addresses as &$addr ) {
         $lat = floatval( $addr['lat'] );
         $lng = floatval( $addr['lng'] );
@@ -2181,7 +2446,15 @@ function subsales_assign_zips_by_borders( $addresses ) {
 
 // Get or build ZIP boundaries (bounding boxes for fast spatial queries)
 function subsales_get_zip_boundaries( $zips ) {
-    $boundaries = get_option( 'subsales_zip_boundaries', array() );
+    $boundary_data = get_option( 'subsales_zip_boundaries', array() );
+    
+    // Handle new format (with metadata) or legacy format (direct boundaries array)
+    if ( isset( $boundary_data['boundaries'] ) ) {
+        $boundaries = $boundary_data['boundaries'];
+    } else {
+        // Legacy format - just an array of boundaries
+        $boundaries = $boundary_data;
+    }
     
     // Filter to only requested ZIPs
     $result = array();
@@ -2194,48 +2467,127 @@ function subsales_get_zip_boundaries( $zips ) {
     return $result;
 }
 
-// Build ZIP boundaries from a sample of addresses (one-time operation)
+// Build ZIP boundaries from a sample of addresses (IMPROVED with randomization and validation)
 function subsales_build_zip_boundaries_from_sample( $addresses, $served_zips ) {
     $boundaries = array();
-    $sample_size = min( 50, count( $addresses ) ); // Sample 50 addresses
-    $samples = array_slice( $addresses, 0, $sample_size );
+    $total_count = count( $addresses );
+    
+    // Use larger sample size: 5% of addresses or minimum 200, max 500
+    $sample_size = min( 500, max( 200, intval( $total_count * 0.05 ) ) );
+    $sample_size = min( $sample_size, $total_count );
+    
+    subsales_log( 'INFO', 'zip', 'Building ZIP boundaries from sample', array(
+        'total_addresses' => $total_count,
+        'sample_size' => $sample_size,
+        'configured_zips' => $served_zips
+    ), 'system' );
+    
+    // RANDOMIZED sampling instead of sequential
+    $sample_indices = array();
+    if ( $total_count <= $sample_size ) {
+        // Use all addresses if small dataset
+        $sample_indices = range( 0, $total_count - 1 );
+    } else {
+        // Random sampling across entire dataset
+        $sample_indices = array_rand( array_flip( range( 0, $total_count - 1 ) ), $sample_size );
+    }
+    
+    $samples = array();
+    foreach ( $sample_indices as $idx ) {
+        if ( isset( $addresses[ $idx ] ) ) {
+            $samples[] = $addresses[ $idx ];
+        }
+    }
     
     // Reverse geocode sample to get initial ZIP assignments
     $zip_points = array();
+    $api_calls = 0;
+    $api_failures = 0;
+    
     foreach ( $samples as $addr ) {
         $lat = floatval( $addr['lat'] );
         $lng = floatval( $addr['lng'] );
         
         if ( function_exists( 'order_sync_reverse_geocode' ) ) {
             $zip = order_sync_reverse_geocode( $lat, $lng );
-            if ( $zip && in_array( $zip, $served_zips ) ) {
+            $api_calls++;
+            
+            if ( $zip ) {
+                // Accept ANY valid ZIP, not just configured ones (we'll validate later)
                 if ( ! isset( $zip_points[ $zip ] ) ) {
                     $zip_points[ $zip ] = array();
                 }
                 $zip_points[ $zip ][] = array( 'lat' => $lat, 'lng' => $lng );
+            } else {
+                $api_failures++;
             }
+            
+            // Rate limiting: 20 requests/second
+            usleep( 50000 );
         }
     }
     
-    // Calculate bounding boxes for each ZIP
+    // Calculate bounding boxes for each ZIP found
     foreach ( $zip_points as $zip => $points ) {
-        if ( count( $points ) < 2 ) continue;
+        if ( count( $points ) < 3 ) continue; // Need at least 3 points for reliable boundary
         
         $lats = array_column( $points, 'lat' );
         $lngs = array_column( $points, 'lng' );
         
+        // Use smaller buffer (0.005 degrees ~0.55 km instead of 1.1 km)
         $boundaries[ $zip ] = array(
-            'min_lat' => min( $lats ) - 0.01, // Add small buffer
-            'max_lat' => max( $lats ) + 0.01,
-            'min_lng' => min( $lngs ) - 0.01,
-            'max_lng' => max( $lngs ) + 0.01,
+            'min_lat' => min( $lats ) - 0.005,
+            'max_lat' => max( $lats ) + 0.005,
+            'min_lng' => min( $lngs ) - 0.005,
+            'max_lng' => max( $lngs ) + 0.005,
             'center_lat' => array_sum( $lats ) / count( $lats ),
             'center_lng' => array_sum( $lngs ) / count( $lngs ),
+            'sample_points' => count( $points )
         );
     }
     
-    // Save for future use
-    update_option( 'subsales_zip_boundaries', $boundaries, false );
+    // VALIDATION: Check coverage of configured ZIPs
+    $missing_zips = array_diff( $served_zips, array_keys( $boundaries ) );
+    $extra_zips = array_diff( array_keys( $boundaries ), $served_zips );
+    
+    $validation_warnings = array();
+    if ( ! empty( $missing_zips ) ) {
+        $validation_warnings[] = 'Missing boundaries for configured ZIPs: ' . implode( ', ', $missing_zips );
+    }
+    if ( ! empty( $extra_zips ) ) {
+        $validation_warnings[] = 'Found unexpected ZIPs in data: ' . implode( ', ', $extra_zips );
+    }
+    
+    subsales_log( 'INFO', 'zip', 'ZIP boundary building complete', array(
+        'boundaries_created' => count( $boundaries ),
+        'api_calls' => $api_calls,
+        'api_failures' => $api_failures,
+        'zips_found' => array_keys( $boundaries ),
+        'missing_zips' => $missing_zips,
+        'warnings' => $validation_warnings
+    ), 'system' );
+    
+    // Save for future use with metadata
+    $boundary_data = array(
+        'boundaries' => $boundaries,
+        'created_at' => current_time( 'mysql' ),
+        'sample_size' => $sample_size,
+        'total_addresses' => $total_count,
+        'warnings' => $validation_warnings
+    );
+    
+    update_option( 'subsales_zip_boundaries', $boundary_data, false );
+    
+    // If missing boundaries for configured ZIPs, trigger warning
+    if ( ! empty( $missing_zips ) ) {
+        update_option( 'subsales_zip_boundary_warning', array(
+            'message' => 'Boundary building incomplete. Missing ZIPs: ' . implode( ', ', $missing_zips ),
+            'missing_zips' => $missing_zips,
+            'timestamp' => current_time( 'mysql' )
+        ), false );
+    } else {
+        delete_option( 'subsales_zip_boundary_warning' );
+    }
     
     return $boundaries;
 }
@@ -2267,6 +2619,61 @@ function subsales_find_nearest_zip( $lat, $lng, $boundaries ) {
     return $nearest_zip ?: '06479'; // Default to Southington if nothing found
 }
 
+// ===================================================================
+// POLYGON-BASED ZIP MATCHING (Using Census ZCTA data)
+// ===================================================================
+
+// Find ZIP code by checking if point is inside any loaded polygon
+function subsales_find_zip_by_polygon( $lat, $lng, $polygons ) {
+    foreach ( $polygons as $zip => $polygon ) {
+        if ( subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) ) {
+            return $zip;
+        }
+    }
+    
+    return null;
+}
+
+// Check if a point is inside a polygon's bounding box (simplified for performance)
+// Uses bounding box check - fast approximation suitable for ZIP codes
+function subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) {
+    $bbox = $polygon['bbox'];
+    
+    // Check if point is within bounding box
+    // Note: Shapefile coordinates are in projected system, need to handle accordingly
+    // For simplicity, we're using bounding box which is very fast
+    return ( $lat >= $bbox['min_y'] && $lat <= $bbox['max_y'] &&
+             $lng >= $bbox['min_x'] && $lng <= $bbox['max_x'] );
+}
+
+// Find nearest ZIP polygon center (fallback when point not in any polygon)
+function subsales_find_nearest_zip_polygon_center( $lat, $lng, $polygons ) {
+    $nearest_zip = null;
+    $min_distance = PHP_FLOAT_MAX;
+    
+    foreach ( $polygons as $zip => $polygon ) {
+        $center_lat = $polygon['center_y'];
+        $center_lng = $polygon['center_x'];
+        
+        // Calculate distance to polygon center
+        $distance = sqrt(
+            pow( $lat - $center_lat, 2 ) +
+            pow( $lng - $center_lng, 2 )
+        );
+        
+        if ( $distance < $min_distance ) {
+            $min_distance = $distance;
+            $nearest_zip = $zip;
+        }
+    }
+    
+    return $nearest_zip;
+}
+
+// ===================================================================
+// END POLYGON-BASED ZIP MATCHING
+// ===================================================================
+
 // AJAX handler to get upload status
 add_action( 'wp_ajax_subsales_upload_status', 'subsales_upload_status_ajax' );
 function subsales_upload_status_ajax() {
@@ -2287,9 +2694,99 @@ function subsales_upload_status_ajax() {
     wp_send_json_success( $status );
 }
 
-// AJAX handler to re-run ZIP assignment for all addresses
+// AJAX handler to re-run ZIP assignment for all addresses using PROPER reverse geocoding
 add_action( 'wp_ajax_subsales_reassign_zips', 'subsales_reassign_zips_ajax' );
 function subsales_reassign_zips_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_reassign_zips', 'nonce' );
+    
+    // Check if we have Google Maps API key
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    if ( empty( $api_key ) ) {
+        wp_send_json_error( 'Google Maps API key required. Configure in Settings first.' );
+    }
+    
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Initialize progress tracking
+    $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 50;
+    $offset = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
+    
+    // Get total count on first batch
+    $total = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE lat IS NOT NULL AND lng IS NOT NULL" );
+    
+    // Get batch of addresses
+    $addresses = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, lat, lng, street, house_number, zip FROM {$addresses_table} 
+         WHERE lat IS NOT NULL AND lng IS NOT NULL 
+         ORDER BY id 
+         LIMIT %d OFFSET %d",
+        $batch_size,
+        $offset
+    ), ARRAY_A );
+    
+    if ( empty( $addresses ) ) {
+        // All done - clear cached boundaries to force rebuild
+        delete_option( 'subsales_zip_boundaries' );
+        
+        wp_send_json_success( array(
+            'complete' => true,
+            'message' => 'ZIP reassignment complete! Cached boundaries cleared.',
+            'total' => $total,
+            'processed' => $offset
+        ) );
+    }
+    
+    // Process batch with rate limiting (Google Maps allows 50 QPS)
+    $updated = 0;
+    $failed = 0;
+    $sleep_ms = 50; // 20 requests/second to be safe
+    
+    foreach ( $addresses as $addr ) {
+        $zip = order_sync_reverse_geocode( $addr['lat'], $addr['lng'] );
+        
+        if ( $zip ) {
+            $result = $wpdb->update(
+                $addresses_table,
+                array( 'zip' => $zip ),
+                array( 'id' => $addr['id'] ),
+                array( '%s' ),
+                array( '%d' )
+            );
+            
+            if ( $result !== false ) {
+                $updated++;
+            } else {
+                $failed++;
+            }
+        } else {
+            $failed++;
+        }
+        
+        // Rate limiting
+        usleep( $sleep_ms * 1000 );
+    }
+    
+    $processed = $offset + count( $addresses );
+    $progress = round( ( $processed / $total ) * 100 );
+    
+    wp_send_json_success( array(
+        'complete' => false,
+        'progress' => $progress,
+        'processed' => $processed,
+        'total' => $total,
+        'updated' => $updated,
+        'failed' => $failed,
+        'message' => "Processing batch: {$processed} of {$total} ({$progress}%)"
+    ) );
+}
+
+// LEGACY handler - keeping for backwards compatibility but marked deprecated
+add_action( 'wp_ajax_subsales_reassign_zips_legacy', 'subsales_reassign_zips_legacy_ajax' );
+function subsales_reassign_zips_legacy_ajax() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_send_json_error( 'Permission denied' );
     }

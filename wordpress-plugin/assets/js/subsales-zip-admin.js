@@ -28,6 +28,94 @@
       }).always(function(){ $btn.prop('disabled', false).html('📦 Generate Extracts'); });
     });
 
+    // ZIP Reassignment button handler (bulk update with progress tracking)
+    $('#subsales-reassign-zips-btn').on('click', function(e){
+      e.preventDefault();
+      var $btn = $(this);
+      
+      if (!confirm('This will re-assign ZIP codes to ALL addresses using reverse geocoding.\n\n⚠️ WARNING: This will use Google Maps API credits.\nEstimate: ~18,000 addresses = ~18,000 API calls.\n\nThis process may take 15-20 minutes. Continue?')) return;
+      
+      $btn.prop('disabled', true).html('🔄 Starting...');
+      
+      // Create progress display
+      var $progress = $('<div id="zip-reassign-progress" style="margin-top:20px; padding:20px; background:#fff; border-left:4px solid #2271b1; box-shadow:0 1px 3px rgba(0,0,0,0.1);"></div>');
+      $progress.html('<h3 style="margin:0 0 15px;">🔄 Reassigning ZIP Codes</h3>' +
+        '<div style="margin-bottom:15px;">' +
+          '<div style="display:flex; justify-content:space-between; font-size:12px; color:#646970; margin-bottom:4px;">' +
+            '<span id="reassign-progress-text">Initializing...</span>' +
+            '<span id="reassign-progress-percent">0%</span>' +
+          '</div>' +
+          '<div class="subsales-progress-bar">' +
+            '<div id="reassign-progress-fill" class="subsales-progress-fill" style="width:0%;"></div>' +
+          '</div>' +
+        '</div>' +
+        '<div id="reassign-log" style="max-height:300px; overflow-y:auto; font-family:monospace; font-size:12px; white-space:pre-wrap; background:#f6f7f7; padding:10px; border-radius:3px;"></div>');
+      
+      $btn.after($progress);
+      
+      var offset = 0;
+      var totalUpdated = 0;
+      var totalFailed = 0;
+      
+      function processBatch() {
+        $.post(SubsalesZipAdmin.ajaxUrl, {
+          action: 'subsales_reassign_zips',
+          nonce: SubsalesZipAdmin.reassignZipsNonce,
+          batch_size: 50,
+          offset: offset
+        }).done(function(resp){
+          if (!resp || !resp.success) {
+            $('#reassign-log').append('ERROR: ' + (resp.data || 'Unknown error') + '\n');
+            alert('ZIP reassignment failed: ' + (resp.data || 'Unknown error'));
+            $btn.prop('disabled', false).html('🔄 Reassign ZIP Codes');
+            return;
+          }
+          
+          var data = resp.data;
+          
+          if (data.complete) {
+            // Done!
+            $('#reassign-progress-text').text('Complete!');
+            $('#reassign-progress-percent').text('100%');
+            $('#reassign-progress-fill').css('width', '100%');
+            $('#reassign-log').append('\n✅ ZIP reassignment complete!\n');
+            $('#reassign-log').append('Total processed: ' + data.processed + '\n');
+            $('#reassign-log').append('Successfully updated: ' + totalUpdated + '\n');
+            $('#reassign-log').append('Failed: ' + totalFailed + '\n');
+            
+            alert('ZIP reassignment complete!\n\nProcessed: ' + data.processed + ' addresses\nUpdated: ' + totalUpdated + '\nFailed: ' + totalFailed + '\n\nPage will reload to show updated statistics.');
+            
+            setTimeout(function(){ location.reload(); }, 1500);
+            return;
+          }
+          
+          // Update progress
+          offset = data.processed;
+          totalUpdated += data.updated || 0;
+          totalFailed += data.failed || 0;
+          
+          $('#reassign-progress-text').text(data.message);
+          $('#reassign-progress-percent').text(data.progress + '%');
+          $('#reassign-progress-fill').css('width', data.progress + '%');
+          $('#reassign-log').append('[' + data.progress + '%] ' + data.message + ' (Updated: ' + data.updated + ', Failed: ' + data.failed + ')\n');
+          $('#reassign-log').scrollTop($('#reassign-log')[0].scrollHeight);
+          
+          $btn.html('🔄 Processing... ' + data.progress + '%');
+          
+          // Process next batch
+          setTimeout(processBatch, 100);
+          
+        }).fail(function(xhr){
+          $('#reassign-log').append('AJAX ERROR: ' + xhr.status + ' ' + xhr.statusText + '\n');
+          alert('ZIP reassignment request failed: ' + xhr.status + ' ' + xhr.statusText);
+          $btn.prop('disabled', false).html('🔄 Reassign ZIP Codes');
+        });
+      }
+      
+      // Start processing
+      processBatch();
+    });
+
     // Delete button handler (delegated for dynamically loaded content)
     $(document).on('click', '.subsales-delete-zip', function(e){
       e.preventDefault();
@@ -81,6 +169,84 @@
         alert('Extraction request failed: ' + xhr.status + ' ' + xhr.statusText);
       }).always(function(){
         $btn.prop('disabled', false).text('Extract ZIP Codes');
+      });
+    });
+
+    // ZIP Boundaries Upload handler
+    $('#upload-boundaries-form').on('submit', function(e){
+      e.preventDefault();
+      
+      var formData = new FormData();
+      var fileInput = $('#boundaries_file')[0];
+      
+      if (!fileInput.files || !fileInput.files[0]) {
+        alert('Please select a file');
+        return;
+      }
+      
+      formData.append('action', 'subsales_upload_zip_boundaries');
+      formData.append('nonce', SubsalesZipAdmin.uploadNonce);
+      formData.append('boundaries_file', fileInput.files[0]);
+      
+      var $btn = $('#boundaries-submit-btn');
+      var $progress = $('#boundaries-upload-progress');
+      var $progressFill = $('#boundaries-progress-fill');
+      var $progressText = $('#boundaries-progress-text');
+      var $log = $('#boundaries-log');
+      
+      $btn.prop('disabled', true).text('Processing...');
+      $progress.show();
+      $log.text('Uploading ZIP boundaries shapefile...\n');
+      
+      $.ajax({
+        url: SubsalesZipAdmin.ajaxUrl,
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        xhr: function() {
+          var xhr = new window.XMLHttpRequest();
+          xhr.upload.addEventListener('progress', function(e){
+            if (e.lengthComputable) {
+              var percent = Math.round((e.loaded / e.total) * 50); // Upload is 50% of total
+              $progressFill.css('width', percent + '%');
+              $progressText.text('Uploading... ' + percent + '%');
+            }
+          }, false);
+          return xhr;
+        }
+      }).done(function(resp){
+        $progressFill.css('width', '100%');
+        
+        if (!resp || !resp.success) {
+          $log.append('\n❌ ERROR: ' + (resp.data || 'Upload failed') + '\n');
+          alert('Upload failed: ' + (resp.data || 'Unknown error'));
+          $btn.prop('disabled', false).text('Upload and Process');
+          return;
+        }
+        
+        var data = resp.data;
+        $progressText.text('✓ Complete!');
+        $log.append('\n✅ Success!\n');
+        $log.append('Extracted ' + data.zip_count + ' ZIP boundary polygons\n');
+        $log.append('ZIPs loaded: ' + data.zips.join(', ') + '\n');
+        
+        if (data.missing_zips && data.missing_zips.length > 0) {
+          $log.append('\n⚠️ Warning: Some configured ZIPs not found in boundary file:\n');
+          $log.append('   ' + data.missing_zips.join(', ') + '\n');
+        }
+        
+        alert('ZIP boundaries loaded successfully!\n\n' + 
+              'Loaded ' + data.zip_count + ' ZIP codes: ' + data.zips.join(', ') + '\n\n' +
+              'You can now upload address data and ZIPs will be assigned automatically.');
+        
+        // Reload page to update UI
+        setTimeout(function(){ location.reload(); }, 1000);
+        
+      }).fail(function(xhr){
+        $log.append('\n❌ AJAX ERROR: ' + xhr.status + ' ' + xhr.statusText + '\n');
+        alert('Upload request failed: ' + xhr.status + ' ' + xhr.statusText);
+        $btn.prop('disabled', false).text('Upload and Process');
       });
     });
 
