@@ -37,24 +37,19 @@
                     // Check both formats for compatibility
                     this.debugEnabled = data.debugLoggingEnabled || data.debug_logging_enabled || false;
                     this.initialized = true;
-
-                    console.log('[PWA Logger] Initialized:', {
-                        debugEnabled: this.debugEnabled,
-                        apiBase: this.apiBase,
-                        hasTeamName: !!this.teamName,
-                        hasUserName: !!this.userName
-                    });
+                    
+                    console.warn('[PWA Logger] Initialized with debugEnabled:', this.debugEnabled, 'from config data:', data);
 
                     if (this.debugEnabled) {
-                        console.log('[PWA Logger] ✓ Debug logging ENABLED - All interactions will be logged');
-                        this.log('system', 'PWA Logger initialized', {
+
+                        this.log('system', 'PWA Logger initialized - Debug mode ACTIVE', {
                             user_agent: navigator.userAgent,
                             online: navigator.onLine,
                             screen: `${window.screen.width}x${window.screen.height}`,
                             has_auth: !!(this.teamName && this.userName)
                         });
                     } else {
-                        console.log('[PWA Logger] ✗ Debug logging DISABLED - Only errors will be logged');
+                        console.warn('[PWA Logger] Debug mode is OFF - only errors will be logged');
                     }
                 } else {
                     console.warn('[PWA Logger] Failed to check debug status, HTTP', response.status);
@@ -73,13 +68,7 @@
             this.teamName = teamName || this.teamName;
             this.userName = userName || this.userName;
             this.sessionId = sessionId || this.sessionId;
-            
-            console.log('[PWA Logger] Credentials updated:', {
-                teamName: this.teamName,
-                userName: this.userName,
-                hasSessionId: !!this.sessionId
-            });
-            
+
             if (this.debugEnabled) {
                 this.log('system', 'PWA Logger credentials updated after login', {
                     team: this.teamName,
@@ -89,10 +78,33 @@
         },
 
         /**
+         * Update debug status (called when heartbeat returns new config)
+         */
+        updateDebugStatus(enabled) {
+            const wasEnabled = this.debugEnabled;
+            this.debugEnabled = !!enabled;
+            
+            console.warn('[PWA Logger] updateDebugStatus called - was:', wasEnabled, 'now:', this.debugEnabled);
+            
+            if (wasEnabled !== this.debugEnabled) {
+                console.warn('[PWA Logger] Debug mode changed:', wasEnabled, '→', this.debugEnabled);
+                
+                if (this.debugEnabled) {
+                    this.log('system', 'Debug mode enabled - now tracking all interactions', {
+                        triggered_by: 'heartbeat_config_update'
+                    });
+                }
+            }
+        },
+
+        /**
          * Send log to backend
          */
         async log(category, message, context = {}) {
+            console.warn('[PWA Logger] log() called:', {category, message, debugEnabled: this.debugEnabled, initialized: this.initialized});
+            
             if (!this.debugEnabled || !this.initialized) {
+                console.warn('[PWA Logger] Skipping log - debugEnabled:', this.debugEnabled, 'initialized:', this.initialized);
                 return;
             }
 
@@ -102,12 +114,13 @@
                     category: category,
                     message: message,
                     context: {
-                        ...context,
                         timestamp: new Date().toISOString(),
                         url: window.location.href,
-                        team: this.teamName,
-                        user: this.userName,
-                        session_id: this.sessionId
+                        ...context,
+                        // Only add if not already present to avoid overwriting
+                        team: context.team || this.teamName,
+                        user: context.user || this.userName,
+                        session_id: context.session_id || this.sessionId
                     },
                     source: 'pwa',
                     user_name: this.userName
@@ -127,7 +140,7 @@
                 });
 
                 // Also log to console for immediate visibility
-                console.log(`[PWA] ${category}: ${message}`, context);
+
             } catch (error) {
                 console.error('[PWA Logger] Log error:', error);
             }
@@ -137,7 +150,7 @@
          * Log button click
          */
         logButtonClick(buttonId, buttonText) {
-            this.log('ui', 'Button clicked', {
+            this.log('ui', `Button clicked: ${buttonText || buttonId}`, {
                 button_id: buttonId,
                 button_text: buttonText
             });
@@ -215,27 +228,29 @@
 
         /**
          * Auto-instrument common interactions
+         * Always adds listeners, but checks debugEnabled when logging
          */
         instrumentUI() {
-            if (!this.debugEnabled) return;
-
             const logger = this;
 
-            // Log all button clicks
+            // Log all button clicks (check debugEnabled at click time, not setup time)
             document.addEventListener('click', function(e) {
                 const button = e.target.closest('button');
                 if (button) {
-                    logger.logButtonClick(
-                        button.id || 'unnamed',
-                        button.textContent.trim().substring(0, 50)
-                    );
+                    console.warn('[PWA Logger] Button clicked:', button.textContent.trim().substring(0, 50), 'debugEnabled:', logger.debugEnabled);
+                    if (logger.debugEnabled) {
+                        logger.logButtonClick(
+                            button.id || 'unnamed',
+                            button.textContent.trim().substring(0, 50)
+                        );
+                    }
                 }
             });
 
             // Log input changes (debounced)
             let inputTimeout;
             document.addEventListener('input', function(e) {
-                if (e.target.matches('input, textarea, select')) {
+                if (e.target.matches('input, textarea, select') && logger.debugEnabled) {
                     clearTimeout(inputTimeout);
                     inputTimeout = setTimeout(() => {
                         logger.logInput(
@@ -247,7 +262,7 @@
                 }
             });
 
-            console.log('[PWA Logger] UI instrumentation enabled');
+            console.warn('[PWA Logger] UI instrumentation installed - will log when debugEnabled is true');
         }
     };
 

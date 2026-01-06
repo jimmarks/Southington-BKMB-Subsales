@@ -15,24 +15,24 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', event => {
-  console.log('[SW] Installing...');
+
   event.waitUntil((async ()=>{
     try{
       const base = self.registration.scope;
-      console.log('[SW] Cache base:', base);
+
       const urls = ASSETS.map(p => new URL(p, base).toString());
-      console.log('[SW] Caching URLs:', urls);
+
       const cache = await caches.open(CACHE_NAME);
       // Cache each asset individually with error handling
       for(const u of urls){
         try{ 
           await cache.add(u); 
-          console.log('[SW] Cached:', u);
+
         }catch(e){ 
           console.warn('[SW] Cache add failed for', u, e); 
         }
       }
-      console.log('[SW] Install complete');
+
     }catch(e){ 
       console.warn('[SW] Install error', e); 
     }
@@ -101,7 +101,7 @@ self.addEventListener('fetch', event => {
     event.respondWith(
       caches.match(event.request).then(cached => {
         if (cached) {
-          console.log('[SW] Cache hit:', event.request.url);
+
           // Return cached version, but update cache in background
           fetch(event.request).then(res => {
             if (res && res.ok) {
@@ -110,8 +110,7 @@ self.addEventListener('fetch', event => {
           }).catch(() => {});
           return cached;
         }
-        
-        console.log('[SW] Cache miss, fetching:', event.request.url);
+
         // Not in cache, try network
         return fetch(event.request).then(res => {
           if (res && res.ok) {
@@ -133,7 +132,7 @@ self.addEventListener('fetch', event => {
         return res;
       }).catch(() => {
         // API failed offline, return error response
-        console.log('[SW] API call failed offline:', event.request.url);
+
         return new Response(JSON.stringify({ error: 'Offline', offline: true }), {
           status: 503,
           statusText: 'Service Unavailable',

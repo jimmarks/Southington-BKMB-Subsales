@@ -48,26 +48,17 @@
         timestamp: new Date().toISOString()
       }
     };
-    
-    console.log('[Session] Starting session tracking...', {
-      url: url,
-      sessionId: sessionId,
-      userName: payload.userName,
-      teamName: payload.teamName
-    });
-    
+
     try {
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      
-      console.log('[Session] Response status:', resp.status);
-      
+
       if (resp.ok) {
         const result = await resp.json();
-        console.log('[Session] Started successfully:', sessionId, result);
+
         return true;
       } else {
         const errorText = await resp.text();
@@ -108,7 +99,7 @@
         };
       } catch (error) {
         // Silently fail - GPS is optional
-        console.log('GPS not available for heartbeat:', error.message);
+
       }
     }
     
@@ -147,7 +138,33 @@
           });
         }
       } else {
-        console.log('[Session] Heartbeat sent for session:', sessionId);
+        // Update PWALogger debug status from heartbeat response
+        try {
+          const data = await resp.json();
+          console.warn('[Session] Heartbeat response:', data);
+          
+          // Wait for PWALogger to be available (it loads with defer)
+          if (typeof data.debugEnabled !== 'undefined') {
+            let attempts = 0;
+            const maxAttempts = 20; // Max 2 seconds
+            const waitForLogger = () => {
+              if (window.PWALogger) {
+                console.warn('[Session] Updating PWALogger debugEnabled to:', data.debugEnabled);
+                window.PWALogger.updateDebugStatus(data.debugEnabled);
+              } else if (attempts < maxAttempts) {
+                attempts++;
+                setTimeout(waitForLogger, 100);
+              } else {
+                console.warn('[Session] PWALogger never loaded after 2 seconds, giving up');
+              }
+            };
+            waitForLogger();
+          } else {
+            console.warn('[Session] No debugEnabled in response');
+          }
+        } catch (e) {
+          console.error('[Session] Error parsing heartbeat response:', e);
+        }
       }
     } catch(e) {
       console.error('[Session] Heartbeat error:', e);
@@ -174,7 +191,7 @@
       });
       
       if (resp.ok) {
-        console.log('[Session] Ended:', sessionId);
+
         sessionStorage.removeItem('pwa_session_id');
         return true;
       } else {
@@ -223,8 +240,7 @@
     if (window._pwaHeartbeatInterval) {
       clearInterval(window._pwaHeartbeatInterval);
     }
-    
-    console.log('[Session] Starting auto-heartbeat (30s interval)');
+
     
     window._pwaHeartbeatInterval = setInterval(() => {
       sendHeartbeat({ type: 'auto' });
@@ -282,6 +298,5 @@
     stopAutoHeartbeat: stopAutoHeartbeat,
     getSessionId: getSessionId
   };
-  
-  console.log('[Session Tracking] Module loaded');
+
 })();

@@ -105,6 +105,26 @@ class Subsales_REST_API {
             'permission_callback' => '__return_true',
         ));
         
+        // PWA Icon API - dynamically serve icon SVGs
+        register_rest_route( 'order-manager/v1', '/pwa/icon-192', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_serve_pwa_icon_192',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/pwa/icon-512', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_serve_pwa_icon_512',
+            'permission_callback' => '__return_true',
+        ));
+        
+        // PWA Manifest API - dynamically serve manifest.json
+        register_rest_route( 'order-manager/v1', '/pwa/manifest', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_serve_pwa_manifest',
+            'permission_callback' => '__return_true',
+        ));
+        
         // ZIP Index API - dynamically serve current ZIP list
         register_rest_route( 'order-manager/v1', '/zip-index', array(
             'methods' => 'GET',
@@ -319,7 +339,8 @@ class Subsales_REST_API {
         
         return rest_ensure_response( array(
             'success' => true,
-            'message' => 'Heartbeat updated'
+            'message' => 'Heartbeat updated',
+            'debugEnabled' => (bool) get_option( 'subsales_debug_logging_enabled', false )
         ) );
     }
     

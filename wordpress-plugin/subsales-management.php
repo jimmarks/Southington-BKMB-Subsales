@@ -3,12 +3,12 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.1.4
+ * Version: 2.0.0.97
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
- * Tested up to: 6.9
- * Requires PHP: 8.1
+ * Tested up to: 6.4
+ * Requires PHP: 7.4
  * License: MIT
  * License URI: https://opensource.org/licenses/MIT
  * Text Domain: subsales-management
@@ -34,10 +34,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.1.4' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.95' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+
+// ---- Implementation (merged from legacy bkmb file) ----
+
+// Optional Composer autoload: if a vendor/autoload.php exists in the plugin directory
+// require it so composer-installed libraries (for example PhpSpreadsheet) are available.
+// This keeps the plugin functional when vendor/ isn't present (fallbacks remain).
+$subsales_vendor_autoload = __DIR__ . '/vendor/autoload.php';
+if ( file_exists( $subsales_vendor_autoload ) ) {
+    require_once $subsales_vendor_autoload;
+}
 
 // Load modular classes
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-database.php';
@@ -45,6 +55,8 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -63,6 +75,12 @@ Subsales_PWA::init();
 
 // Initialize Orders
 Subsales_Orders::init();
+
+// Initialize Admin Pages
+Subsales_Admin_Pages::init();
+
+// Initialize AJAX Handlers
+Subsales_AJAX_Handlers::init();
 
 
 // Activation/Deactivation hooks
@@ -1113,6 +1131,16 @@ function order_sync_admin_menu() {
         'order_sync_delivery_page'
     );
     
+    // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
+    // add_submenu_page(
+    //     'subsales-management',
+    //     'Address Extracts',
+    //     'Address Extracts',
+    //     'manage_options',
+    //     'subsales-address-extracts',
+    //     'subsales_address_extracts_page'
+    // );
+    
     add_submenu_page(
         'subsales-management',
         'System Logs',
@@ -1136,194 +1164,37 @@ function order_sync_admin_menu() {
         'subsales-pwa-sessions',
         'subsales_pwa_sessions_page'
     );
-    
-    // Hidden page for manifest viewer (not shown in menu)
-    add_submenu_page(
-        null, // Hidden from menu
-        'Delivery Manifest',
-        'Delivery Manifest',
-        'manage_options',
-        'subsales-manifest-viewer',
-        'subsales_manifest_viewer_page'
-    );
 }
 
-// AJAX handler to search/preview address across all sources
+// AJAX handlers for address search and openaddresses (kept here due to complex logic)
 add_action( 'wp_ajax_subsales_search_address', 'subsales_search_address_preview' );
 add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_openaddresses_zips' );
 add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
-add_action( 'wp_ajax_subsales_toggle_debug', 'subsales_toggle_debug_ajax' );
-add_action( 'wp_ajax_subsales_get_active_sessions_count', 'subsales_get_active_sessions_count_ajax' );
-add_action( 'wp_ajax_subsales_get_session_details', 'subsales_get_session_details_ajax' );
-add_action( 'wp_ajax_subsales_match_addresses_batch', 'subsales_match_addresses_batch_ajax' );
 
-// Background matching AJAX handlers
-add_action( 'wp_ajax_subsales_bg_match_start', 'subsales_bg_match_start_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_stop', 'subsales_bg_match_stop_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_resume', 'subsales_bg_match_resume_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_status', 'subsales_bg_match_status_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_reset', 'subsales_bg_match_reset_ajax' );
+// NOTE: The following AJAX hooks are now registered in Subsales_AJAX_Handlers::init():
+// - subsales_toggle_debug
+// - subsales_get_active_sessions_count
+// - subsales_match_addresses_batch
+// - subsales_bg_match_* (start/stop/resume/status/reset)
+// - subsales_refresh_zip_index
+// - subsales_update_sales_mode
 
 // Import/Export handlers for users and teams
 add_action( 'admin_post_subsales_export_users_teams', 'subsales_export_users_teams' );
 add_action( 'admin_post_subsales_import_users_teams', 'subsales_import_users_teams' );
 
 // AJAX handler for batch address matching with auto-resume
-function subsales_match_addresses_batch_ajax() {
-    check_ajax_referer( 'subsales_match_addresses', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    // Call the Overpass matcher
-    if ( ! class_exists( 'Subsales_Overpass_Matcher' ) ) {
-        wp_send_json_error( 'Overpass Matcher class not loaded' );
-    }
-    
-    $result = Subsales_Overpass_Matcher::match_addresses();
-    
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-// Background matching AJAX handlers
-function subsales_bg_match_start_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::start_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_stop_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::stop_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_resume_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::resume_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_status_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $status = Subsales_Background_Matcher::get_complete_status();
-    wp_send_json_success( $status );
-}
-
-function subsales_bg_match_reset_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::reset_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-// AJAX handler for getting active sessions count
-function subsales_get_active_sessions_count_ajax() {
-    check_ajax_referer( 'subsales_active_sessions', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $active_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
-    wp_send_json_success( array( 'count' => $active_count ) );
-}
-
-// AJAX handler for getting session details and heartbeat history
-function subsales_get_session_details_ajax() {
-    check_ajax_referer( 'subsales_session_details', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $session_id = isset( $_POST['session_id'] ) ? sanitize_text_field( $_POST['session_id'] ) : '';
-    
-    if ( empty( $session_id ) ) {
-        wp_send_json_error( 'Session ID required' );
-    }
-    
-    // Get session data
-    global $wpdb;
-    $sessions_table = $wpdb->prefix . 'ss_pwa_sessions';
-    $session = $wpdb->get_row( $wpdb->prepare(
-        "SELECT * FROM {$sessions_table} WHERE session_id = %s",
-        $session_id
-    ), ARRAY_A );
-    
-    if ( ! $session ) {
-        wp_send_json_error( 'Session not found' );
-    }
-    
-    // Get heartbeat history
-    $heartbeats = Subsales_Database::get_session_heartbeats( $session_id, 100 );
-    
-    wp_send_json_success( array(
-        'session' => $session,
-        'heartbeats' => $heartbeats
-    ) );
-}
-
-// AJAX handler for debug mode toggle
-function subsales_toggle_debug_ajax() {
-    check_ajax_referer( 'subsales_debug_toggle', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
-    
-    if ( $debug_enabled ) {
-        // Disable debug mode
-        update_option( 'subsales_debug_logging_enabled', false );
-        delete_option( 'subsales_debug_logging_started' );
-        subsales_log( 'INFO', 'system', 'Debug logging manually disabled' );
-        wp_send_json_success( array( 'status' => 'disabled' ) );
-    } else {
-        // Enable debug mode
-        update_option( 'subsales_debug_logging_enabled', true );
-        update_option( 'subsales_debug_logging_started', time() );
-        subsales_log( 'INFO', 'system', 'Debug logging enabled (24-hour timeout)' );
-        wp_send_json_success( array( 'status' => 'enabled' ) );
-    }
-}
+// NOTE: The following AJAX handler functions have been moved to Subsales_AJAX_Handlers class:
+// - subsales_match_addresses_batch_ajax()
+// - subsales_bg_match_start_ajax()
+// - subsales_bg_match_stop_ajax()
+// - subsales_bg_match_resume_ajax()
+// - subsales_bg_match_status_ajax()
+// - subsales_bg_match_reset_ajax()
+// - subsales_get_active_sessions_count_ajax()
+// - subsales_toggle_debug_ajax()
+// - subsales_refresh_zip_index_ajax()
+// - subsales_update_sales_mode_ajax()
 
 function subsales_download_openaddresses() {
     check_ajax_referer( 'subsales_zip_generate', 'nonce' );
@@ -1558,6 +1429,126 @@ function subsales_search_address_preview() {
     wp_send_json_success( array( 'sources' => $all_results, 'total' => $total, 'zips_searched' => $served_zips ) );
 }
 
+// Helper: Search OpenAddresses CSV for specific address
+function subsales_search_openaddresses( $address, $zip ) {
+    $upload = wp_upload_dir();
+    $csv_path = get_option( 'subsales_openaddresses_path', trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/connecticut.csv' );
+    
+    if ( ! file_exists( $csv_path ) ) return array();
+    
+    // Extract house number from address
+    $number = '';
+    $street_search = strtolower( trim( $address ) );
+    if ( preg_match( '/^(\d+)\s+(.+)$/i', $address, $matches ) ) {
+        $number = $matches[1];
+        $street_search = strtolower( trim( $matches[2] ) );
+    }
+    
+    $results = array();
+    $handle = fopen( $csv_path, 'r' );
+    if ( $handle === false ) return array();
+    
+    $header = fgetcsv( $handle );
+    if ( ! $header ) {
+        fclose( $handle );
+        return array();
+    }
+    
+    $col_map = array();
+    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'REGION', 'POSTCODE' ) as $col ) {
+        $idx = array_search( $col, $header );
+        if ( $idx !== false ) $col_map[ $col ] = $idx;
+    }
+    
+    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
+        if ( trim( $row[ $col_map['POSTCODE'] ] ) !== $zip ) continue;
+        
+        $row_number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
+        $row_street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? strtolower( trim( $row[ $col_map['STREET'] ] ) ) : '';
+        
+        // Match by number and partial street name
+        if ( $number && $row_number !== $number ) continue;
+        if ( strpos( $row_street, $street_search ) === false && strpos( $street_search, $row_street ) === false ) continue;
+        
+        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
+        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
+        
+        $label = $row_number . ' ' . $row[ $col_map['STREET'] ];
+        if ( $unit ) $label .= ' Unit ' . $unit;
+        if ( $city ) $label .= ', ' . $city;
+        
+        $results[] = array(
+            'label' => $label,
+            'housenumber' => $row_number,
+            'street' => $row[ $col_map['STREET'] ],
+            'unit' => $unit,
+            'city' => $city,
+            'state' => isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT',
+            'zip' => $zip,
+            'lat' => isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null,
+            'lng' => isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null,
+            'source' => 'openaddresses'
+        );
+    }
+    
+    fclose( $handle );
+    return $results;
+}
+
+// Helper: Search OSM Overpass for specific address
+function subsales_search_osm_address( $address, $zip ) {
+    // Extract street name from address
+    $parts = explode( ' ', trim( $address ) );
+    $number = '';
+    $street = $address;
+    
+    if ( preg_match( '/^(\d+)\s+(.+)$/', $address, $matches ) ) {
+        $number = $matches[1];
+        $street = $matches[2];
+    }
+    
+    $ql = '[out:json][timeout:10];';
+    if ( $number ) {
+        $ql .= '(node["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];';
+        $ql .= 'way["addr:housenumber"="' . esc_attr( $number ) . '"]["addr:street"~"' . esc_attr( $street ) . '",i];);';
+    } else {
+        $ql .= '(node["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];';
+        $ql .= 'way["addr:street"~"' . esc_attr( $street ) . '",i]["addr:postcode"="' . esc_attr( $zip ) . '"];);';
+    }
+    $ql .= 'out center;';
+    
+    $resp = wp_remote_post( 'https://overpass-api.de/api/interpreter', array(
+        'body' => $ql,
+        'timeout' => 15
+    ) );
+    
+    if ( is_wp_error( $resp ) ) return array();
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    
+    $results = array();
+    if ( isset( $json['elements'] ) ) {
+        foreach ( $json['elements'] as $el ) {
+            $tags = isset( $el['tags'] ) ? $el['tags'] : array();
+            if ( empty( $tags['addr:street'] ) ) continue;
+            
+            $results[] = array(
+                'label' => ( isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] . ' ' : '' ) . $tags['addr:street'],
+                'housenumber' => isset( $tags['addr:housenumber'] ) ? $tags['addr:housenumber'] : '',
+                'street' => $tags['addr:street'],
+                'city' => isset( $tags['addr:city'] ) ? $tags['addr:city'] : '',
+                'state' => isset( $tags['addr:state'] ) ? $tags['addr:state'] : '',
+                'zip' => isset( $tags['addr:postcode'] ) ? $tags['addr:postcode'] : $zip,
+                'lat' => isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null ),
+                'lng' => isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null ),
+                'source' => 'osm'
+            );
+        }
+    }
+    return $results;
+}
+
 // AJAX handler to delete ZIP extract files
 add_action( 'wp_ajax_subsales_delete_zip_extract', 'subsales_delete_zip_extract' );
 function subsales_delete_zip_extract() {
@@ -1590,56 +1581,7 @@ function subsales_delete_zip_extract() {
     wp_send_json_success( array( 'message' => 'ZIP extract deleted successfully', 'zip' => $zip ) );
 }
 
-// AJAX handler to manually refresh zip-index.json
-add_action( 'wp_ajax_subsales_refresh_zip_index', 'subsales_refresh_zip_index_ajax' );
-function subsales_refresh_zip_index_ajax() {
-    check_ajax_referer( 'subsales_refresh_index', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Permission denied' );
-    
-    $result = subsales_update_zip_index();
-    
-    if ( $result ) {
-        // Get the updated list
-        $upload = wp_upload_dir();
-        $zipdata_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/';
-        $existing_zips = array();
-        if ( is_dir( $zipdata_dir ) ) {
-            $files = glob( $zipdata_dir . '*.json' );
-            if ( is_array( $files ) ) {
-                foreach ( $files as $file ) {
-                    $basename = basename( $file, '.json' );
-                    if ( preg_match( '/^[0-9]{5}$/', $basename ) ) {
-                        $existing_zips[] = $basename;
-                    }
-                }
-            }
-        }
-        sort( $existing_zips );
-        wp_send_json_success( array( 'message' => 'Index refreshed successfully', 'zips' => $existing_zips ) );
-    } else {
-        wp_send_json_error( 'Failed to update index file' );
-    }
-}
-
-// AJAX handler for sales mode toggle
-add_action( 'wp_ajax_subsales_update_sales_mode', 'subsales_update_sales_mode_ajax' );
-function subsales_update_sales_mode_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    check_ajax_referer( 'subsales_sales_mode', 'nonce' );
-    
-    $mode = isset( $_POST['mode'] ) ? sanitize_text_field( $_POST['mode'] ) : '';
-    
-    if ( ! in_array( $mode, array( 'legacy', 'user' ), true ) ) {
-        wp_send_json_error( 'Invalid mode. Must be "legacy" or "user".' );
-    }
-    
-    update_option( 'subsales_sales_mode', $mode );
-    
-    wp_send_json_success( array( 'mode' => $mode ) );
-}
+// NOTE: subsales_refresh_zip_index hook now registered in Subsales_AJAX_Handlers::init()
 
 // Helper: Get served ZIP codes as an array (handles both string and array formats)
 function subsales_get_served_zips() {
@@ -1805,6 +1747,237 @@ function subsales_generate_zip_extracts() {
     ), 'admin', $user->ID, $user->display_name );
 
     wp_send_json_success( $results );
+}
+
+// AJAX handler to upload and process ZIP boundaries shapefile (Census ZCTA)
+add_action( 'wp_ajax_subsales_upload_zip_boundaries', 'subsales_upload_zip_boundaries_ajax' );
+function subsales_upload_zip_boundaries_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_upload_address', 'nonce' );
+    
+    if ( ! isset( $_FILES['boundaries_file'] ) || $_FILES['boundaries_file']['error'] !== UPLOAD_ERR_OK ) {
+        wp_send_json_error( 'File upload failed' );
+    }
+    
+    $file = $_FILES['boundaries_file'];
+    $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+    
+    if ( $file_ext !== 'zip' ) {
+        wp_send_json_error( 'Invalid file type. Please upload a ZIP file containing ZCTA shapefile.' );
+    }
+    
+    // Parse ZCTA shapefile and extract polygons for configured ZIPs
+    $result = subsales_parse_zcta_shapefile( $file['tmp_name'] );
+    
+    if ( is_wp_error( $result ) ) {
+        wp_send_json_error( $result->get_error_message() );
+    }
+    
+    // Log the operation
+    subsales_log( 'INFO', 'zip', 'ZIP boundaries uploaded', array(
+        'zip_count' => $result['zip_count'],
+        'zips' => $result['zips'],
+        'missing_zips' => $result['missing_zips']
+    ), 'admin' );
+    
+    wp_send_json_success( $result );
+}
+
+// Parse Census ZCTA shapefile and cache ZIP polygons
+function subsales_parse_zcta_shapefile( $zip_file_path ) {
+    // Get configured ZIPs
+    $configured_zips = subsales_get_served_zips();
+    
+    if ( empty( $configured_zips ) ) {
+        return new WP_Error( 'no_zips', 'No ZIP codes configured. Please configure ZIP codes first.' );
+    }
+    
+    // Create temporary extraction directory
+    $upload_dir = wp_upload_dir();
+    $temp_dir = trailingslashit( $upload_dir['basedir'] ) . 'subsales-temp-zcta-' . time();
+    
+    if ( ! wp_mkdir_p( $temp_dir ) ) {
+        return new WP_Error( 'mkdir_failed', 'Could not create temporary directory' );
+    }
+    
+    // Extract ZIP file
+    $zip = new ZipArchive();
+    if ( $zip->open( $zip_file_path ) !== true ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'zip_open_failed', 'Could not open ZIP file' );
+    }
+    
+    $zip->extractTo( $temp_dir );
+    $zip->close();
+    
+    // Find shapefile base name
+    $files = scandir( $temp_dir );
+    $base_name = null;
+    
+    foreach ( $files as $file ) {
+        if ( pathinfo( $file, PATHINFO_EXTENSION ) === 'shp' ) {
+            $base_name = pathinfo( $file, PATHINFO_FILENAME );
+            break;
+        }
+    }
+    
+    if ( ! $base_name ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'no_shp_file', 'No .shp file found in ZIP archive' );
+    }
+    
+    $dbf_file = $temp_dir . '/' . $base_name . '.dbf';
+    $shp_file = $temp_dir . '/' . $base_name . '.shp';
+    
+    if ( ! file_exists( $dbf_file ) || ! file_exists( $shp_file ) ) {
+        subsales_cleanup_temp_dir( $temp_dir );
+        return new WP_Error( 'missing_files', 'Missing required .dbf or .shp files' );
+    }
+    
+    // Parse ZCTA shapefile
+    $result = subsales_extract_zip_polygons( $dbf_file, $shp_file, $configured_zips );
+    
+    // Cleanup
+    subsales_cleanup_temp_dir( $temp_dir );
+    
+    if ( is_wp_error( $result ) ) {
+        return $result;
+    }
+    
+    // Cache the polygons
+    update_option( 'subsales_zip_polygons', $result['polygons'], false );
+    
+    // Check for missing ZIPs
+    $missing_zips = array_diff( $configured_zips, array_keys( $result['polygons'] ) );
+    
+    return array(
+        'zip_count' => count( $result['polygons'] ),
+        'zips' => array_keys( $result['polygons'] ),
+        'missing_zips' => $missing_zips,
+        'message' => 'Successfully loaded ' . count( $result['polygons'] ) . ' ZIP boundary polygons'
+    );
+}
+
+// Extract ZIP polygons from ZCTA shapefile for configured ZIPs only
+function subsales_extract_zip_polygons( $dbf_file, $shp_file, $target_zips ) {
+    // Parse DBF to get ZIP codes
+    $dbf_data = Subsales_Shapefile_Parser::parse_dbf( $dbf_file );
+    if ( is_wp_error( $dbf_data ) ) {
+        return $dbf_data;
+    }
+    
+    // Parse SHP to get polygon geometries
+    $geometries = subsales_parse_zcta_geometries( $shp_file );
+    if ( is_wp_error( $geometries ) ) {
+        return $geometries;
+    }
+    
+    // Match records with geometries and extract only target ZIPs
+    $polygons = array();
+    $count = min( count( $dbf_data ), count( $geometries ) );
+    
+    for ( $i = 0; $i < $count; $i++ ) {
+        $record = $dbf_data[ $i ];
+        
+        // Try different possible field names for ZIP code
+        $zip = null;
+        foreach ( array( 'ZCTA5CE20', 'ZCTA5CE10', 'ZCTA5', 'ZIPCODE', 'ZIP', 'GEOID' ) as $field ) {
+            if ( isset( $record[ $field ] ) && ! empty( $record[ $field ] ) ) {
+                $zip = trim( $record[ $field ] );
+                // Extract 5-digit ZIP if it's longer (like GEOID)
+                if ( strlen( $zip ) > 5 ) {
+                    $zip = substr( $zip, -5 );
+                }
+                break;
+            }
+        }
+        
+        if ( ! $zip || ! in_array( $zip, $target_zips ) ) {
+            continue; // Skip if not one of our configured ZIPs
+        }
+        
+        // Store polygon for this ZIP
+        $polygons[ $zip ] = $geometries[ $i ];
+    }
+    
+    return array(
+        'polygons' => $polygons,
+        'total_processed' => $count
+    );
+}
+
+// Parse ZCTA shapefile geometries (simplified polygon extraction)
+function subsales_parse_zcta_geometries( $shp_file ) {
+    $fh = fopen( $shp_file, 'rb' );
+    if ( ! $fh ) {
+        return new WP_Error( 'shp_open_failed', 'Could not open SHP file' );
+    }
+    
+    // Read SHP header
+    fseek( $fh, 0 );
+    $header = fread( $fh, 100 );
+    
+    // Verify file code
+    $file_code = unpack( 'N', substr( $header, 0, 4 ) )[1];
+    if ( $file_code !== 9994 ) {
+        fclose( $fh );
+        return new WP_Error( 'invalid_shp', 'Invalid SHP file header' );
+    }
+    
+    // Read all polygon records
+    $geometries = array();
+    fseek( $fh, 100 ); // Skip header
+    
+    while ( ! feof( $fh ) ) {
+        $record_header = fread( $fh, 8 );
+        if ( strlen( $record_header ) < 8 ) break;
+        
+        $content_length = unpack( 'N', substr( $record_header, 4, 4 ) )[1];
+        $content = fread( $fh, $content_length * 2 );
+        
+        if ( strlen( $content ) < 4 ) break;
+        
+        $shape_type = unpack( 'V', substr( $content, 0, 4 ) )[1];
+        
+        // Extract bounding box and representative points for polygon (type 5)
+        if ( $shape_type === 5 && strlen( $content ) >= 44 ) {
+            // Extract bounding box (min/max coordinates)
+            $bbox = unpack( 'd4', substr( $content, 4, 32 ) );
+            
+            $geometries[] = array(
+                'type' => 'polygon',
+                'bbox' => array(
+                    'min_x' => $bbox[1],
+                    'min_y' => $bbox[2],
+                    'max_x' => $bbox[3],
+                    'max_y' => $bbox[4]
+                ),
+                'center_x' => ( $bbox[1] + $bbox[3] ) / 2,
+                'center_y' => ( $bbox[2] + $bbox[4] ) / 2
+            );
+        }
+    }
+    
+    fclose( $fh );
+    
+    return $geometries;
+}
+
+// Helper function to cleanup temp directory
+function subsales_cleanup_temp_dir( $dir ) {
+    if ( ! is_dir( $dir ) ) {
+        return;
+    }
+    
+    $files = array_diff( scandir( $dir ), array( '.', '..' ) );
+    foreach ( $files as $file ) {
+        $path = $dir . '/' . $file;
+        is_dir( $path ) ? subsales_cleanup_temp_dir( $path ) : @unlink( $path );
+    }
+    
+    @rmdir( $dir );
 }
 
 // AJAX handler to upload and process address files
@@ -2034,30 +2207,64 @@ function subsales_process_shapefile_upload( $file_path ) {
     ), false );
 }
 
-// Border-based ZIP assignment (100x faster than individual API calls)
-// Uses spatial point-in-polygon logic based on coordinate boundaries
+// Border-based ZIP assignment (IMPROVED: Uses polygon matching when available, falls back to sampling)
+// Checks for cached ZIP polygons first, uses precise point-in-polygon if available
 function subsales_assign_zips_by_borders( $addresses ) {
-    // Get configured ZIP codes and their boundaries
+    // Get configured ZIP codes
     $served_zips = subsales_get_served_zips();
     
     if ( empty( $served_zips ) ) {
-        // No ZIPs configured - assign default Southington ZIP
+        // No ZIPs configured - cannot assign
         foreach ( $addresses as &$addr ) {
-            $addr['zip'] = '06479'; // Default Southington
-            $addr['confidence'] = 'low';
+            $addr['zip'] = '';
+            $addr['confidence'] = 'none';
         }
         return $addresses;
     }
     
-    // Get ZIP boundaries from database (if we have them) or use reverse geocoding for first pass
+    // PRIORITY 1: Check if we have ZIP polygons loaded (from ZCTA shapefile)
+    $zip_polygons = get_option( 'subsales_zip_polygons', array() );
+    
+    if ( ! empty( $zip_polygons ) ) {
+        // Use polygon-based assignment (most accurate, zero API calls)
+        subsales_log( 'INFO', 'zip', 'Using polygon-based ZIP assignment', array(
+            'polygon_count' => count( $zip_polygons ),
+            'address_count' => count( $addresses )
+        ), 'system' );
+        
+        foreach ( $addresses as &$addr ) {
+            $lat = floatval( $addr['lat'] );
+            $lng = floatval( $addr['lng'] );
+            
+            $matched_zip = subsales_find_zip_by_polygon( $lat, $lng, $zip_polygons );
+            
+            if ( $matched_zip ) {
+                $addr['zip'] = $matched_zip;
+                $addr['confidence'] = 'high';
+            } else {
+                // Point not in any polygon - find nearest
+                $addr['zip'] = subsales_find_nearest_zip_polygon_center( $lat, $lng, $zip_polygons );
+                $addr['confidence'] = 'medium';
+            }
+        }
+        
+        return $addresses;
+    }
+    
+    // PRIORITY 2: Check if we have boundary boxes from previous sampling
     $zip_boundaries = subsales_get_zip_boundaries( $served_zips );
     
     if ( empty( $zip_boundaries ) ) {
         // First time - build boundaries from reverse geocoding a sample
+        subsales_log( 'INFO', 'zip', 'No boundaries available, building from sample', array(
+            'address_count' => count( $addresses ),
+            'configured_zips' => $served_zips
+        ), 'system' );
+        
         $zip_boundaries = subsales_build_zip_boundaries_from_sample( $addresses, $served_zips );
     }
     
-    // Assign ZIPs using spatial matching
+    // PRIORITY 3: Use boundary box matching (less accurate but fast)
     foreach ( $addresses as &$addr ) {
         $lat = floatval( $addr['lat'] );
         $lng = floatval( $addr['lng'] );
@@ -2086,7 +2293,15 @@ function subsales_assign_zips_by_borders( $addresses ) {
 
 // Get or build ZIP boundaries (bounding boxes for fast spatial queries)
 function subsales_get_zip_boundaries( $zips ) {
-    $boundaries = get_option( 'subsales_zip_boundaries', array() );
+    $boundary_data = get_option( 'subsales_zip_boundaries', array() );
+    
+    // Handle new format (with metadata) or legacy format (direct boundaries array)
+    if ( isset( $boundary_data['boundaries'] ) ) {
+        $boundaries = $boundary_data['boundaries'];
+    } else {
+        // Legacy format - just an array of boundaries
+        $boundaries = $boundary_data;
+    }
     
     // Filter to only requested ZIPs
     $result = array();
@@ -2099,48 +2314,127 @@ function subsales_get_zip_boundaries( $zips ) {
     return $result;
 }
 
-// Build ZIP boundaries from a sample of addresses (one-time operation)
+// Build ZIP boundaries from a sample of addresses (IMPROVED with randomization and validation)
 function subsales_build_zip_boundaries_from_sample( $addresses, $served_zips ) {
     $boundaries = array();
-    $sample_size = min( 50, count( $addresses ) ); // Sample 50 addresses
-    $samples = array_slice( $addresses, 0, $sample_size );
+    $total_count = count( $addresses );
+    
+    // Use larger sample size: 5% of addresses or minimum 200, max 500
+    $sample_size = min( 500, max( 200, intval( $total_count * 0.05 ) ) );
+    $sample_size = min( $sample_size, $total_count );
+    
+    subsales_log( 'INFO', 'zip', 'Building ZIP boundaries from sample', array(
+        'total_addresses' => $total_count,
+        'sample_size' => $sample_size,
+        'configured_zips' => $served_zips
+    ), 'system' );
+    
+    // RANDOMIZED sampling instead of sequential
+    $sample_indices = array();
+    if ( $total_count <= $sample_size ) {
+        // Use all addresses if small dataset
+        $sample_indices = range( 0, $total_count - 1 );
+    } else {
+        // Random sampling across entire dataset
+        $sample_indices = array_rand( array_flip( range( 0, $total_count - 1 ) ), $sample_size );
+    }
+    
+    $samples = array();
+    foreach ( $sample_indices as $idx ) {
+        if ( isset( $addresses[ $idx ] ) ) {
+            $samples[] = $addresses[ $idx ];
+        }
+    }
     
     // Reverse geocode sample to get initial ZIP assignments
     $zip_points = array();
+    $api_calls = 0;
+    $api_failures = 0;
+    
     foreach ( $samples as $addr ) {
         $lat = floatval( $addr['lat'] );
         $lng = floatval( $addr['lng'] );
         
         if ( function_exists( 'order_sync_reverse_geocode' ) ) {
             $zip = order_sync_reverse_geocode( $lat, $lng );
-            if ( $zip && in_array( $zip, $served_zips ) ) {
+            $api_calls++;
+            
+            if ( $zip ) {
+                // Accept ANY valid ZIP, not just configured ones (we'll validate later)
                 if ( ! isset( $zip_points[ $zip ] ) ) {
                     $zip_points[ $zip ] = array();
                 }
                 $zip_points[ $zip ][] = array( 'lat' => $lat, 'lng' => $lng );
+            } else {
+                $api_failures++;
             }
+            
+            // Rate limiting: 20 requests/second
+            usleep( 50000 );
         }
     }
     
-    // Calculate bounding boxes for each ZIP
+    // Calculate bounding boxes for each ZIP found
     foreach ( $zip_points as $zip => $points ) {
-        if ( count( $points ) < 2 ) continue;
+        if ( count( $points ) < 3 ) continue; // Need at least 3 points for reliable boundary
         
         $lats = array_column( $points, 'lat' );
         $lngs = array_column( $points, 'lng' );
         
+        // Use smaller buffer (0.005 degrees ~0.55 km instead of 1.1 km)
         $boundaries[ $zip ] = array(
-            'min_lat' => min( $lats ) - 0.01, // Add small buffer
-            'max_lat' => max( $lats ) + 0.01,
-            'min_lng' => min( $lngs ) - 0.01,
-            'max_lng' => max( $lngs ) + 0.01,
+            'min_lat' => min( $lats ) - 0.005,
+            'max_lat' => max( $lats ) + 0.005,
+            'min_lng' => min( $lngs ) - 0.005,
+            'max_lng' => max( $lngs ) + 0.005,
             'center_lat' => array_sum( $lats ) / count( $lats ),
             'center_lng' => array_sum( $lngs ) / count( $lngs ),
+            'sample_points' => count( $points )
         );
     }
     
-    // Save for future use
-    update_option( 'subsales_zip_boundaries', $boundaries, false );
+    // VALIDATION: Check coverage of configured ZIPs
+    $missing_zips = array_diff( $served_zips, array_keys( $boundaries ) );
+    $extra_zips = array_diff( array_keys( $boundaries ), $served_zips );
+    
+    $validation_warnings = array();
+    if ( ! empty( $missing_zips ) ) {
+        $validation_warnings[] = 'Missing boundaries for configured ZIPs: ' . implode( ', ', $missing_zips );
+    }
+    if ( ! empty( $extra_zips ) ) {
+        $validation_warnings[] = 'Found unexpected ZIPs in data: ' . implode( ', ', $extra_zips );
+    }
+    
+    subsales_log( 'INFO', 'zip', 'ZIP boundary building complete', array(
+        'boundaries_created' => count( $boundaries ),
+        'api_calls' => $api_calls,
+        'api_failures' => $api_failures,
+        'zips_found' => array_keys( $boundaries ),
+        'missing_zips' => $missing_zips,
+        'warnings' => $validation_warnings
+    ), 'system' );
+    
+    // Save for future use with metadata
+    $boundary_data = array(
+        'boundaries' => $boundaries,
+        'created_at' => current_time( 'mysql' ),
+        'sample_size' => $sample_size,
+        'total_addresses' => $total_count,
+        'warnings' => $validation_warnings
+    );
+    
+    update_option( 'subsales_zip_boundaries', $boundary_data, false );
+    
+    // If missing boundaries for configured ZIPs, trigger warning
+    if ( ! empty( $missing_zips ) ) {
+        update_option( 'subsales_zip_boundary_warning', array(
+            'message' => 'Boundary building incomplete. Missing ZIPs: ' . implode( ', ', $missing_zips ),
+            'missing_zips' => $missing_zips,
+            'timestamp' => current_time( 'mysql' )
+        ), false );
+    } else {
+        delete_option( 'subsales_zip_boundary_warning' );
+    }
     
     return $boundaries;
 }
@@ -2172,6 +2466,61 @@ function subsales_find_nearest_zip( $lat, $lng, $boundaries ) {
     return $nearest_zip ?: '06479'; // Default to Southington if nothing found
 }
 
+// ===================================================================
+// POLYGON-BASED ZIP MATCHING (Using Census ZCTA data)
+// ===================================================================
+
+// Find ZIP code by checking if point is inside any loaded polygon
+function subsales_find_zip_by_polygon( $lat, $lng, $polygons ) {
+    foreach ( $polygons as $zip => $polygon ) {
+        if ( subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) ) {
+            return $zip;
+        }
+    }
+    
+    return null;
+}
+
+// Check if a point is inside a polygon's bounding box (simplified for performance)
+// Uses bounding box check - fast approximation suitable for ZIP codes
+function subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) {
+    $bbox = $polygon['bbox'];
+    
+    // Check if point is within bounding box
+    // Note: Shapefile coordinates are in projected system, need to handle accordingly
+    // For simplicity, we're using bounding box which is very fast
+    return ( $lat >= $bbox['min_y'] && $lat <= $bbox['max_y'] &&
+             $lng >= $bbox['min_x'] && $lng <= $bbox['max_x'] );
+}
+
+// Find nearest ZIP polygon center (fallback when point not in any polygon)
+function subsales_find_nearest_zip_polygon_center( $lat, $lng, $polygons ) {
+    $nearest_zip = null;
+    $min_distance = PHP_FLOAT_MAX;
+    
+    foreach ( $polygons as $zip => $polygon ) {
+        $center_lat = $polygon['center_y'];
+        $center_lng = $polygon['center_x'];
+        
+        // Calculate distance to polygon center
+        $distance = sqrt(
+            pow( $lat - $center_lat, 2 ) +
+            pow( $lng - $center_lng, 2 )
+        );
+        
+        if ( $distance < $min_distance ) {
+            $min_distance = $distance;
+            $nearest_zip = $zip;
+        }
+    }
+    
+    return $nearest_zip;
+}
+
+// ===================================================================
+// END POLYGON-BASED ZIP MATCHING
+// ===================================================================
+
 // AJAX handler to get upload status
 add_action( 'wp_ajax_subsales_upload_status', 'subsales_upload_status_ajax' );
 function subsales_upload_status_ajax() {
@@ -2192,9 +2541,99 @@ function subsales_upload_status_ajax() {
     wp_send_json_success( $status );
 }
 
-// AJAX handler to re-run ZIP assignment for all addresses
+// AJAX handler to re-run ZIP assignment for all addresses using PROPER reverse geocoding
 add_action( 'wp_ajax_subsales_reassign_zips', 'subsales_reassign_zips_ajax' );
 function subsales_reassign_zips_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_reassign_zips', 'nonce' );
+    
+    // Check if we have Google Maps API key
+    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+    if ( empty( $api_key ) ) {
+        wp_send_json_error( 'Google Maps API key required. Configure in Settings first.' );
+    }
+    
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Initialize progress tracking
+    $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 50;
+    $offset = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
+    
+    // Get total count on first batch
+    $total = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE lat IS NOT NULL AND lng IS NOT NULL" );
+    
+    // Get batch of addresses
+    $addresses = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, lat, lng, street, house_number, zip FROM {$addresses_table} 
+         WHERE lat IS NOT NULL AND lng IS NOT NULL 
+         ORDER BY id 
+         LIMIT %d OFFSET %d",
+        $batch_size,
+        $offset
+    ), ARRAY_A );
+    
+    if ( empty( $addresses ) ) {
+        // All done - clear cached boundaries to force rebuild
+        delete_option( 'subsales_zip_boundaries' );
+        
+        wp_send_json_success( array(
+            'complete' => true,
+            'message' => 'ZIP reassignment complete! Cached boundaries cleared.',
+            'total' => $total,
+            'processed' => $offset
+        ) );
+    }
+    
+    // Process batch with rate limiting (Google Maps allows 50 QPS)
+    $updated = 0;
+    $failed = 0;
+    $sleep_ms = 50; // 20 requests/second to be safe
+    
+    foreach ( $addresses as $addr ) {
+        $zip = order_sync_reverse_geocode( $addr['lat'], $addr['lng'] );
+        
+        if ( $zip ) {
+            $result = $wpdb->update(
+                $addresses_table,
+                array( 'zip' => $zip ),
+                array( 'id' => $addr['id'] ),
+                array( '%s' ),
+                array( '%d' )
+            );
+            
+            if ( $result !== false ) {
+                $updated++;
+            } else {
+                $failed++;
+            }
+        } else {
+            $failed++;
+        }
+        
+        // Rate limiting
+        usleep( $sleep_ms * 1000 );
+    }
+    
+    $processed = $offset + count( $addresses );
+    $progress = round( ( $processed / $total ) * 100 );
+    
+    wp_send_json_success( array(
+        'complete' => false,
+        'progress' => $progress,
+        'processed' => $processed,
+        'total' => $total,
+        'updated' => $updated,
+        'failed' => $failed,
+        'message' => "Processing batch: {$processed} of {$total} ({$progress}%)"
+    ) );
+}
+
+// LEGACY handler - keeping for backwards compatibility but marked deprecated
+add_action( 'wp_ajax_subsales_reassign_zips_legacy', 'subsales_reassign_zips_legacy_ajax' );
+function subsales_reassign_zips_legacy_ajax() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_send_json_error( 'Permission denied' );
     }
@@ -2245,6 +2684,208 @@ function subsales_reassign_zips_ajax() {
         'updated' => $updated,
         'failed' => $failed
     ) );
+}
+
+// Helper: generate a single ZIP file by querying Overpass API for nodes/ways with addr:postcode and addr:housenumber
+function subsales_generate_zip_from_overpass( $zip, $base_dir ) {
+    $zip = preg_replace( '/[^0-9]/', '', (string) $zip );
+    if ( strlen( $zip ) !== 5 ) return array( 'error' => 'invalid_zip' );
+
+    // Two-phase query: First get addresses explicitly tagged with this postcode,
+    // then get the bounding box of the postal code area and grab all addresses within it
+    // This catches addresses that don't have addr:postcode explicitly tagged
+    
+    $ql = '[out:json][timeout:25];';
+    // Phase 1: Get all elements tagged with this postcode
+    $ql .= '(node["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    $ql .= 'way["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    $ql .= 'relation["addr:postcode"="' . esc_attr( $zip ) . '"]["addr:housenumber"];';
+    // Phase 2: Get boundary/postal_code area to find addresses within it
+    $ql .= 'area["postal_code"="' . esc_attr( $zip ) . '"]->.searchArea;';
+    $ql .= '(node["addr:housenumber"]["addr:street"](area.searchArea);';
+    $ql .= 'way["addr:housenumber"]["addr:street"](area.searchArea););';
+    $ql .= ');out center;';
+
+    $overpass_url = 'https://overpass-api.de/api/interpreter';
+    $args = array(
+        'body' => $ql,
+        'timeout' => 60,
+        'headers' => array( 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8' ),
+    );
+    $resp = wp_remote_post( $overpass_url, $args );
+    if ( is_wp_error( $resp ) ) return array( 'error' => 'overpass_error', 'message' => $resp->get_error_message() );
+    $code = wp_remote_retrieve_response_code( $resp );
+    
+    // Return detailed error for non-200 responses
+    if ( $code !== 200 ) {
+        $body = wp_remote_retrieve_body( $resp );
+        $error_msg = '';
+        
+        if ( $code === 429 ) {
+            $error_msg = 'Rate limited - please wait a few minutes before trying again';
+        } elseif ( $code === 504 || $code === 503 ) {
+            $error_msg = 'Server timeout/unavailable - try again later';
+        } else {
+            $error_msg = 'HTTP ' . $code . ( $body ? ' - ' . substr( $body, 0, 100 ) : '' );
+        }
+        
+        return array( 'error' => 'overpass_status', 'status' => $code, 'message' => $error_msg );
+    }
+
+    $body = wp_remote_retrieve_body( $resp );
+    $json = json_decode( $body, true );
+    if ( ! $json || ! isset( $json['elements'] ) ) return array( 'error' => 'no_elements', 'message' => 'No address data returned from API' );
+
+    $out = array(); $seen = array();
+    $total_elements = count( $json['elements'] );
+    $skipped = 0;
+    
+    foreach ( $json['elements'] as $el ) {
+        $tags = isset( $el['tags'] ) ? $el['tags'] : array();
+        if ( empty( $tags['addr:housenumber'] ) || empty( $tags['addr:street'] ) ) {
+            $skipped++;
+            continue;
+        }
+        
+        // Build address with unit/apartment number if present
+        $address_parts = array( $tags['addr:housenumber'] );
+        
+        // Add unit/apartment/floor/door if available
+        if ( ! empty( $tags['addr:unit'] ) ) {
+            $address_parts[] = 'Unit ' . $tags['addr:unit'];
+        } elseif ( ! empty( $tags['addr:flr'] ) ) {
+            $address_parts[] = 'Floor ' . $tags['addr:flr'];
+        }
+        
+        if ( ! empty( $tags['addr:door'] ) ) {
+            $address_parts[] = 'Door ' . $tags['addr:door'];
+        }
+        
+        $address_parts[] = $tags['addr:street'];
+        
+        $label_parts = array();
+        $label_parts[] = implode( ' ', $address_parts );
+        
+        // Add housename/building name if present
+        if ( ! empty( $tags['addr:housename'] ) ) {
+            $label_parts[] = $tags['addr:housename'];
+        }
+        
+        if ( ! empty( $tags['addr:city'] ) ) $label_parts[] = $tags['addr:city'];
+        if ( ! empty( $tags['addr:state'] ) ) $label_parts[] = $tags['addr:state'];
+        $label_parts[] = $zip;
+        $label = implode( ', ', $label_parts );
+
+        $lat = isset( $el['lat'] ) ? $el['lat'] : ( isset( $el['center']['lat'] ) ? $el['center']['lat'] : null );
+        $lon = isset( $el['lon'] ) ? $el['lon'] : ( isset( $el['center']['lon'] ) ? $el['center']['lon'] : null );
+
+        $k = md5( $label ); if ( isset( $seen[ $k ] ) ) continue; $seen[ $k ] = true;
+
+        $out[] = array( 
+            'id' => 'osm-' . $el['type'] . '-' . $el['id'], 
+            'label' => $label, 
+            'street' => $tags['addr:street'], 
+            'housenumber' => $tags['addr:housenumber'],
+            'unit' => ( ! empty( $tags['addr:unit'] ) ? $tags['addr:unit'] : '' ),
+            'floor' => ( ! empty( $tags['addr:flr'] ) ? $tags['addr:flr'] : '' ),
+            'door' => ( ! empty( $tags['addr:door'] ) ? $tags['addr:door'] : '' ),
+            'housename' => ( ! empty( $tags['addr:housename'] ) ? $tags['addr:housename'] : '' ),
+            'city' => (isset($tags['addr:city'])?$tags['addr:city']:''), 
+            'state' => (isset($tags['addr:state'])?$tags['addr:state']:''), 
+            'zip' => $zip, 
+            'lat' => $lat, 
+            'lng' => $lon 
+        );
+    }
+
+    return array( 
+        'addresses' => $out,
+        'total_elements' => $total_elements,
+        'skipped' => $skipped
+    );
+}
+
+// Helper: Fetch addresses from Nominatim geocoding service
+function subsales_fetch_openaddresses_data( $zip ) {
+    // OpenAddresses.io provides bulk CSV files with comprehensive address coverage
+    // The admin can download the full state file and extract only needed ZIP codes
+    // to create a smaller, faster-to-read filtered file
+    
+    $upload = wp_upload_dir();
+    // First try filtered file (created by "Extract ZIP Codes" button)
+    $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses.csv';
+    
+    // Fall back to full file if filtered doesn't exist
+    if ( ! file_exists( $csv_path ) ) {
+        $csv_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses-full.csv';
+    }
+    
+    if ( ! file_exists( $csv_path ) ) {
+        return array();
+    }
+    
+    $out = array();
+    $handle = fopen( $csv_path, 'r' );
+    
+    if ( $handle === false ) return array();
+    
+    // Read header row
+    $header = fgetcsv( $handle );
+    if ( ! $header ) {
+        fclose( $handle );
+        return array();
+    }
+    
+    // Find column indices
+    $col_map = array();
+    foreach ( array( 'LON', 'LAT', 'NUMBER', 'STREET', 'UNIT', 'CITY', 'DISTRICT', 'REGION', 'POSTCODE' ) as $col ) {
+        $idx = array_search( $col, $header );
+        if ( $idx !== false ) $col_map[ $col ] = $idx;
+    }
+    
+    // Read rows and filter by ZIP
+    while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+        if ( ! isset( $col_map['POSTCODE'] ) || ! isset( $row[ $col_map['POSTCODE'] ] ) ) continue;
+        
+        $postcode = trim( $row[ $col_map['POSTCODE'] ] );
+        if ( $postcode !== $zip ) continue;
+        
+        $number = isset( $col_map['NUMBER'] ) && isset( $row[ $col_map['NUMBER'] ] ) ? trim( $row[ $col_map['NUMBER'] ] ) : '';
+        $street = isset( $col_map['STREET'] ) && isset( $row[ $col_map['STREET'] ] ) ? trim( $row[ $col_map['STREET'] ] ) : '';
+        
+        if ( empty( $number ) || empty( $street ) ) continue;
+        
+        $unit = isset( $col_map['UNIT'] ) && isset( $row[ $col_map['UNIT'] ] ) ? trim( $row[ $col_map['UNIT'] ] ) : '';
+        $city = isset( $col_map['CITY'] ) && isset( $row[ $col_map['CITY'] ] ) ? trim( $row[ $col_map['CITY'] ] ) : '';
+        $state = isset( $col_map['REGION'] ) && isset( $row[ $col_map['REGION'] ] ) ? trim( $row[ $col_map['REGION'] ] ) : 'CT';
+        $lat = isset( $col_map['LAT'] ) && isset( $row[ $col_map['LAT'] ] ) ? trim( $row[ $col_map['LAT'] ] ) : null;
+        $lng = isset( $col_map['LON'] ) && isset( $row[ $col_map['LON'] ] ) ? trim( $row[ $col_map['LON'] ] ) : null;
+        
+        $label_parts = array( $number . ' ' . $street );
+        if ( $unit ) $label_parts[0] .= ' Unit ' . $unit;
+        if ( $city ) $label_parts[] = $city;
+        if ( $state ) $label_parts[] = $state;
+        $label_parts[] = $zip;
+        
+        $out[] = array(
+            'id' => 'oa-' . md5( $number . $street . $unit . $zip ),
+            'label' => implode( ', ', $label_parts ),
+            'street' => $street,
+            'housenumber' => $number,
+            'unit' => $unit,
+            'floor' => '',
+            'door' => '',
+            'housename' => '',
+            'city' => $city,
+            'state' => $state,
+            'zip' => $zip,
+            'lat' => $lat,
+            'lng' => $lng
+        );
+    }
+    
+    fclose( $handle );
+    return $out;
 }
 
 // REST API callback: serve ZIP index dynamically (always current)
@@ -2355,6 +2996,99 @@ function subsales_get_generation_logs( $limit = 10 ) {
     return array_slice( $logs, 0, $limit );
 }
 
+/**
+ * Generate ZIP code JSON files from database (Phase 7)
+ * Filters to residential addresses only for PWA consumption
+ * 
+ * @param array $zip_codes Array of ZIP codes to generate
+ * @return array Results with counts per ZIP
+ */
+function subsales_generate_zip_json_from_database( $zip_codes = null ) {
+    global $wpdb;
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    
+    // Use configured ZIPs if none provided
+    if ( $zip_codes === null ) {
+        $zip_codes = get_option( 'subsales_served_zips', array() );
+        if ( ! is_array( $zip_codes ) ) {
+            $zip_codes = array_filter( array_map( 'trim', explode( ',', $zip_codes ) ) );
+        }
+    }
+    
+    if ( empty( $zip_codes ) ) {
+        return array( 'error' => 'No ZIP codes configured' );
+    }
+    
+    $upload = wp_upload_dir();
+    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
+    
+    // Ensure directory exists
+    if ( ! is_dir( $base_dir ) ) {
+        wp_mkdir_p( $base_dir );
+    }
+    
+    $results = array();
+    
+    foreach ( $zip_codes as $zip ) {
+        // Query RESIDENTIAL addresses only for this ZIP
+        $addresses = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$addresses_table} 
+             WHERE zip = %s 
+             AND type = 'residential'
+             ORDER BY street, house_number",
+            $zip
+        ), ARRAY_A );
+        
+        // Format for PWA compatibility
+        $formatted = array();
+        foreach ( $addresses as $addr ) {
+            $label_parts = array( $addr['house_number'] . ' ' . $addr['street'] );
+            if ( ! empty( $addr['unit'] ) ) {
+                $label_parts[0] .= ' Unit ' . $addr['unit'];
+            }
+            if ( ! empty( $addr['city'] ) ) {
+                $label_parts[] = $addr['city'];
+            }
+            if ( ! empty( $addr['state'] ) ) {
+                $label_parts[] = $addr['state'];
+            }
+            $label_parts[] = $addr['zip'];
+            
+            $formatted[] = array(
+                'id' => 'db-' . $addr['id'],
+                'label' => implode( ', ', $label_parts ),
+                'street' => $addr['street'],
+                'housenumber' => $addr['house_number'],
+                'unit' => $addr['unit'],
+                'floor' => '',
+                'door' => '',
+                'housename' => '',
+                'city' => $addr['city'],
+                'state' => $addr['state'],
+                'zip' => $addr['zip'],
+                'lat' => (float) $addr['lat'],
+                'lng' => (float) $addr['lng']
+            );
+        }
+        
+        // Write JSON file
+        $file_path = trailingslashit( $base_dir ) . $zip . '.json';
+        $written = file_put_contents( $file_path, wp_json_encode( $formatted, JSON_PRETTY_PRINT ) );
+        
+        $results[ $zip ] = array(
+            'count' => count( $formatted ),
+            'file' => $file_path,
+            'bytes' => $written,
+            'source' => 'database'
+        );
+    }
+    
+    // Update zip-index.json
+    subsales_update_zip_index();
+    
+    return $results;
+}
+
 // Enqueue admin assets for settings page (media uploader for header image)
 add_action( 'admin_enqueue_scripts', 'order_sync_admin_assets' );
 function order_sync_admin_assets( $hook ) {
@@ -2383,14 +3117,24 @@ function order_sync_admin_assets( $hook ) {
 }
 
 // Teams and Orders pages, DB functions, REST routes, etc. (merged implementation)
+// Implementation merged from legacy files; shortcode name is 'subsales_pwa'.
 
+// -- Teams management, orders page, DB creation and helpers --
+// ============================================================
 // DATABASE WRAPPER FUNCTIONS (for backward compatibility)
+// All database operations delegated to Subsales_Database class
+// ============================================================
+
 function order_sync_create_table() {
     Subsales_Database::create_tables();
 }
 
 function order_sync_add_team( $name, $access_code, $description = '', $status = 'active' ) {
     return Subsales_Database::add_team( $name, $access_code, $description, $status );
+}
+
+function order_sync_remove_team( $team_id ) {
+    return Subsales_Database::remove_team( $team_id );
 }
 
 function order_sync_get_teams() {
@@ -2405,15 +3149,56 @@ function subsales_log( $level, $category, $message, $context = array(), $source 
     Subsales_Database::log( $level, $category, $message, $context, $source, $user_id, $user_name );
 }
 
+function subsales_log_order( $action, $order_id, $user_id = null, $user_name = '', $context = array(), $source = 'admin' ) {
+    Subsales_Database::log_order( $action, $order_id, $user_id, $user_name, $context, $source );
+}
+
 function subsales_log_auth( $action, $user_id = null, $user_name = '', $context = array(), $source = 'pwa' ) {
     Subsales_Database::log_auth( $action, $user_id, $user_name, $context, $source );
+}
+
+function subsales_log_api_error( $endpoint, $error_message, $context = array(), $source = 'api' ) {
+    Subsales_Database::log_api_error( $endpoint, $error_message, $context, $source );
+}
+
+function subsales_cleanup_old_logs() {
+    Subsales_Database::cleanup_old_logs();
+}
+
+function subsales_check_debug_timeout() {
+    Subsales_Database::check_debug_timeout();
+}
+
+function subsales_log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
+    return Subsales_Database::log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason, $source );
+}
+
+function order_sync_add_team_member( $team_id, $name, $email, $role = 'member' ) {
+    return Subsales_Database::add_team_member( $team_id, $name, $email, $role );
+}
+
+function order_sync_remove_team_member( $member_id ) {
+    return Subsales_Database::remove_team_member( $member_id );
+}
+
+function order_sync_get_team_members_by_team( $team_id ) {
+    return Subsales_Database::get_team_members_by_team( $team_id );
 }
 
 function order_sync_verify_team_member( $email, $team_id ) {
     return Subsales_Database::verify_team_member( $email, $team_id );
 }
 
+// ============================================================
+// End of Database Wrapper Functions
+// ============================================================
+
+
+// ============================================================
 // REST API ROUTES
+// Routes now registered via Subsales_REST_API class
+// Handler functions remain below for compatibility
+// ============================================================
 
 
 // AJAX endpoint for admin orders filtering/pagination
@@ -2673,11 +3458,11 @@ function order_sync_fetch_orders_ajax() {
                 $entered_by_name = $user_row->name;
             }
         }
-        // Normalize created_at to site-local timezone for display and timestamp calculations.
-        // Stored DB values may be in GMT/UTC; use get_date_from_gmt() to convert to site local time.
+        // Normalize created_at to site-local timezone for display.
+        // Orders are stored in GMT, convert to local time for display.
         $created_gmt = isset( $r['created_at'] ) ? $r['created_at'] : null;
         if ( $created_gmt ) {
-            // get_date_from_gmt returns a formatted date string in the site's timezone
+            // Convert from GMT to local time using WordPress timezone
             $created_local_str = get_date_from_gmt( $created_gmt );
             $created_ts = strtotime( $created_local_str );
             $created_formatted = date_i18n( 'M j, Y g:i A', $created_ts );
@@ -3330,17 +4115,17 @@ function order_sync_handle_generate_delivery_pdf() {
         $total_qty = array_sum( array_values( $products_map ) );
         if ( $total_qty <= 0 ) continue;
 
-        $address = isset( $od['address'] ) ? (string) $od['address'] : '';
-        $unitFloorApt = isset( $od['unitFloorApt'] ) ? (string) $od['unitFloorApt'] : '';
+        $address = isset( $od['address'] ) ? $od['address'] : '';
+        $unitFloorApt = isset( $od['unitFloorApt'] ) ? $od['unitFloorApt'] : '';
         if ( ! empty( $unitFloorApt ) ) {
             $address .= ', ' . $unitFloorApt;
         }
         
         if ( empty( $address ) ) continue;
 
-        $customer = isset( $od['customer'] ) ? (string) $od['customer'] : ( isset( $od['customerName'] ) ? (string) $od['customerName'] : '' );
-        $phone = isset( $od['cellNumber'] ) ? (string) $od['cellNumber'] : ( isset( $od['phone'] ) ? (string) $od['phone'] : '' );
-        $notes = isset( $od['notes'] ) ? (string) $od['notes'] : '';
+        $customer = isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['customerName'] ) ? $od['customerName'] : '' );
+        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['phone'] ) ? $od['phone'] : '' );
+        $notes = isset( $od['notes'] ) ? $od['notes'] : '';
 
         // Geocode address
         $coords = order_sync_geocode_address( $address );
@@ -3372,8 +4157,8 @@ function order_sync_handle_generate_delivery_pdf() {
         exit;
     }
 
-    // Generate combined HTML manifest for all individuals
-    $all_manifests = array();
+    // Generate HTML manifests for each individual
+    $html_files = array();
     
     foreach ( $by_individual as $individual_id => $data ) {
         $individual_name = $data['name'];
@@ -3382,22 +4167,40 @@ function order_sync_handle_generate_delivery_pdf() {
         // Optimize route using nearest-neighbor algorithm
         $optimized_orders = order_sync_optimize_route( $orders, $start_coords );
 
-        $all_manifests[] = array(
-            'name' => $individual_name,
-            'orders' => $optimized_orders
-        );
+        // Generate HTML for printing
+        $html_content = order_sync_generate_manifest_html( $individual_name, $optimized_orders, $start_address, $configured_products, $delivery_date );
+        
+        $filename = 'manifest-' . sanitize_file_name( $individual_name ) . '-' . date('Ymd') . '.html';
+        $html_files[ $filename ] = $html_content;
     }
 
-    // Generate combined HTML document
-    $combined_html = order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date );
-    
-    // Store HTML in transient for retrieval
-    $transient_key = 'subsales_manifest_' . md5( current_time( 'mysql' ) . wp_get_current_user()->ID );
-    set_transient( $transient_key, $combined_html, 300 ); // 5 minutes expiry
-    
-    // Redirect to viewer page
-    $viewer_url = add_query_arg( 'manifest_key', $transient_key, admin_url( 'admin.php?page=subsales-manifest-viewer' ) );
-    wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&manifest_url=' . urlencode( $viewer_url ) ) );
+    // If single individual, show HTML page directly
+    if ( count( $html_files ) === 1 ) {
+        $content = array_values( $html_files )[0];
+        
+        header( 'Content-Type: text/html; charset=UTF-8' );
+        echo $content;
+        exit;
+    }
+
+    // Multiple individuals - create ZIP
+    $zipname = sys_get_temp_dir() . '/manifests-' . time() . '.zip';
+    $za = new ZipArchive();
+    if ( $za->open( $zipname, ZipArchive::CREATE | ZipArchive::OVERWRITE ) !== true ) {
+        wp_die( 'Could not create zip' );
+    }
+
+    foreach ( $html_files as $filename => $content ) {
+        $za->addFromString( $filename, $content );
+    }
+    $za->close();
+
+    // Send ZIP
+    header( 'Content-Type: application/zip' );
+    header( 'Content-Disposition: attachment; filename="delivery-manifests-' . date('Ymd_His') . '.zip"' );
+    header( 'Content-Length: ' . filesize( $zipname ) );
+    readfile( $zipname );
+    @unlink( $zipname );
     exit;
 }
 
@@ -3462,31 +4265,54 @@ function order_sync_haversine_distance( $lat1, $lon1, $lat2, $lon2 ) {
     return $earth_radius * $c;
 }
 
-// Helper: Generate combined HTML manifest for all individuals
-function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '' ) {
+// Helper: Generate HTML manifest for printing
+function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products, $delivery_date = '' ) {
+    
+    // Calculate product totals for packing list
+    $product_totals = array();
+    foreach ( $configured_products as $p ) {
+        $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
+    }
+
+    foreach ( $orders as $order ) {
+        foreach ( $order['products_map'] as $pid => $qty ) {
+            if ( isset( $product_totals[ $pid ] ) ) {
+                $product_totals[ $pid ]['qty'] += $qty;
+            }
+        }
+    }
+
+    // Calculate total pages: 2 for packing lists + number of delivery stops
+    $total_pages = 2 + count( $orders );
+    
     // Determine display date
     $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
     
-    // Build HTML with print-optimized CSS
+    // Build HTML content with print-optimized CSS
     $html = '<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delivery Manifests - ' . $display_date . '</title>
+    <title>Delivery Manifest - ' . esc_html( $individual_name ) . '</title>
     <style>
+        /* Print-optimized styles */
         @media print {
-            @page { margin: 0.5in 0.5in 0.75in 0.5in; }
-            .page-break { page-break-after: always; }
-            .manifest-section { page-break-before: always; }
-            .manifest-section:first-child { page-break-before: auto; }
-            .delivery-stop { page-break-inside: avoid; }
+            @page { 
+                margin: 0.5in 0.5in 1in 0.5in; 
+                size: letter portrait;
+            }
+            body { margin: 0; }
+            .no-print { display: none !important; }
+            .manifest-section { page-break-after: always; }
+            .manifest-section:last-child { page-break-after: auto; }
         }
-        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; position: relative; }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; font-size: 12pt; }
         h1 { font-size: 24pt; margin: 0 0 10px 0; }
         h2 { font-size: 18pt; margin: 20px 0 10px 0; }
         .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
-        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; background: #f9f9f9; }
+        .page-number { font-size: 14pt; color: #666; margin-top: 10px; text-align: center; }
+        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; page-break-inside: avoid; background: #f9f9f9; }
         .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
         .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
         .customer { font-size: 11pt; margin: 3px 0; }
@@ -3495,139 +4321,127 @@ function order_sync_generate_combined_manifest_html( $all_manifests, $start_addr
         .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
         .products-table th { background: #e0e0e0; font-weight: bold; }
         .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
-        .packing-page { margin-bottom: 40px; }
+        .packing-list { margin-top: 40px; }
+        .manifest-section { page-break-before: always; }
         .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
-        .packing-table th, .packing-table td { border: 2px solid #000; padding: 12px; text-align: left; }
-        .packing-table th { background: #e0e0e0; font-weight: bold; }
-        .footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 20px; border-top: 1px solid #333; font-size: 10pt; background: white; }
-        .footer-line { margin: 2px 0; }
-        @media print {
-            .footer { position: fixed; bottom: 0.25in; }
-        }
+        .packing-table th, .packing-table td { border: 3px solid #000; padding: 15px; text-align: left; }
+        .packing-table th { background: #f0f0f0; font-weight: bold; }
+        .packing-table .total-row { font-weight: bold; background: #d0d0d0; font-size: 24pt; }
+        .footer { position: fixed; bottom: 0; left: 0.5in; right: 0.5in; height: 0.6in; font-size: 10pt; border-top: 1px solid #999; padding-top: 10px; }
+        .footer-left { float: left; width: 50%; text-align: left; }
+        .footer-right { float: right; width: 50%; text-align: right; }
     </style>
 </head>
 <body>';
 
-    // Generate manifest for each individual
-    $manifest_index = 0;
-    foreach ( $all_manifests as $manifest ) {
-        $individual_name = $manifest['name'];
-        $orders = $manifest['orders'];
+    // First Packing List (PAGE 1)
+    $html .= '<div class="manifest-page packing-list">';
+    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<table class="packing-table">';
+    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
+    $html .= '<tbody>';
+    
+    $grand_total = 0;
+    foreach ( $product_totals as $pid => $data ) {
+        if ( $data['qty'] > 0 ) {
+            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
+            $grand_total += $data['qty'];
+        }
+    }
+    
+    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
+    $html .= '</tbody></table>';
+    $html .= '<div class="footer">';
+    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="footer-right">Page 1 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+    $html .= '</div>';
+    $html .= '</div>';
+    
+    // Second Packing List (PAGE 2)
+    $html .= '<div class="manifest-page packing-list">';
+    $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<table class="packing-table">';
+    $html .= '<thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead>';
+    $html .= '<tbody>';
+    
+    foreach ( $product_totals as $pid => $data ) {
+        if ( $data['qty'] > 0 ) {
+            $html .= '<tr><td>' . htmlspecialchars( $data['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $data['qty'] ) . '</td></tr>';
+        }
+    }
+    
+    $html .= '<tr class="total-row"><td><strong>TOTAL ITEMS</strong></td><td style="text-align:center;"><strong>' . $grand_total . '</strong></td></tr>';
+    $html .= '</tbody></table>';
+    $html .= '<div class="footer">';
+    $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="footer-right">Page 2 of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+    $html .= '</div>';
+    $html .= '</div>';
+
+    // Delivery Manifest (SUBSEQUENT PAGES)
+    $html .= '<div class="manifest-page">';
+    $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+    $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
+    $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+
+    $html .= '</div>'; // Close delivery manifest header page
+    
+    // Delivery stops - each on its own page
+    $stop_num = 1;
+    $page_num = 3; // Start at page 3 (two packing lists are pages 1-2)
+    foreach ( $orders as $order ) {
+        $html .= '<div class="manifest-page">';
+        $html .= '<div class="delivery-stop">';
+        $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
+        $html .= '<div class="address">' . htmlspecialchars( $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         
-        // Calculate product totals for this individual's packing list
-        $product_totals = array();
-        foreach ( $configured_products as $p ) {
-            $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
-        }
-
-        foreach ( $orders as $order ) {
-            foreach ( $order['products_map'] as $pid => $qty ) {
-                if ( isset( $product_totals[ $pid ] ) ) {
-                    $product_totals[ $pid ]['qty'] += $qty;
-                }
-            }
-        }
-
-        // Calculate total pages for this seller: 2 packing lists + delivery manifest pages
-        $total_pages = 2 + count( $orders );
-        $current_page = 1;
-
-        // Add section break for new seller (except first one)
-        if ( $manifest_index > 0 ) {
-            $html .= '<div class="manifest-section"></div>';
+        if ( ! empty( $order['customer'] ) ) {
+            $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         }
         
-        // FIRST PACKING LIST
-        $html .= '<div class="packing-page">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
-        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
-        foreach ( $product_totals as $pt ) {
-            if ( $pt['qty'] > 0 ) {
-                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
-            }
+        if ( ! empty( $order['phone'] ) ) {
+            $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
         }
-        $html .= '</tbody></table>';
-        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
-        $html .= '</div>';
-        $html .= '<div class="page-break"></div>';
-        $current_page++;
-        
-        // SECOND PACKING LIST (duplicate)
-        $html .= '<div class="packing-page">';
-        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
-        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
-        foreach ( $product_totals as $pt ) {
-            if ( $pt['qty'] > 0 ) {
-                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
-            }
-        }
-        $html .= '</tbody></table>';
-        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
-        $html .= '</div>';
-        $html .= '<div class="page-break"></div>';
-        $current_page++;
 
-        // DELIVERY MANIFEST
-        $html .= '<div>';
-        $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
-        $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( (string) $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
-        $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
-
-        // Delivery stops
-        $stop_num = 1;
-        foreach ( $orders as $order ) {
-            $html .= '<div class="delivery-stop">';
-            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
-            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            
-            if ( ! empty( $order['customer'] ) ) {
-                $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            }
-            
-            if ( ! empty( $order['phone'] ) ) {
-                $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            }
-
-            // Products for this stop
-            $html .= '<div class="products"><strong>Products:</strong>';
-            $html .= '<table class="products-table">';
-            $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
-            $has_products = false;
-            foreach ( $order['products_map'] as $pid => $qty ) {
-                if ( $qty > 0 ) {
-                    $product_name = '';
-                    foreach ( $configured_products as $p ) {
-                        if ( $p['id'] === $pid ) {
-                            $product_name = $p['name'];
-                            break;
-                        }
+        // Products for this stop
+        $html .= '<div class="products"><strong>Products:</strong>';
+        $html .= '<table class="products-table">';
+        $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
+        $has_products = false;
+        foreach ( $order['products_map'] as $pid => $qty ) {
+            if ( $qty > 0 ) {
+                $product_name = '';
+                foreach ( $configured_products as $p ) {
+                    if ( $p['id'] === $pid ) {
+                        $product_name = $p['name'];
+                        break;
                     }
-                    $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
-                    $has_products = true;
                 }
+                $html .= '<tr><td>' . htmlspecialchars( $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
+                $has_products = true;
             }
-            if ( ! $has_products ) {
-                $html .= '<tr><td colspan="2">No products</td></tr>';
-            }
-            $html .= '</tbody></table></div>';
-
-            if ( ! empty( $order['notes'] ) ) {
-                $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
-            }
-
-            $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
-            $html .= '</div>';
-            $stop_num++;
-            $current_page++;
         }
-        $html .= '</div>'; // end delivery manifest
-        $manifest_index++;
+        if ( ! $has_products ) {
+            $html .= '<tr><td colspan="2">No products</td></tr>';
+        }
+        $html .= '</tbody></table></div>';
+
+        if ( ! empty( $order['notes'] ) ) {
+            $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+        }
+
+        $html .= '</div>'; // Close delivery-stop
+        $html .= '<div class="footer">';
+        $html .= '<div class="footer-left"><strong>Sales Person:</strong> ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</div>';
+        $html .= '<div class="footer-right">Page ' . $page_num . ' of ' . $total_pages . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '</div>';
+        $html .= '</div>'; // Close manifest-page
+        $stop_num++;
+        $page_num++;
     }
     
     $html .= '</body></html>';
-
+    
     return $html;
 }
 
@@ -4188,12 +5002,27 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
     }
     
-    // User-based auth: X-User-ID (with optional X-Team-ID)
+    // Legacy auth: X-Team-Name + X-Access-Code
+    $team_name = $request->get_header( 'X-Team-Name' );
+    $access_code = $request->get_header( 'X-Access-Code' );
+    
+    if ( ! empty( $team_name ) || ! empty( $access_code ) ) {
+        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+        if ( $team ) {
+            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+            return true;
+        }
+        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
+        return false;
+    }
+    
+    // User-based auth: X-User-ID + X-Team-ID (Phase 4)
     $user_id = $request->get_header( 'X-User-ID' );
     $team_id = $request->get_header( 'X-Team-ID' );
     
-    if ( ! empty( $user_id ) ) {
+    if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
         $members_table = $wpdb->prefix . 'ss_team_members';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
         
         // Verify user exists
         $user = $wpdb->get_row( $wpdb->prepare(
@@ -4206,40 +5035,19 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
             return false;
         }
         
-        // If team_id is provided and not -1 (individual mode), verify user belongs to team
-        if ( ! empty( $team_id ) && $team_id !== '-1' ) {
-            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-            $assignment = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-                intval( $user_id ),
-                intval( $team_id )
-            ));
-            
-            if ( $assignment ) {
-                error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
-                return true;
-            }
-            
-            error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
-            return false;
-        }
+        // Verify user belongs to the team
+        $assignment = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            intval( $user_id ),
+            intval( $team_id )
+        ));
         
-        // Individual mode (team_id is -1 or empty) - user exists, allow access
-        error_log( 'Subsales: perm_check individual mode ok user_id=' . $user_id );
-        return true;
-    }
-    
-    // Legacy Team auth: X-Team-Name + X-Access-Code (both required)
-    $team_name = $request->get_header( 'X-Team-Name' );
-    $access_code = $request->get_header( 'X-Access-Code' );
-    
-    if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-        if ( $team ) {
-            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+        if ( $assignment ) {
+            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
             return true;
         }
-        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
+        
+        error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
         return false;
     }
     
@@ -4258,12 +5066,22 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
     return current_user_can( 'edit_posts' );
 }
 
-/**
- * Check if user has admin permissions for WordPress REST API requests
- * Used by admin-only REST endpoints like order history, restore, tally
- */
+// Admin-only permission callback for sensitive operations (edit, delete, restore, history)
 function order_sync_check_admin_permissions( WP_REST_Request $request ) {
-    return current_user_can( 'manage_options' );
+    // Check if user is logged into WordPress admin with edit permissions
+    if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+        return true;
+    }
+    
+    // Optionally support API key authentication for admin operations
+    $api_key = $request->get_header( 'X-API-Key' );
+    $stored_key = get_option( 'order_sync_api_key', '' );
+    
+    if ( ! empty( $api_key ) && ! empty( $stored_key ) && hash_equals( $stored_key, $api_key ) ) {
+        return true;
+    }
+    
+    return false;
 }
 
 // Orders REST callbacks (get_orders, get_order_by_id, create_order, update_order, delete_order)
@@ -4304,6 +5122,14 @@ function tally_orders( $request ) {
     return Subsales_Orders::tally_orders( $request );
 }
 
+// Server time endpoint: returns current date and timestamp in site timezone plus GMT offset
+function order_manager_get_server_time( WP_REST_Request $request ) {
+    $ts = current_time( 'timestamp' );
+    $date = date( 'Y-m-d', $ts );
+    $gmt_offset = floatval( get_option( 'gmt_offset', 0 ) );
+    return new WP_REST_Response( array( 'server_date' => $date, 'server_timestamp' => $ts, 'gmt_offset' => $gmt_offset ), 200 );
+}
+
 /**
  * Teams & User Management Functions (Backward Compatibility Wrappers)
  * All team/user functionality now handled by Subsales_Teams class
@@ -4319,6 +5145,46 @@ function verify_team_access( WP_REST_Request $request ) {
 
 function order_sync_get_team_members_endpoint( WP_REST_Request $request ) {
     return Subsales_Teams::get_team_members_endpoint( $request );
+}
+
+function order_sync_create_user( WP_REST_Request $request ) {
+    return Subsales_Teams::create_user( $request );
+}
+
+function order_sync_get_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_users( $request );
+}
+
+function order_sync_get_user_by_id( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_by_id( $request );
+}
+
+function order_sync_update_user( WP_REST_Request $request ) {
+    return Subsales_Teams::update_user( $request );
+}
+
+function order_sync_delete_user( WP_REST_Request $request ) {
+    return Subsales_Teams::delete_user( $request );
+}
+
+function order_sync_search_users( WP_REST_Request $request ) {
+    return Subsales_Teams::search_users( $request );
+}
+
+function order_sync_get_user_teams( WP_REST_Request $request ) {
+    return Subsales_Teams::get_user_teams( $request );
+}
+
+function order_sync_assign_user_to_team( WP_REST_Request $request ) {
+    return Subsales_Teams::assign_user_to_team( $request );
+}
+
+function order_sync_remove_user_from_team( WP_REST_Request $request ) {
+    return Subsales_Teams::remove_user_from_team( $request );
+}
+
+function order_sync_get_team_users( WP_REST_Request $request ) {
+    return Subsales_Teams::get_team_users( $request );
 }
 
 /**
@@ -4697,8 +5563,7 @@ function order_sync_get_plugin_version() {
 }
 
 // Serve portal assets from plugin folder at portal path
-// Use 'init' hook with priority 0 to intercept before WordPress routing
-add_action( 'init', 'subsales_serve_portal_assets', 0 );
+add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
 add_action( 'rest_api_init', function(){
@@ -4769,134 +5634,9 @@ function subsales_haversine_distance( $lat1, $lon1, $lat2, $lon2 ){
     return $R * $c;
 }
 function subsales_serve_portal_assets() {
-    // Skip during installation, updates, and admin operations
-    if ( defined( 'WP_INSTALLING' ) && WP_INSTALLING ) {
-        return;
-    }
-    
-    // Early exit for admin pages, wp-json, and other non-portal requests
-    $req_uri = isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '';
-    if ( empty( $req_uri ) ||
-         strpos( $req_uri, '/wp-admin/' ) !== false || 
-         strpos( $req_uri, '/wp-json/' ) !== false || 
-         strpos( $req_uri, 'wp-login.php' ) !== false ||
-         $req_uri === '/favicon.ico' ) {
-        return;
-    }
-    
-    $portal_slug = get_option( 'order_sync_portal_slug', '' );
-    $req_path_raw = parse_url( $req_uri, PHP_URL_PATH );
-    $req_path = $req_path_raw ? trim( $req_path_raw, '/' ) : '';
-    
-    // Redirect /subsales-portal to /subsales-portal/ for service worker scope consistency
-    if ( $portal_slug && $req_path === $portal_slug && substr( $req_uri, -1 ) !== '/' ) {
-        wp_redirect( home_url( '/' . $portal_slug . '/' ), 301 );
-        exit;
-    }
-    
-    // Handle direct PWA access at /wp-content/plugins/subsales-management/pwa/
-    $pwa_base_path_raw = parse_url( SUBSALES_PLUGIN_URL . 'pwa/', PHP_URL_PATH );
-    $pwa_base_path = $pwa_base_path_raw ? trim( $pwa_base_path_raw, '/' ) : '';
-    
-    // Serve service worker for direct PWA access
-    if ( $req_path === $pwa_base_path . '/service-worker.js' || $req_path === rtrim($pwa_base_path, '/') . '/service-worker.js' ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
-        if ( file_exists( $file ) ) {
-            header( 'Content-Type: application/javascript' );
-            header( 'Cache-Control: public, max-age=3600' );
-            header( 'Access-Control-Allow-Origin: *' );
-            header( 'Service-Worker-Allowed: /' );
-            readfile( $file );
-            exit;
-        }
-    }
-    
-    // Serve other PWA assets (styles, scripts, manifest, icons) for direct PWA access
-    if ( strpos( $req_path, $pwa_base_path ) === 0 ) {
-        $rel_path = substr( $req_path, strlen( $pwa_base_path ) );
-        $rel_path = ltrim( $rel_path, '/' );
-        
-        if ( $rel_path && $rel_path !== 'index.html' ) {
-            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
-            if ( file_exists( $file ) && is_file( $file ) ) {
-                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
-                switch ( $ext ) {
-                    case 'js': $ct = 'application/javascript'; break;
-                    case 'css': $ct = 'text/css'; break;
-                    case 'json': $ct = 'application/json'; break;
-                    case 'svg': $ct = 'image/svg+xml'; break;
-                    case 'png': $ct = 'image/png'; break;
-                    case 'jpg':
-                    case 'jpeg': $ct = 'image/jpeg'; break;
-                    case 'webp': $ct = 'image/webp'; break;
-                    case 'ico': $ct = 'image/x-icon'; break;
-                    default: $ct = 'application/octet-stream';
-                }
-                header( 'Content-Type: ' . $ct );
-                header( 'Cache-Control: public, max-age=86400' );
-                header( 'Access-Control-Allow-Origin: *' );
-                readfile( $file );
-                exit;
-            }
-        }
-    }
-    
-    if ( $req_path === $pwa_base_path || $req_path === $pwa_base_path . '/index.html' || rtrim($req_path, '/') === rtrim($pwa_base_path, '/') ) {
-        $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
-        if ( file_exists( $file ) ) {
-            $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
-            $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
-
-            $settings = array(
-                'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
-                'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-                'portalBase' => esc_url_raw( home_url( '/' . ( $portal_slug ?: 'subsales-portal' ) . '/' ) ),
-                'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
-                'brandName' => get_option( 'subsales_branding', 'Subsales' ),
-                'brandingImage' => $header_image_url
-            );
-            // Include configured products so portal bootstraps with current product list
-            $settings['products'] = order_sync_get_products_config();
-
-            $html_content = file_get_contents( $file );
-            if ( $html_content === false ) {
-                error_log( '[Subsales] Failed to read index.html' );
-                return;
-            }
-            $html = $html_content;
-            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
-            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
-            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
-            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
-            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
-            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
-            $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            // If replacement didn't find the exact marker, inject config before </head>
-            if ( $new_html === $html ) {
-                $pos = stripos( $html, '</head>' );
-                if ( $pos !== false ) {
-                    $new_html = substr_replace( $html, $inject . "\n<script src=\"" . $app_src . "\"></script>\n", $pos, 0 );
-                } else {
-                    // fallback: prepend to document
-                    $new_html = $inject . "\n<script src=\"" . $app_src . "\"></script>\n" . $html;
-                }
-            }
-            $html = $new_html;
-            // Serve index publicly
-            header( 'Content-Type: text/html; charset=utf-8' );
-            header( 'Cache-Control: public, max-age=300' );
-            header( 'Access-Control-Allow-Origin: *' );
-            echo $html;
-            exit;
-        }
-    }
-    
-    if ( empty( $portal_slug ) ) return;
-    $portal_base_raw = parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH );
-    $portal_base = $portal_base_raw ? trim( $portal_base_raw, '/' ) : '';
+    $portal_slug = get_option( 'order_sync_portal_slug', '' ); if ( empty( $portal_slug ) ) return;
+    $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
+    $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
 
     // Also serve manifest at the site root (/manifest.json) to handle cases where the browser requests it from /
     if ( $req_path === 'manifest.json' ) {
@@ -4923,57 +5663,19 @@ function subsales_serve_portal_assets() {
         }
     }
 
-    // Serve service worker for portal access (check both with and without leading slash)
-    if ( $req_path === $portal_base . '/service-worker.js' || $req_path === rtrim($portal_base, '/') . '/service-worker.js' ) {
-        error_log( '[Subsales Debug] Service worker requested at portal path - serving from: ' . SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js' );
+    if ( $req_path === $portal_base . '/service-worker.js' ) {
         $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
         if ( file_exists( $file ) ) {
-            // Clear any previous output and set explicit 200 status
-            status_header( 200 );
-            header( 'Content-Type: application/javascript; charset=utf-8' );
-            header( 'Cache-Control: no-cache, must-revalidate' );
+            // Serve publicly with permissive caching and CORS so browsers can register the SW without auth issues
+            header( 'Content-Type: application/javascript' );
+            header( 'Cache-Control: public, max-age=3600' );
             header( 'Access-Control-Allow-Origin: *' );
-            header( 'Service-Worker-Allowed: /' );
             readfile( $file );
             exit;
-        } else {
-            error_log( '[Subsales Debug] Service worker file NOT FOUND at: ' . $file );
-        }
-    }
-
-    // Serve other PWA assets at portal path (app.js, styles.css, manifest.json, icons, etc.)
-    if ( strpos( $req_path, $portal_base ) === 0 && $req_path !== $portal_base && $req_path !== $portal_base . '/' && $req_path !== $portal_base . '/index.html' ) {
-        $rel_path = substr( $req_path, strlen( $portal_base ) );
-        $rel_path = ltrim( $rel_path, '/' );
-        
-        if ( $rel_path ) {
-            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_path;
-            if ( file_exists( $file ) && is_file( $file ) ) {
-                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
-                switch ( $ext ) {
-                    case 'js': $ct = 'application/javascript'; break;
-                    case 'css': $ct = 'text/css'; break;
-                    case 'json': $ct = 'application/json'; break;
-                    case 'svg': $ct = 'image/svg+xml'; break;
-                    case 'png': $ct = 'image/png'; break;
-                    case 'jpg':
-                    case 'jpeg': $ct = 'image/jpeg'; break;
-                    case 'webp': $ct = 'image/webp'; break;
-                    case 'ico': $ct = 'image/x-icon'; break;
-                    default: $ct = 'application/octet-stream';
-                }
-                status_header( 200 );
-                header( 'Content-Type: ' . $ct );
-                header( 'Cache-Control: public, max-age=86400' );
-                header( 'Access-Control-Allow-Origin: *' );
-                readfile( $file );
-                exit;
-            }
         }
     }
 
     if ( $req_path === $portal_base || $req_path === $portal_base . '/index.html' || $req_path === $portal_base . '/' ) {
-        // Serve PWA directly instead of redirecting
         $file = SUBSALES_PLUGIN_PATH . 'pwa/index.html';
         if ( file_exists( $file ) ) {
             $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
@@ -4982,21 +5684,21 @@ function subsales_serve_portal_assets() {
             $settings = array(
                 'apiBase' => esc_url_raw( rest_url( 'order-manager/v1' ) ),
                 'pluginBase' => SUBSALES_PLUGIN_URL . 'pwa/',
-                'portalBase' => esc_url_raw( home_url( '/' . $portal_slug . '/' ) ),
+                'portalBase' => esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) ),
                 'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
                 'brandName' => get_option( 'subsales_branding', 'Subsales' ),
                 'brandingImage' => $header_image_url
             );
-            // Include configured products
+            // Include configured products so portal bootstraps with current product list
             $settings['products'] = order_sync_get_products_config();
 
             $html = file_get_contents( $file );
             $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
             $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
-            // Rewrite relative stylesheet hrefs to absolute plugin path
+            // Rewrite relative stylesheet hrefs to absolute plugin path to avoid portal-relative 404s
             $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
             $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
-            // If replacement didn't find the exact marker, inject config before </head>
+            // If replacement didn't find the exact marker (different spacing/paths), inject config before </head>
             if ( $new_html === $html ) {
                 $pos = stripos( $html, '</head>' );
                 if ( $pos !== false ) {
@@ -5007,12 +5709,11 @@ function subsales_serve_portal_assets() {
                 }
             }
             $html = $new_html;
-            // Serve index publicly
+            // Serve index publicly so the portal can be loaded without authentication
             header( 'Content-Type: text/html; charset=utf-8' );
             header( 'Cache-Control: public, max-age=300' );
             header( 'Access-Control-Allow-Origin: *' );
-            echo $html;
-            exit;
+            echo $html; exit;
         }
     }
 
@@ -5573,7 +6274,7 @@ function order_sync_delivery_page() {
             <p class="submit"><button class="button">Generate Administrative CSV</button></p>
         </form>
 
-        <!-- Driver manifests workflow: individual-based routing and HTML generation -->
+        <!-- Driver manifests workflow: individual-based routing and PDF generation -->
         <h2 style="margin-top:18px">Generate Individual Delivery Manifests</h2>
         <p class="description">Generate optimized delivery routes for each team member based on their orders. Creates individual PDF manifests with packing lists.</p>
         <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
@@ -5592,7 +6293,7 @@ function order_sync_delivery_page() {
                 </tr>
             </table>
             <p class="submit">
-                <button type="submit" class="button button-primary">Generate Individual Manifests (HTML)</button>
+                <button type="submit" class="button button-primary">Generate Individual Manifests (PDF)</button>
             </p>
         </form>
 
@@ -5686,54 +6387,8 @@ function order_sync_delivery_page() {
 
         <h2 style="margin-top:24px">Geocoding & limits</h2>
         <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
-        
-        <?php if ( isset( $_GET['manifest_url'] ) ): ?>
-        <div class="notice notice-success" style="margin-top:20px; padding:12px;">
-            <p style="font-size:14px; margin:0;">
-                <strong>✓ Manifests generated successfully!</strong><br/>
-                <a href="<?php echo esc_url( $_GET['manifest_url'] ); ?>" target="_blank" class="button button-primary" style="margin-top:8px;">
-                    📄 Open Delivery Manifests (New Tab)
-                </a>
-            </p>
-        </div>
-        <script>
-        (function() {
-            const manifestUrl = <?php echo json_encode( esc_url_raw( $_GET['manifest_url'] ) ); ?>;
-            // Try to open in new tab (may be blocked by popup blockers)
-            setTimeout(function() {
-                window.open(manifestUrl, '_blank');
-            }, 500);
-        })();
-        </script>
-        <?php endif; ?>
     </div>
     <?php
-}
-
-// Manifest viewer page (hidden, accessed via transient key)
-function subsales_manifest_viewer_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( 'Insufficient permissions' );
-    }
-    
-    $manifest_key = isset( $_GET['manifest_key'] ) ? sanitize_text_field( $_GET['manifest_key'] ) : '';
-    
-    if ( empty( $manifest_key ) ) {
-        wp_die( 'No manifest key provided' );
-    }
-    
-    $html = get_transient( $manifest_key );
-    
-    if ( $html === false ) {
-        wp_die( 'Manifest not found or expired. Please generate a new manifest.' );
-    }
-    
-    // Delete transient after retrieval for security
-    delete_transient( $manifest_key );
-    
-    // Output the HTML directly (not wrapped in WordPress admin)
-    echo $html;
-    exit;
 }
 
 // Handle generate delivery export (admin POST)
@@ -6343,13 +6998,28 @@ function subsales_logs_page() {
         
         // View context modal
         $('.view-context-btn').on('click', function() {
-            const context = $(this).data('context');
-            try {
-                const formatted = JSON.stringify(JSON.parse(context), null, 2);
-                $('#context-content').text(formatted);
-            } catch(e) {
-                $('#context-content').text(context);
+            let context = $(this).data('context');
+            
+            // If context is already an object (jQuery auto-parsed it), stringify it
+            if (typeof context === 'object') {
+                try {
+                    const formatted = JSON.stringify(context, null, 2);
+                    $('#context-content').text(formatted);
+                } catch(e) {
+                    $('#context-content').text(String(context));
+                }
+            } else if (typeof context === 'string') {
+                // If it's a string, try to parse and format it
+                try {
+                    const formatted = JSON.stringify(JSON.parse(context), null, 2);
+                    $('#context-content').text(formatted);
+                } catch(e) {
+                    $('#context-content').text(context);
+                }
+            } else {
+                $('#context-content').text(String(context));
             }
+            
             $('#context-modal').css('display', 'flex');
         });
         
@@ -6567,7 +7237,8 @@ function subsales_pwa_sessions_page() {
                     <th style="width: 150px;">User/Team</th>
                     <th style="width: 120px;">Login</th>
                     <th style="width: 120px;">Last Heartbeat</th>
-                    <th style="width: 120px;">Session Expires</th>
+                    <th style="width: 120px;">Logout</th>
+                    <th style="width: 80px;">Duration</th>
                     <th style="width: 80px;">Status</th>
                     <th>User Agent</th>
                     <th style="width: 100px;">IP</th>
@@ -6575,7 +7246,7 @@ function subsales_pwa_sessions_page() {
             </thead>
             <tbody>
                 <?php if ( empty( $sessions ) ): ?>
-                    <tr><td colspan="8" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
+                    <tr><td colspan="9" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
                 <?php else: ?>
                     <?php foreach ( $sessions as $session ): 
                         $login_time = strtotime( $session['login_at'] );
@@ -6601,35 +7272,17 @@ function subsales_pwa_sessions_page() {
                             'ended' => '#6c757d'
                         );
                         $status_color = isset( $status_colors[ $display_status ] ) ? $status_colors[ $display_status ] : '#ccc';
-                        
-                        // Calculate session expires remaining time
-                        $expiry_display = '—';
-                        if ( $session['session_expiry'] && $display_status !== 'ended' ) {
-                            $expiry_time = strtotime( $session['session_expiry'] );
-                            $time_remaining = $expiry_time - $current_time;
-                            
-                            if ( $time_remaining > 0 ) {
-                                $hours = floor( $time_remaining / 3600 );
-                                $minutes = floor( ( $time_remaining % 3600 ) / 60 );
-                                $expiry_display = sprintf( '%dh %dm', $hours, $minutes );
-                            } else {
-                                $expiry_display = '<span style="color: #dc3545;">Expired</span>';
-                            }
-                        }
                     ?>
                     <tr>
-                        <td>
-                            <a href="#" class="view-session-details" data-session-id="<?php echo esc_attr( $session['session_id'] ); ?>" style="text-decoration: none; color: #2271b1;">
-                                <small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small>
-                            </a>
-                        </td>
+                        <td><small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small></td>
                         <td>
                             <strong><?php echo esc_html( $session['user_name'] ?: '(Unknown)' ); ?></strong><br>
                             <small style="color: #666;"><?php echo esc_html( $session['team_name'] ?: 'No Team' ); ?></small>
                         </td>
                         <td><?php echo date( 'M j, g:i a', $login_time ); ?></td>
                         <td><?php echo date( 'M j, g:i a', strtotime( $session['last_heartbeat'] ) ); ?></td>
-                        <td><?php echo $expiry_display; ?></td>
+                        <td><?php echo $logout_time ? date( 'M j, g:i a', $logout_time ) : '—'; ?></td>
+                        <td><?php echo gmdate( 'H:i:s', $duration ); ?></td>
                         <td>
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?php echo $status_color; ?>; margin-right: 5px;"></span>
                             <?php echo esc_html( ucfirst( $display_status ) ); ?>
@@ -6655,24 +7308,8 @@ function subsales_pwa_sessions_page() {
         
         <p style="margin-top: 20px; color: #666; font-style: italic;">
             💡 <strong>Tip:</strong> Sessions are automatically marked as "idle" after 5 minutes of no heartbeat. 
-            Active sessions send a heartbeat every 30 seconds from the app. Click a Session ID to view heartbeat history and GPS tracking.
+            Active sessions send a heartbeat every 30 seconds from the app.
         </p>
-    </div>
-    
-    <!-- Session Detail Modal -->
-    <div id="session-detail-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 100000; overflow: auto;">
-        <div style="max-width: 900px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
-            <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
-                <h2 style="margin: 0;">Session Details</h2>
-                <button id="close-session-modal" class="button" style="font-size: 20px; line-height: 1;">&times;</button>
-            </div>
-            <div id="session-detail-content" style="padding: 20px;">
-                <div style="text-align: center; padding: 40px;">
-                    <span class="spinner is-active" style="float: none; margin: 0;"></span>
-                    <p>Loading session data...</p>
-                </div>
-            </div>
-        </div>
     </div>
     
     <style>
@@ -6684,20 +7321,12 @@ function subsales_pwa_sessions_page() {
             vertical-align: middle;
             margin-right: 5px;
         }
-        .view-session-details:hover {
-            text-decoration: underline !important;
-        }
     </style>
     
     <script>
     jQuery(document).ready(function($) {
         // Auto-refresh active sessions every 10 seconds
         let autoRefreshInterval = setInterval(function() {
-            // Don't refresh if modal is open
-            if ($('#session-detail-modal').is(':visible')) {
-                console.log('Auto-refresh skipped - modal is open');
-                return;
-            }
             location.reload();
         }, 10000);
         
@@ -6706,115 +7335,11 @@ function subsales_pwa_sessions_page() {
             location.reload();
         });
         
-        // Stop auto-refresh when user interacts with filters or modal
+        // Stop auto-refresh when user interacts with filters
         $('select, input').on('focus', function() {
             clearInterval(autoRefreshInterval);
             console.log('Auto-refresh paused while editing filters');
         });
-        
-        // View session details
-        $('.view-session-details').on('click', function(e) {
-            e.preventDefault();
-            const sessionId = $(this).data('session-id');
-            
-            // Show modal
-            $('#session-detail-modal').fadeIn(200);
-            
-            // Load session data via AJAX
-            $.ajax({
-                url: ajaxurl,
-                method: 'POST',
-                data: {
-                    action: 'subsales_get_session_details',
-                    nonce: '<?php echo wp_create_nonce( 'subsales_session_details' ); ?>',
-                    session_id: sessionId
-                },
-                success: function(response) {
-                    if (response.success) {
-                        displaySessionDetails(response.data);
-                    } else {
-                        $('#session-detail-content').html('<div class="notice notice-error"><p>Error loading session data.</p></div>');
-                    }
-                },
-                error: function() {
-                    $('#session-detail-content').html('<div class="notice notice-error"><p>Failed to load session data.</p></div>');
-                }
-            });
-        });
-        
-        // Close modal
-        $('#close-session-modal, #session-detail-modal').on('click', function(e) {
-            if (e.target === this) {
-                $('#session-detail-modal').fadeOut(200);
-            }
-        });
-        
-        function displaySessionDetails(data) {
-            const session = data.session;
-            const heartbeats = data.heartbeats;
-            
-            let html = '<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">';
-            html += '<div><strong>User:</strong> ' + (session.user_name || 'Unknown') + '</div>';
-            html += '<div><strong>Team:</strong> ' + (session.team_name || 'No Team') + '</div>';
-            html += '<div><strong>Login:</strong> ' + session.login_at + '</div>';
-            html += '<div><strong>Last Heartbeat:</strong> ' + session.last_heartbeat + '</div>';
-            html += '<div><strong>Session Expires:</strong> ' + (session.session_expiry || 'N/A') + '</div>';
-            html += '<div><strong>Status:</strong> ' + session.status + '</div>';
-            html += '<div><strong>IP Address:</strong> ' + session.ip_address + '</div>';
-            html += '<div><strong>User Agent:</strong> ' + session.user_agent + '</div>';
-            html += '</div>';
-            
-            html += '<h3 style="margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px;">Heartbeat History (' + heartbeats.length + ' records)</h3>';
-            
-            if (heartbeats.length > 0) {
-                html += '<div style="max-height: 400px; overflow-y: auto;">';
-                html += '<table class="widefat striped">';
-                html += '<thead><tr>';
-                html += '<th>Timestamp</th>';
-                html += '<th>GPS Location</th>';
-                html += '<th>Accuracy</th>';
-                html += '<th>Activity</th>';
-                html += '</tr></thead><tbody>';
-                
-                heartbeats.forEach(function(hb) {
-                    html += '<tr>';
-                    html += '<td>' + hb.heartbeat_at + '</td>';
-                    
-                    if (hb.gps_latitude && hb.gps_longitude) {
-                        const mapsUrl = 'https://www.google.com/maps?q=' + hb.gps_latitude + ',' + hb.gps_longitude;
-                        html += '<td><a href="' + mapsUrl + '" target="_blank">' + hb.gps_latitude + ', ' + hb.gps_longitude + '</a></td>';
-                        html += '<td>' + (hb.gps_accuracy ? Math.round(hb.gps_accuracy) + 'm' : 'N/A') + '</td>';
-                    } else {
-                        html += '<td>—</td><td>—</td>';
-                    }
-                    
-                    const activity = hb.activity_data ? JSON.parse(hb.activity_data) : {};
-                    let activityDisplay = 'None';
-                    
-                    if (activity.type) {
-                        // Auto heartbeat
-                        activityDisplay = '<span style="color: #666;">Auto (' + activity.type + ')</span>';
-                    } else if (activity.events && Array.isArray(activity.events)) {
-                        // User activity events
-                        const eventTypes = activity.events.map(e => e.action).join(', ');
-                        activityDisplay = '<strong>' + activity.events.length + ' event' + (activity.events.length > 1 ? 's' : '') + ':</strong> ' + eventTypes;
-                    } else if (Object.keys(activity).length > 0) {
-                        // Unknown activity format - show keys
-                        activityDisplay = Object.keys(activity).join(', ');
-                    }
-                    
-                    html += '<td>' + activityDisplay + '</td>';
-                    html += '</tr>';
-                });
-                
-                html += '</tbody></table>';
-                html += '</div>';
-            } else {
-                html += '<p style="color: #666; font-style: italic;">No heartbeat data available.</p>';
-            }
-            
-            $('#session-detail-content').html(html);
-        }
     });
     </script>
     <?php
@@ -6850,6 +7375,44 @@ function order_sync_main_page() {
                 <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
             </div>
         </div>
+        
+        <!-- OPTION 2: Segmented Control Style (COMMENT OUT OPTION 1 AND UNCOMMENT TO USE)
+        <div class="subsales-mode-controls subsales-option-2" style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 30px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <strong style="font-size: 14px;">Sales Mode:</strong>
+                <div class="subsales-segmented-control">
+                    <input type="radio" name="salesModeRadio" id="salesModeTeam" value="legacy" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'legacy' ); ?> />
+                    <label for="salesModeTeam">Team</label>
+                    <input type="radio" name="salesModeRadio" id="salesModeIndividual" value="user" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'user' ); ?> />
+                    <label for="salesModeIndividual">Individual</label>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
+                <strong style="font-size: 14px;">Active Users:</strong>
+                <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
+            </div>
+        </div>
+        -->
+        
+        <!-- OPTION 3: Minimal Badge Style (COMMENT OUT OPTION 1 AND UNCOMMENT TO USE)
+        <div class="subsales-mode-controls subsales-option-3" style="background: #f0f6fc; padding: 12px 15px; border-left: 4px solid #2271b1; margin-bottom: 20px; display: flex; align-items: center; gap: 25px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <strong style="font-size: 13px; color: #1d2327;">Sales Mode:</strong>
+                <div class="subsales-badge-toggle">
+                    <button type="button" class="subsales-badge-btn" data-value="legacy">Team</button>
+                    <button type="button" class="subsales-badge-btn active" data-value="user">Individual</button>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
+                <span style="font-size: 13px; color: #1d2327; font-weight: 500;">Active Users:</span>
+                <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 12px; cursor: pointer; font-weight: 600; min-width: 20px; text-align: center;" title="Click to view app sessions">0</span>
+            </div>
+        </div>
+        -->
         
         <style>
         /* OPTION 1: Compact Inline Toggle Styles */
@@ -6917,6 +7480,65 @@ function order_sync_main_page() {
             color: #2c3338;
         }
         
+        /* OPTION 2: Segmented Control Styles */
+        .subsales-segmented-control {
+            display: inline-flex;
+            background: #f0f0f0;
+            border-radius: 6px;
+            padding: 2px;
+        }
+        .subsales-segmented-control input[type="radio"] {
+            display: none;
+        }
+        .subsales-segmented-control label {
+            padding: 4px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+            color: #50575e;
+            margin: 0;
+        }
+        .subsales-segmented-control input[type="radio"]:checked + label {
+            background: #2271b1;
+            color: #fff;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .subsales-segmented-control label:hover {
+            color: #2271b1;
+        }
+        .subsales-segmented-control input[type="radio"]:checked + label:hover {
+            color: #fff;
+        }
+        
+        /* OPTION 3: Badge Toggle Styles */
+        .subsales-badge-toggle {
+            display: inline-flex;
+            gap: 6px;
+        }
+        .subsales-badge-btn {
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid #c3c4c7;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: #2c3338;
+        }
+        .subsales-badge-btn:hover {
+            border-color: #2271b1;
+            color: #2271b1;
+        }
+        .subsales-badge-btn.active {
+            background: #2271b1;
+            border-color: #2271b1;
+            color: #fff;
+            box-shadow: 0 1px 3px rgba(34, 113, 177, 0.3);
+        }
+        
         /* Common styles */
         .subsales-chip {
             display: inline-block;
@@ -6950,11 +7572,29 @@ function order_sync_main_page() {
         
         <script>
         (function($) {
-            // Toggle switch handler
+            // OPTION 1: Toggle switch handler
             $('#salesModeToggle').on('change', function() {
                 const mode = this.checked ? 'user' : 'legacy';
                 updateSalesMode(mode);
             });
+            
+            // OPTION 2: Segmented control handler
+            $('input[name="salesModeRadio"]').on('change', function() {
+                const mode = this.value;
+                updateSalesMode(mode);
+            });
+            
+            // OPTION 3: Badge toggle handler
+            $('.subsales-badge-btn').on('click', function() {
+                const mode = $(this).data('value');
+                $('.subsales-badge-btn').removeClass('active');
+                $(this).addClass('active');
+                updateSalesMode(mode);
+            });
+            
+            // Initialize option 3 active state
+            const currentMode = <?php echo wp_json_encode( get_option( 'subsales_sales_mode', 'legacy' ) ); ?>;
+            $('.subsales-badge-btn[data-value="' + currentMode + '"]').addClass('active');
             
             // Common update function
             function updateSalesMode(mode) {
@@ -7084,14 +7724,8 @@ function order_sync_main_page() {
                     }
                 }
                 ?>
-                <!-- Row 1: Orders, Teams, Members, Address -->
+                <!-- Row 1: Teams, Members, Orders, Address Data -->
                 <div class="subsales-top-row">
-                    <div class="postbox subsales-box">
-                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
-                        <div class="inside">
-                            <p class="stat-value"><?php echo intval( $order_count ); ?></p>
-                        </div>
-                    </div>
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-groups" aria-hidden="true"></span> Teams</h2></div>
                         <div class="inside">
@@ -7102,6 +7736,12 @@ function order_sync_main_page() {
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-admin-users" aria-hidden="true"></span> Members</h2></div>
                         <div class="inside">
                             <p class="stat-value"><?php echo intval( $member_count ); ?></p>
+                        </div>
+                    </div>
+                    <div class="postbox subsales-box">
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
+                        <div class="inside">
+                            <p class="stat-value"><?php echo intval( $order_count ); ?></p>
                         </div>
                     </div>
                     <?php
@@ -7190,10 +7830,10 @@ function order_sync_main_page() {
                     </div>
                 </div>
                 
-                <!-- Row 2: Sales, Donations, Cash, Checks -->
+                <!-- Row 2: Product Sales, Donations, Cash, Checks -->
                 <div class="subsales-financial-row">
                     <div class="postbox subsales-box">
-                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-chart-line" aria-hidden="true"></span> Sales</h2></div>
+                        <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Product Sales</h2></div>
                         <div class="inside">
                             <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
                         </div>
@@ -8342,6 +8982,24 @@ function order_sync_settings_page() {
 
                     if ( $ps_version ) {
                         echo esc_html( $ps_version );
+                    } else {
+                        echo '<span style="color:red">Missing</span>';
+                    }
+                    ?>
+                </td>
+            </tr>
+            <tr>
+                <th scope="row">DomPDF</th>
+                <td>
+                    <?php
+                    $dompdf_path = plugin_dir_path( __FILE__ ) . 'vendor/dompdf/autoload.inc.php';
+                    if ( file_exists( $dompdf_path ) ) {
+                        echo '<span style="color:green">Installed</span>';
+                        // Try to get version
+                        require_once $dompdf_path;
+                        if ( defined( 'Dompdf\\VERSION' ) ) {
+                            echo ' (v' . esc_html( Dompdf\VERSION ) . ')';
+                        }
                     } else {
                         echo '<span style="color:red">Missing</span>';
                     }
@@ -10475,16 +11133,36 @@ function order_sync_orders_page() {
                 geo: originalData.geo || null
             };
             
-            // Collect products
+            // Collect products - PRESERVE ORIGINAL PRICES from price_snapshot or products array
             const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
+            const originalProducts = originalData.products || [];
+            const priceSnapshot = originalData.price_snapshot || {};
+            
             for (const p of configuredProducts) {
                 const qty = parseInt(form.elements['product_' + p.id].value) || 0;
+                
+                // Price priority: 1) price_snapshot, 2) original product, 3) current config
+                let price = p.price; // Default to current config
+                if (priceSnapshot[p.id] !== undefined) {
+                    price = priceSnapshot[p.id]; // Best: use price snapshot
+                } else {
+                    const originalProduct = originalProducts.find(op => String(op.id) === String(p.id));
+                    if (originalProduct) {
+                        price = originalProduct.price; // Fallback: use original product price
+                    }
+                }
+                
                 data.products.push({
                     id: p.id,
                     name: p.name,
-                    price: p.price,
+                    price: price,
                     qty: qty
                 });
+            }
+            
+            // Preserve price_snapshot for future edits
+            if (Object.keys(priceSnapshot).length > 0) {
+                data.price_snapshot = priceSnapshot;
             }
             
             try {

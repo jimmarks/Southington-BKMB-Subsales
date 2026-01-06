@@ -41,6 +41,12 @@ if ( ! is_array( $configured_zips ) ) {
         : array();
 }
 
+// Check if ZIP boundaries are loaded
+$zip_polygons = get_option( 'subsales_zip_polygons', array() );
+$boundaries_loaded = ! empty( $zip_polygons );
+$loaded_zip_count = count( $zip_polygons );
+$missing_boundaries = array_diff( $configured_zips, array_keys( $zip_polygons ) );
+
 // Get database statistics
 global $wpdb;
 $addresses_table = $wpdb->prefix . 'ss_addresses';
@@ -110,10 +116,60 @@ if ( is_dir( $base ) ) {
                 </div>
             <?php endif; ?>
             
+            <?php if ( ! empty( $configured_zips ) ) : ?>
+                <!-- ZIP Boundaries Status -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #dcdcde;">
+                    <div class="subsales-stat-row">
+                        <span class="subsales-stat-label">ZIP Boundaries</span>
+                        <span class="subsales-stat-value">
+                            <?php if ( $boundaries_loaded ) : ?>
+                                ✓ <?php echo $loaded_zip_count; ?> loaded
+                            <?php else : ?>
+                                ⚠️ Not loaded
+                            <?php endif; ?>
+                        </span>
+                    </div>
+                    
+                    <?php if ( ! empty( $missing_boundaries ) ) : ?>
+                        <div style="margin-top: 8px; padding: 8px; background: #fcf3cd; border-left: 3px solid #f0b849; border-radius: 3px; font-size: 12px;">
+                            <strong>Missing boundaries:</strong> <?php echo implode( ', ', $missing_boundaries ); ?>
+                        </div>
+                    <?php endif; ?>
+                    
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; font-size: 12px; color: #2271b1; font-weight: 600;">
+                            📖 How to get ZIP boundaries
+                        </summary>
+                        <div style="margin-top: 12px; padding: 12px; background: #f6f7f7; border-radius: 4px; font-size: 12px; line-height: 1.6;">
+                            <p style="margin: 0 0 8px 0;"><strong>Why do I need this?</strong></p>
+                            <p style="margin: 0 0 12px 0;">ZIP boundary files allow instant ZIP assignment without API calls. Upload once, use forever.</p>
+                            
+                            <p style="margin: 0 0 8px 0;"><strong>Where to download (FREE):</strong></p>
+                            <ol style="margin: 0 0 12px 0; padding-left: 20px;">
+                                <li>Go to <a href="https://www.census.gov/cgi-bin/geo/shapefiles/index.php" target="_blank">Census TIGER/Line</a></li>
+                                <li>Select year: <strong>2023</strong></li>
+                                <li>Select layer: <strong>ZIP Code Tabulation Areas</strong></li>
+                                <li>Select your state (e.g., <strong>Connecticut</strong>)</li>
+                                <li>Download the ZIP file (~5-50MB)</li>
+                            </ol>
+                            
+                            <p style="margin: 0; padding: 8px; background: #fff3cd; border-left: 2px solid #856404; border-radius: 3px;">
+                                <strong>Note:</strong> This covers ALL ZIPs in your state. The system will automatically extract only the ZIPs you configured above.
+                            </p>
+                        </div>
+                    </details>
+                </div>
+            <?php endif; ?>
+            
             <div class="subsales-card-actions">
                 <button type="button" class="button" onclick="document.getElementById('zip-config-modal').style.display='block'; document.getElementById('zip-modal-overlay').classList.add('open')">
                     ⚙️ Edit ZIP Codes
                 </button>
+                <?php if ( ! empty( $configured_zips ) ) : ?>
+                    <button type="button" class="button button-primary" onclick="document.getElementById('boundaries-upload-modal').style.display='block'; document.getElementById('boundaries-modal-overlay').classList.add('open')" style="margin-top: 8px; width: 100%;">
+                        🗺️ Upload ZIP Boundaries
+                    </button>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -244,6 +300,66 @@ if ( is_dir( $base ) ) {
         <p style="margin-top:20px; text-align:right;">
             <button type="button" class="button" onclick="document.getElementById('zip-config-modal').style.display='none'; document.getElementById('zip-modal-overlay').classList.remove('open')">Cancel</button>
             <button type="submit" class="button button-primary">Save ZIP Codes</button>
+        </p>
+    </form>
+</div>
+
+<!-- ZIP Boundaries Upload Modal -->
+<div id="boundaries-modal-overlay" class="subsales-modal-overlay" onclick="this.classList.remove('open'); document.getElementById('boundaries-upload-modal').style.display='none'"></div>
+<div id="boundaries-upload-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:30px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.15); z-index:100000; max-width:600px; width:90%; max-height:90vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">🗺️ Upload ZIP Code Boundaries</h3>
+    
+    <div style="padding: 15px; background: #e7f3ff; border-left: 4px solid #2271b1; margin-bottom: 20px; border-radius: 3px;">
+        <p style="margin: 0 0 10px 0; font-weight: 600;">Upload Census ZCTA Shapefile</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.6;">
+            This file contains ZIP code boundary polygons for your state. Once uploaded, addresses will be assigned ZIPs instantly without Google API calls.
+        </p>
+    </div>
+    
+    <details open style="margin-bottom: 20px;">
+        <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">
+            📥 Download Instructions
+        </summary>
+        <div style="padding: 15px; border: 1px solid #dcdcde; border-top: none; border-radius: 0 0 4px 4px;">
+            <ol style="margin: 0; padding-left: 20px; line-height: 1.8;">
+                <li>Go to <a href="https://www.census.gov/cgi-bin/geo/shapefiles/index.php" target="_blank" rel="noopener">Census TIGER/Line Shapefiles</a></li>
+                <li>Select <strong>Year</strong>: Choose <strong>2023</strong> (most recent)</li>
+                <li>Select <strong>Layer Type</strong>: Choose <strong>"ZIP Code Tabulation Areas"</strong></li>
+                <li>Select <strong>State</strong>: Choose your state (e.g., Connecticut)</li>
+                <li>Click <strong>Download</strong> to get the ZIP file</li>
+                <li>Upload the downloaded file below</li>
+            </ol>
+            
+            <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-left: 3px solid #856404; border-radius: 3px; font-size: 12px;">
+                <strong>Expected file:</strong> <code>tl_2023_##_zcta520.zip</code> (where ## is your state FIPS code)<br>
+                <strong>Size:</strong> Typically 5-50 MB depending on state<br>
+                <strong>Note:</strong> The system will automatically extract only the <?php echo count( $configured_zips ); ?> ZIP code<?php echo count( $configured_zips ) !== 1 ? 's' : ''; ?> you configured: <?php echo implode( ', ', $configured_zips ); ?>
+            </div>
+        </div>
+    </details>
+    
+    <form id="upload-boundaries-form" enctype="multipart/form-data">
+        <p>
+            <label for="boundaries_file"><strong>Select ZCTA Shapefile:</strong></label><br>
+            <input type="file" name="boundaries_file" id="boundaries_file" accept=".zip" required style="width:100%; margin-top:8px;" />
+        </p>
+        <p class="description" style="font-size: 12px;">
+            Upload the Census ZCTA shapefile ZIP archive. Must contain .shp, .dbf, .shx, and .prj files.
+        </p>
+        
+        <div id="boundaries-upload-progress" style="display:none; margin: 15px 0; padding: 15px; background: #f6f7f7; border-radius: 4px;">
+            <div style="margin-bottom: 10px;">
+                <strong id="boundaries-progress-text">Processing...</strong>
+            </div>
+            <div class="subsales-progress-bar">
+                <div id="boundaries-progress-fill" class="subsales-progress-fill" style="width:0%;"></div>
+            </div>
+            <div id="boundaries-log" style="margin-top: 10px; max-height: 150px; overflow-y: auto; font-family: monospace; font-size: 11px; white-space: pre-wrap; background: #fff; padding: 8px; border: 1px solid #dcdcde; border-radius: 3px;"></div>
+        </div>
+        
+        <p style="margin-top:20px; text-align:right;">
+            <button type="button" class="button" onclick="document.getElementById('boundaries-upload-modal').style.display='none'; document.getElementById('boundaries-modal-overlay').classList.remove('open')">Cancel</button>
+            <button type="submit" id="boundaries-submit-btn" class="button button-primary">Upload and Process</button>
         </p>
     </form>
 </div>

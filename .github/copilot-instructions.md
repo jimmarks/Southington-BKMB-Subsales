@@ -1,201 +1,328 @@
-# GitHub Copilot Instructions
+# Copilot Instructions for Subsales Management Plugin
 
 ## Project Overview
-This is a **PWA that is meant to be served as part of a larger wordpress plugin** with WordPress backend integration for subsales management. The app features team-based authentication, Google Maps integration, and order synchronization with a comprehensive WordPress plugin.
+WordPress plugin for subsales/fundraising order management with embedded PWA for mobile order entry. Multi-team support, address autocomplete, delivery manifests, route optimization, and comprehensive logging.
 
-## Architecture Overview
+**Current Version**: 2.2.1.48  
+**Main File**: `wordpress-plugin/subsales-management.php` (~9,930 lines)  
+**Plugin Slug**: `subsales-management`  
+**Menu Position**: Position 26 (after Comments)
 
-## WordPress Plugin (`wordpress-plugin/`)
-- **Backend**: Full-featured WordPress plugin with professional admin interface and REST API
-- **API Base**: `/wp-json/order-manager/v1/` for orders, auth, and config endpoints
-- **Authentication**: Multi-team system with access codes (not JWT-based)
-- **Database**: Custom tables for orders, teams, and team members
+---
 
-## Key Architectural Patterns
+## Project Structure
 
-### Service Architecture
-Services use basic axios/fetch patterns with error handling:
-```typescript
-// Pattern: Basic service structure in src/services/
-export const functionName = async (params) => {
-    try {
-        const response = await fetch(url, options);
-        const data = await response.json();
-        return data;
-    } catch (error) {
-        console.error('Error description:', error);
-        throw error;
-    }
-};
+### Core Plugin Files
+```
+wordpress-plugin/
+├── subsales-management.php          # Main plugin file (bootstrap, menu, handlers)
+├── includes/                         # Modular class architecture
+│   ├── class-database.php           # DB schema, migrations, CRUD
+│   ├── class-rest-api.php           # REST endpoint registration
+│   ├── class-pwa.php                # PWA serving & config
+│   ├── class-orders.php             # Order business logic
+│   ├── class-teams.php              # Team/user management
+│   ├── class-background-matcher.php # Background Overpass matching
+│   ├── overpass-matcher.php         # Overpass API integration
+│   ├── shapefile-parser.php         # Shapefile address parsing
+│   └── zip-extracts.php             # ZIP data generation
+├── admin/                            # Admin page templates
+│   ├── address-management-dashboard.php
+│   ├── delivery-page.php
+│   ├── settings-page.php
+│   └── zip-extract-admin.php
+├── assets/
+│   ├── css/admin-dashboard.css      # ALL admin styling (no inline CSS!)
+│   └── js/subsales-zip-admin.js     # Admin interactions
+├── pwa/                              # Embedded PWA client
+│   ├── app.js                       # Main PWA logic
+│   ├── address-autocomplete.js      # Address entry with ZIP prefetch
+│   ├── pwa-logger.js                # Client-side debug logging
+│   └── service-worker.js            # Offline support
+└── vendor/                           # Composer dependencies (QR codes, PDF)
 ```
 
-### State Management
-- **Basic Redux**: Simple slice patterns without RTK
-- **Critical**: `package.json` shows Redux but slices use RTK syntax - needs dependency alignment
-- Auth state: `isAuthenticated`, `teamName`, `code` (no token-based auth)
-- Orders state: `orders[]`, `isSyncing` flag
+### Database Tables (Prefix: `wp_ss_`)
+- `wp_ss_orders` - Order records with products, customer info, GPS coords
+- `wp_ss_teams` - Team definitions (name, access code, status)
+- `wp_ss_team_members` - User records (phone REQUIRED/UNIQUE, email optional)
+- `wp_ss_user_teams` - Many-to-many junction (users can be on multiple teams)
+- `wp_ss_order_edit_history` - Audit trail for order changes
+- `wp_ss_subsales_logs` - System-wide logging (auth, orders, API, etc.)
+- `wp_ss_addresses` - GPS-enriched address lookup table
+- `wp_ss_pwa_sessions` - Active PWA session tracking
 
-### Mobile App Structure
-- **Active project**: `mobile-app/` (clean, renamed from `order-manager-mobile-1/`)
-- **Missing dependencies**: Redux Toolkit not in package.json but used in slices
-- **Outdated React Native**: Version 0.64.0 (consider upgrading)
-- **Google Maps**: Uses `react-native-google-places-autocomplete` (needs API key setup)
+---
 
-### API Integration
-- **Base URL**: Configure in `src/services/api/index.ts`
-- **Authentication**: Multiple options:
-  - Bearer tokens for WordPress users
-  - `X-API-Key` header for system authentication
-  - `X-Team-Name` + `X-Access-Code` headers for team authentication (mobile app login)
-  - `X-Team-Email` + `X-Member-Access-Code` headers for individual team member authentication
-- **Offline Support**: Use `AsyncStorage` for local persistence via `wpSyncService`
+## Admin Menu Structure
+
+**Main Menu**: "Subsales" (position 26, dashicons-clipboard)
+
+**Submenus**:
+1. **Settings** (`subsales-settings`) - Configuration, API keys, deletion settings
+2. **Teams** (`subsales-teams`) - Team/user management, CSV import/export
+3. **Orders** (`subsales-orders`) - Order list, edit, delete, history, tally
+4. **Delivery** (`subsales-delivery`) - Delivery manifest generation, PDF export
+5. **Logs** (`subsales-logs`) - System logs with debug mode toggle
+6. **App Sessions** (`subsales-pwa-sessions`) - Active PWA sessions (badge shows count)
+7. **Delivery Manifest** (`subsales-manifest-viewer`) - Hidden page for manifest viewing
+
+### Key Admin Page Rendering Pattern
+Admin pages follow this structure in `subsales-management.php`:
+```php
+function order_sync_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Unauthorized' );
+    }
+    // Include template from admin/
+    include SUBSALES_PLUGIN_PATH . 'admin/settings-page.php';
+}
+```
+
+Templates in `admin/` folder handle HTML rendering. CSS goes in `assets/css/admin-dashboard.css`.
+
+---
+
+## REST API Architecture
+
+**Base URL**: `/wp-json/order-manager/v1/`
+
+**Endpoint Registration**: `includes/class-rest-api.php` (lines 25-180)
+
+### Key Endpoints
+**Orders**:
+- `GET/POST /orders` - List/create orders
+- `GET/PUT/DELETE /orders/{id}` - Get/update/delete single order
+- `GET /orders/{id}/history` - Order edit history
+- `POST /orders/{id}/restore` - Restore soft-deleted order
+- `POST /orders/tally` - Tally operations (bulk updates)
+
+**Authentication**:
+- `POST /auth/login` - Team-based login (phone + name search)
+- `POST /auth/verify` - Verify existing session
+
+**Config**:
+- `GET /config` - PWA configuration (products, API keys, debug mode)
+- `GET /time` - Server time sync
+- `GET /zip-index` - Available ZIP codes for address autocomplete
+
+**Teams & Users**:
+- `GET /teams/members` - List team members
+- `GET/POST /users` - List/create users
+- `GET/PUT/DELETE /users/{id}` - User CRUD
+- `GET /users/search` - Search by phone/name
+- `GET/PUT /users/{id}/teams` - User team assignments
+
+### Authentication Headers (PWA)
+- `X-Team-Name` + `X-Access-Code` - Team-level auth
+- `X-Team-Email` + `X-Member-Access-Code` - Individual user auth
+- Phone is REQUIRED (10 digits), email is OPTIONAL
+
+---
+
+## Modular Class Architecture
+
+### Subsales_Database (`includes/class-database.php`)
+- **Purpose**: Database schema, migrations, team/user CRUD
+- **Key Methods**:
+  - `init()` - Register hooks
+  - `create_tables()` - Schema creation
+  - `migrate_*()` - Schema migrations
+  - `get_active_pwa_sessions()` - Active session tracking
+  - Team/user CRUD operations
+
+### Subsales_REST_API (`includes/class-rest-api.php`)
+- **Purpose**: REST endpoint registration only
+- **Key Methods**:
+  - `init()` - Register hooks
+  - `register_routes()` - Register all REST endpoints
+- **Note**: Actual endpoint handlers live in `subsales-management.php`
+
+### Subsales_PWA (`includes/class-pwa.php`)
+- **Purpose**: PWA serving, config localization
+- **Key Methods**:
+  - `init()` - Register hooks
+  - `register_pwa_scripts()` - Enqueue PWA assets
+  - `pwa_shortcode()` - `[subsales_pwa]` shortcode handler
+  - `get_product_config()` - Product configuration for PWA
+
+### Subsales_Background_Matcher (`includes/class-background-matcher.php`)
+- **Purpose**: WP-Cron based Overpass matching
+- **Key Methods**:
+  - `start()` - Start background job
+  - `stop()` - Pause job
+  - `process_batch()` - Process address batch
+  - `get_status()` - Job progress
+
+---
+
+## Key Features & Workflows
+
+### 1. Delivery Manifest Generation
+**Location**: `subsales-management.php` line ~3525  
+**Function**: `order_sync_generate_combined_manifest_html()`
+
+**Page Capacity** (as of v2.2.1.48):
+- **First delivery page**: 7 stops
+- **Subsequent pages**: 8 stops
+- **Calculation**: `if (stops <= 7) → 1 page, else 1 + ceil((stops - 7) / 8)`
+
+**Manifest Structure**:
+1. Two packing list pages (product summary)
+2. QR code page (one QR per route)
+3. Delivery pages (7/8 stops per page with horizontal product tables)
+
+Each page has footer: "Seller: {name} | Page X of Y | Date: {date}"
+
+### 2. Address Autocomplete System
+**Admin Side**:
+- Overpass API queries generate per-ZIP JSON: `wp-content/uploads/subsales-zipdata/{zip}.json`
+- Background matching via WP-Cron (see `class-background-matcher.php`)
+- Address dashboard: Settings → Address Extracts
+
+**PWA Side** (`pwa/address-autocomplete.js`):
+- Prefetches all served ZIPs on login
+- Autocomplete from local IndexedDB cache
+- Manual mode fallback if address not in database
+- GPS location button for reverse geocoding
+
+### 3. Order Edit/Delete with Audit Trail
+**Features**:
+- Soft delete (sets `deleted=1`, preserves record)
+- Full edit history in `wp_ss_order_edit_history`
+- Field-by-field diff tracking (JSON format)
+- Restore capability for deleted orders
+
+### 4. System Logging
+**Location**: `subsales-management.php` line ~500  
+**Function**: `subsales_log($level, $category, $message, $context)`
+
+**Levels**: DEBUG, INFO, WARNING, ERROR, CRITICAL  
+**Categories**: auth, orders, sync, api, system, zip
+
+**Debug Mode**:
+- Toggle in Settings page
+- Auto-disables after 24 hours
+- Stores all DEBUG logs (normal mode excludes DEBUG)
+- Admin UI shows floating badge when active
+
+---
+
+## Refactoring Status (Current Branch: refactor/extract-admin-pages)
+
+**Goal**: Extract admin page rendering from monolithic `subsales-management.php`
+
+**Completed Extractions**:
+- ✅ Database class (838 lines)
+- ✅ REST API class (177 lines)
+- ✅ PWA class (221 lines)
+- ✅ Orders class (partial)
+- ✅ Teams class (partial)
+- ✅ Admin page templates moved to `admin/` folder
+
+**Remaining**: Continue extracting admin handlers and consolidating business logic into classes.
+
+---
+
+## Critical Coding Standards
+
+### CSS & Styling (MANDATORY)
+- **ALL CSS must live in `assets/css/admin-dashboard.css`**
+- **NEVER use inline styles** except for truly dynamic PHP-computed values
+- **No exceptions** - even quick prototypes must use stylesheet
+- Pattern: (1) Add CSS class to stylesheet, (2) Apply class in HTML, (3) Only inline for dynamic values
+
+### PHP Conventions
+- Follow WordPress coding standards
+- Use `SUBSALES_` constant prefix
+- Escape all output: `esc_html()`, `esc_attr()`, `wp_kses_post()`
+- Sanitize all input: `sanitize_text_field()`, `absint()`, etc.
+- Use nonces for AJAX/form submissions
+
+### Database Queries
+- Use `$wpdb->prepare()` for all queries with user input
+- Table prefix: `wp_ss_` (use `$wpdb->prefix . 'ss_orders'` pattern)
+- Never use `DELETE` - use soft delete (set `deleted=1`)
+
+### REST API
+- All endpoints in `includes/class-rest-api.php::register_routes()`
+- Handlers in `subsales-management.php` (for now, refactoring in progress)
+- Use `permission_callback` for all routes
+- Return `WP_Error` for failures, arrays/objects for success
+
+---
 
 ## Development Workflow
 
-### Environment Setup
+### 1. Making Changes
 ```bash
-# Install dependencies
-npm install
+# Edit files in wordpress-plugin/
+vim wordpress-plugin/subsales-management.php
 
-# iOS development
-npm run ios
-
-# Android development  
-npm run android
-
-# Start Metro bundler
-npm start
-```
-
-### Android Studio Testing (Recommended)
-For the best Android testing experience with Android Studio Narwhal:
-
-1. **Open in Android Studio**: Open `android/` folder in Android Studio
-2. **Sync Project**: Let Gradle sync and download dependencies
-3. **Create AVD**: Tools → AVD Manager → Create Virtual Device (API 30+ recommended)
-4. **Start Metro**: `npm start` in the project root (dev container)
-5. **Run App**: Use Android Studio's Run button or `npm run android`
-
-### Troubleshooting Android Setup
-- **Missing Android files**: If `android/` lacks Gradle files, run `npx react-native init TempProject` and copy Android structure
-- **Google Services**: Ensure `android/app/google-services.json` exists for Maps functionality
-- **Port forwarding**: Use `adb reverse tcp:8081 tcp:8081` if Metro connection fails
-
-### Critical Configuration Files
-- **Environment**: Copy `.env.example` to `.env` (contains WordPress URL - API keys fetched dynamically)
-- **Google Services**: 
-  - Android: `android/app/google-services.json`
-  - iOS: `ios/App/GoogleService-Info.plist`
-- **Dynamic Config**: Google Maps API key fetched from WordPress backend via `/config` endpoint after team authentication
-
-### WordPress Plugin Setup
-1. Upload `wordpress-plugin/bkmb-subsales-management.php` to WordPress `/wp-content/plugins/`
-2. Activate the plugin through the WordPress admin 'Plugins' menu
-3. Navigate to **BKMB Subsales** in the main admin menu (located after Comments)
-4. Configure Google Maps API key in Settings
-# Copilot / Assistant Instructions
-
-Purpose
--------
-Short, actionable instructions for automated code assistants and new contributors working on this repository. The goal is to have clear, repo-specific guidance so edits are safe, consistent, and easy to validate.
-
-Audience & tone
----------------
-- Primary audience: automated assistants and new maintainers.
-- Tone: concise and prescriptive — tell the assistant what to change, where, and how to validate.
-
-Project snapshot (key facts)
----------------------------
-- This repo is a WordPress plugin that ships a small PWA client. The plugin provides an admin UI, a REST/API surface, and a server-side ZIP-based address-extract generator used by the PWA for offline address completion.
-- Canonical address input in the PWA is the plain text field with id `#address` (the client intentionally avoids fragile DOM heuristics).
-- Admin ZIP extract generator (PHP) queries OpenStreetMap's Overpass API and writes per-ZIP JSON files to `wp-content/uploads/subsales-zipdata/<zip>.json`.
-- Packaging script: `scripts/package-plugin.sh` creates a distributable plugin ZIP at the repo root.
-
-Where to look first
--------------------
-- Plugin bootstrap and admin pages: `wordpress-plugin/subsales-management.php` and `wordpress-plugin/includes/`.
-- Admin JS for ZIP generation: `wordpress-plugin/assets/js/subsales-zip-admin.js`.
-- PWA client entrypoint: `wordpress-plugin/pwa/app.js` (uses `#address`).
-- Packaging: `scripts/package-plugin.sh` (builds `subsales-management.zip`).
-
-Quick editing rules
--------------------
-- Never commit secrets (API keys, service account files) — put them in environment variables or secure vaults and document usage in the README.
-- Avoid adding long-running network calls in tests. Overpass queries are allowed from admin actions but not in automated unit tests.
-- Make minimal, focused edits. Preserve existing style and indentation.
-
-Change/PR checklist for assistants
----------------------------------
-Before creating a PR or making a patch, run these checks locally (or in the dev container):
-
-1. Lint/Typecheck
-  - If you modify TypeScript in `mobile-app/`, run tsc (project has `tsconfig.json`).
-
-2. Quick runtime validation (for PHP/admin changes)
-  - If you edit admin pages or the ZIP generator, run the packaging script and then, if possible, test on a local WP install:
-
-```bash
-# create plugin zip
+# Package plugin (auto-increments version)
 bash scripts/package-plugin.sh
 
-# Inspect the zip exists
+# Verify package created
 ls -lh subsales-management.zip
+
+# Upload to WordPress site for testing
 ```
 
-3. Functional smoke tests
-  - For ZIP generator edits: in WP admin, Subsales → Address Extracts, save some test ZIPs and click Generate. Then verify `wp-content/uploads/subsales-zipdata/<zip>.json` exists and is valid JSON.
+### 2. Version Management
+- **Auto-increment**: `scripts/package-plugin.sh` bumps patch version automatically
+- **Manual version**: Edit line 6 in `subsales-management.php`
+- **Format**: Semantic versioning (2.2.1.48)
 
-4. Unit tests
-  - Run `npm test` in `mobile-app/` if you changed client code.
+### 3. Git Workflow
+```bash
+# Branch: refactor/extract-admin-pages
+git add -A
+git commit -m "Brief description of changes"
+git push origin refactor/extract-admin-pages
+```
 
-5. Commit messages / PR title
-  - Use concise titles and reference issues when relevant. Example: "Add Overpass ZIP extract generator and admin UI".
-
-When to ask a human
---------------------
-- If a code change requires secrets or credentials (Google API keys, service account files).
-- If a long-running data import is needed (OpenAddresses ingest) — discuss strategy before implementing.
-- If changes affect DB schema or add new persistent tables.
-
-Quality gates (minimal)
------------------------
-- Build: run `bash scripts/package-plugin.sh` and ensure it completes.
-- Lint/Typecheck: run TypeScript checks for `mobile-app/` when relevant.
-- Tests: run client unit tests with `npm test` when modifying JS/TS code.
-
-Security & network policies
----------------------------
-- Do not hard-code API keys or tokens in the repo.
-- Overpass usage: allowed from admin actions. Be mindful of rate limits and timeouts. Do not call Overpass from CI tests.
-
-Project-specific notes & conventions
-----------------------------------
-- The PWA relies on per-ZIP JSON extracts for offline address completion. The intended flow is:
-  1) Admin saves served ZIPs in Subsales → Address Extracts.
-  2) Admin triggers generation (server calls Overpass and writes `wp-content/uploads/subsales-zipdata/<zip>.json`).
-  3) The PWA lazy-loads those files (client-side caching, IndexedDB) to provide offline suggestions.
-- Canonical address field: `#address` is authoritative. Do not attempt to extract visible suggestion text from third-party widgets in production code — instead provide a controlled autocomplete that writes to `#address`.
-
-**CSS & Styling Standards (CRITICAL)**
-- **ALL CSS must go in stylesheets** - `wordpress-plugin/assets/css/admin-dashboard.css` for admin UI
-- **NEVER use inline styles** in PHP/HTML except for truly dynamic values (conditional colors, calculated positions)
-- **Quick features are NOT exempt** - even rapid prototypes must use proper CSS architecture
-- When adding styles: (1) Add CSS classes to stylesheet, (2) Apply classes in HTML, (3) Only use inline styles for PHP-computed values
-- Breaking this rule creates technical debt, hurts maintainability, and has caused build breaks in the past
-
-Small changelog
----------------
-- 2025-11-08: Updated to reflect the admin ZIP extract generator, Overpass usage, canonical `#address` behavior, and packaging script.
-
-Next recommended improvements (for contributors)
------------------------------------------------
-1. Implement a lightweight client autocomplete module that lazy-loads per-ZIP JSON and caches it in IndexedDB. Keep the module small and testable.
-2. Add a CI job that runs TypeScript checks and the packaging script (without deploying). Exclude Overpass calls.
-3. Add a short integration doc: "How to test the ZIP generator locally" with screenshots or sample logs.
-
-Contact / ownership
--------------------
-If you're unsure about a non-trivial change, tag a human reviewer in the PR. Keep PRs small.
+### 4. Testing Checklist
+After making changes, verify:
+- [ ] Plugin activates without errors
+- [ ] Admin menu loads (Subsales → all submenus)
+- [ ] Orders page displays orders
+- [ ] PWA serves at `/pwa/` endpoint
+- [ ] REST API endpoints respond (`/wp-json/order-manager/v1/config`)
+- [ ] Package script completes successfully
 
 ---
+
+## When to Ask a Human
+
+- Database schema changes (adding columns/tables)
+- Security-sensitive changes (authentication, permissions)
+- Breaking changes to REST API
+- Refactoring across multiple classes
+- Performance concerns (large datasets, N+1 queries)
+
+---
+
+## Quick Reference
+
+### File Locations
+- **Main plugin**: `wordpress-plugin/subsales-management.php`
+- **Admin CSS**: `wordpress-plugin/assets/css/admin-dashboard.css`
+- **PWA entry**: `wordpress-plugin/pwa/app.js`
+- **Package script**: `scripts/package-plugin.sh`
+
+### Common Functions
+- `subsales_log()` - System logging
+- `order_sync_generate_combined_manifest_html()` - Manifest generation
+- `Subsales_Database::get_active_pwa_sessions()` - Session tracking
+- `Subsales_PWA::get_product_config()` - Product config for PWA
+
+### Database Prefixes
+- Tables: `wp_ss_*`
+- Options: `subsales_*`
+- Capabilities: `manage_options` (admin only, no custom caps yet)
+
+---
+
+**Last Updated**: 2025-12-09  
+**Maintainer**: Jim Marks (jim@marksfamilytree.com)
 If you'd like I can now apply this update to `.github/copilot-instructions.md` and run two quick validations: (1) confirm `scripts/package-plugin.sh` exists and is executable, and (2) grep for the admin ZIP generator function name to ensure the file references are correct.
