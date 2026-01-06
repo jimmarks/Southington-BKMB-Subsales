@@ -55,6 +55,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -73,6 +74,9 @@ Subsales_PWA::init();
 
 // Initialize Orders
 Subsales_Orders::init();
+
+// Initialize Admin Pages
+Subsales_Admin_Pages::init();
 
 
 // Activation/Deactivation hooks
