@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.73
+ * Version: 2.2.1.74
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -7277,7 +7277,7 @@ function subsales_pwa_sessions_page() {
                         <option value="">All Teams</option>
                         <?php foreach ( $teams as $team ): ?>
                         <option value="<?php echo intval( $team['id'] ); ?>" <?php selected( $team_filter, intval( $team['id'] ) ); ?>>
-                            <?php echo esc_html( $team['name'] ); ?>
+                            <?php echo esc_html( wp_unslash( $team['name'] ) ); ?>
                         </option>
                         <?php endforeach; ?>
                     </select>
@@ -9791,8 +9791,8 @@ function ss_teams_page() {
                         <tbody>
                             <?php foreach ( $import_preview['teams'] as $team ) : ?>
                                 <tr>
-                                    <td><?php echo esc_html( $team['name'] ); ?></td>
-                                    <td><?php echo esc_html( $team['access_code'] ); ?></td>
+                                    <td><?php echo esc_html( wp_unslash( $team['name'] ) ); ?></td>
+                                    <td><?php echo esc_html( wp_unslash( $team['access_code'] ) ); ?></td>
                                     <td><?php echo esc_html( $team['status'] ); ?></td>
                                 </tr>
                             <?php endforeach; ?>
@@ -9813,7 +9813,7 @@ function ss_teams_page() {
                         <tbody>
                             <?php foreach ( $import_preview['users'] as $user ) : ?>
                                 <tr>
-                                    <td><?php echo esc_html( $user['name'] ); ?></td>
+                                    <td><?php echo esc_html( wp_unslash( $user['name'] ) ); ?></td>
                                     <td><?php echo esc_html( $user['phone'] ); ?></td>
                                     <td><?php echo esc_html( $user['email'] ); ?></td>
                                     <td><?php echo esc_html( $user['status'] ); ?></td>
@@ -9914,10 +9914,10 @@ function ss_teams_page() {
                         <?php $is_active = ( $user['status'] ?? 'active' ) === 'active'; ?>
                         <tr style="background-color: <?php echo $is_active ? '#e8f5e9' : '#f5f5f5'; ?>;<?php echo $is_active ? '' : ' opacity: 0.7;'; ?>">
                             <td>
-                                <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                <strong><?php echo esc_html( wp_unslash( $user['name'] ) ); ?></strong><br>
                                 <span style="color: #666; font-size: 13px;">📞 <?php echo esc_html( $user['phone'] ?? 'No phone' ); ?></span>
                             </td>
-                            <td><?php echo esc_html( $user['email'] ?: '—' ); ?></td>
+                            <td><?php echo esc_html( wp_unslash( $user['email'] ?: '—' ) ); ?></td>
                             <td><?php echo esc_html( ucfirst( $user['role'] ) ); ?></td>
                             <td>
                                 <a href="?page=subsales-teams&tab=users&edit_user=<?php echo intval( $user['id'] ); ?>" class="button button-small">Edit</a>
@@ -10057,7 +10057,7 @@ function ss_teams_page() {
                             ?>
                                 <div class="user-card draggable" draggable="true" data-user-id="<?php echo intval( $user['id'] ); ?>" 
                                      style="background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; margin-bottom: 8px; cursor: move;">
-                                    <strong><?php echo esc_html( $user['name'] ); ?></strong><br>
+                                    <strong><?php echo esc_html( wp_unslash( $user['name'] ) ); ?></strong><br>
                                     <small style="color: #666;"><?php echo esc_html( $user['email'] ?: 'No email' ); ?></small>
                                     <?php if ( ! empty( $user['phone'] ) ) : ?>
                                         <br><small style="color: #666;">📞 <?php echo esc_html( $user['phone'] ); ?></small>
@@ -10085,12 +10085,12 @@ function ss_teams_page() {
                                          style="margin-bottom: 20px; border: 2px solid #ccc; border-radius: 6px;<?php echo $team_is_active ? '' : ' opacity: 0.6;'; ?>">
                                         <div class="postbox-header" style="background: <?php echo $team_is_active ? '#e8f5e9' : '#f5f5f5'; ?>; padding: 12px 15px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
                                             <h3 style="margin: 0;">
-                                                <?php echo esc_html( $team['name'] ); ?>
+                                                <?php echo esc_html( wp_unslash( $team['name'] ) ); ?>
                                                 <?php if ( ! $team_is_active ) : ?>
                                                     <span style="font-size: 12px; color: #999; font-weight: normal;">(Inactive)</span>
                                                 <?php endif; ?>
                                                 <span style="font-weight: normal; color: #666; font-size: 14px;">
-                                                    (Code: <?php echo esc_html( $team['access_code'] ); ?>)
+                                                    (Code: <?php echo esc_html( wp_unslash( $team['access_code'] ) ); ?>)
                                                 </span>
                                             </h3>
                                             <div>
