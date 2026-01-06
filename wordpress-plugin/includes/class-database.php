@@ -218,6 +218,42 @@ class Subsales_Database {
             KEY idx_coordinates (lat, lng)
         ) $charset_collate;";
         
+        // Campaign Dates table for managing selling dates
+        $campaigns_table_name = $wpdb->prefix . 'ss_campaigns';
+        $campaigns_sql = "CREATE TABLE $campaigns_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            campaign_date date NOT NULL,
+            campaign_name varchar(255) DEFAULT '',
+            notes text,
+            status enum('active','inactive','completed') NOT NULL DEFAULT 'active',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY campaign_date (campaign_date),
+            KEY status (status)
+        ) $charset_collate;";
+        
+        // Team Signups table for date-based team registration
+        $signups_table_name = $wpdb->prefix . 'ss_signups';
+        $signups_sql = "CREATE TABLE $signups_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            user_id bigint(20) unsigned NOT NULL,
+            team_id bigint(20) unsigned NOT NULL,
+            campaign_id bigint(20) unsigned NOT NULL,
+            is_driver tinyint(1) DEFAULT 0,
+            notes text,
+            status enum('active','cancelled') NOT NULL DEFAULT 'active',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY user_team_campaign (user_id, team_id, campaign_id),
+            KEY user_id (user_id),
+            KEY team_id (team_id),
+            KEY campaign_id (campaign_id),
+            KEY is_driver (is_driver),
+            KEY status (status)
+        ) $charset_collate;";
+        
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql );
         dbDelta( $teams_sql );
@@ -228,6 +264,8 @@ class Subsales_Database {
         dbDelta( $pwa_sessions_sql );
         dbDelta( $pwa_heartbeats_sql );
         dbDelta( $addresses_sql );
+        dbDelta( $campaigns_sql );
+        dbDelta( $signups_sql );
         
         // Run schema migrations
         self::migrate_phone_column( $team_members_table_name );
@@ -1353,4 +1391,396 @@ class Subsales_Database {
         
         return sanitize_text_field( $ip );
     }
+    
+    // ========================================
+    // Campaign Management Methods
+    // ========================================
+    
+    /**
+     * Get all campaigns
+     * 
+     * @param string $status Filter by status (active, inactive, completed, or 'all')
+     * @return array Campaign records
+     */
+    public static function get_campaigns( $status = 'all' ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        $where = '1=1';
+        if ( $status !== 'all' ) {
+            $where = $wpdb->prepare( 'status = %s', $status );
+        }
+        
+        $campaigns = $wpdb->get_results(
+            "SELECT * FROM {$table_name} WHERE {$where} ORDER BY campaign_date ASC",
+            ARRAY_A
+        );
+        
+        return $campaigns ? $campaigns : array();
+    }
+    
+    /**
+     * Get campaign by ID
+     * 
+     * @param int $campaign_id Campaign ID
+     * @return array|null Campaign record
+     */
+    public static function get_campaign( $campaign_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        $campaign = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$table_name} WHERE id = %d",
+            $campaign_id
+        ), ARRAY_A );
+        
+        return $campaign;
+    }
+    
+    /**
+     * Get campaign by date
+     * 
+     * @param string $date Date in Y-m-d format
+     * @return array|null Campaign record
+     */
+    public static function get_campaign_by_date( $date ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        $campaign = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$table_name} WHERE campaign_date = %s",
+            $date
+        ), ARRAY_A );
+        
+        return $campaign;
+    }
+    
+    /**
+     * Create or update campaign
+     * 
+     * @param array $data Campaign data (id, campaign_date, campaign_name, notes, status)
+     * @return int|false Campaign ID on success, false on failure
+     */
+    public static function save_campaign( $data ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        $campaign_data = array(
+            'campaign_date' => $data['campaign_date'],
+            'campaign_name' => isset( $data['campaign_name'] ) ? $data['campaign_name'] : '',
+            'notes' => isset( $data['notes'] ) ? $data['notes'] : '',
+            'status' => isset( $data['status'] ) ? $data['status'] : 'active',
+        );
+        
+        if ( isset( $data['id'] ) && $data['id'] > 0 ) {
+            // Update existing campaign
+            $result = $wpdb->update(
+                $table_name,
+                $campaign_data,
+                array( 'id' => $data['id'] ),
+                array( '%s', '%s', '%s', '%s' ),
+                array( '%d' )
+            );
+            
+            return $result !== false ? $data['id'] : false;
+        } else {
+            // Create new campaign
+            $result = $wpdb->insert( $table_name, $campaign_data, array( '%s', '%s', '%s', '%s' ) );
+            return $result ? $wpdb->insert_id : false;
+        }
+    }
+    
+    /**
+     * Delete campaign
+     * 
+     * @param int $campaign_id Campaign ID
+     * @return bool Success
+     */
+    public static function delete_campaign( $campaign_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        // Check if campaign has signups
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $signup_count = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$signups_table} WHERE campaign_id = %d",
+            $campaign_id
+        ) );
+        
+        if ( $signup_count > 0 ) {
+            return false; // Cannot delete campaign with signups
+        }
+        
+        $result = $wpdb->delete( $table_name, array( 'id' => $campaign_id ), array( '%d' ) );
+        return $result !== false;
+    }
+    
+    /**
+     * Toggle campaign status
+     * 
+     * @param int $campaign_id Campaign ID
+     * @param string $new_status New status (active, inactive, completed)
+     * @return bool Success
+     */
+    public static function toggle_campaign_status( $campaign_id, $new_status ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_campaigns';
+        
+        $result = $wpdb->update(
+            $table_name,
+            array( 'status' => $new_status ),
+            array( 'id' => $campaign_id ),
+            array( '%s' ),
+            array( '%d' )
+        );
+        
+        return $result !== false;
+    }
+    
+    // ========================================
+    // Signup Management Methods
+    // ========================================
+    
+    /**
+     * Get signups with optional filters
+     * 
+     * @param array $filters Filter options (user_id, team_id, campaign_id, status)
+     * @return array Signup records with related data
+     */
+    public static function get_signups( $filters = array() ) {
+        global $wpdb;
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $users_table = $wpdb->prefix . 'ss_team_members';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
+        
+        $where = array( '1=1' );
+        
+        if ( ! empty( $filters['user_id'] ) ) {
+            $where[] = $wpdb->prepare( 's.user_id = %d', $filters['user_id'] );
+        }
+        
+        if ( ! empty( $filters['team_id'] ) ) {
+            $where[] = $wpdb->prepare( 's.team_id = %d', $filters['team_id'] );
+        }
+        
+        if ( ! empty( $filters['campaign_id'] ) ) {
+            $where[] = $wpdb->prepare( 's.campaign_id = %d', $filters['campaign_id'] );
+        }
+        
+        if ( ! empty( $filters['status'] ) ) {
+            $where[] = $wpdb->prepare( 's.status = %s', $filters['status'] );
+        }
+        
+        $where_sql = implode( ' AND ', $where );
+        
+        $signups = $wpdb->get_results(
+            "SELECT s.*, 
+                    u.name as user_name, u.phone as user_phone, u.email as user_email,
+                    t.name as team_name, t.access_code as team_code,
+                    c.campaign_date, c.campaign_name
+             FROM {$signups_table} s
+             LEFT JOIN {$users_table} u ON s.user_id = u.id
+             LEFT JOIN {$teams_table} t ON s.team_id = t.id
+             LEFT JOIN {$campaigns_table} c ON s.campaign_id = c.id
+             WHERE {$where_sql}
+             ORDER BY c.campaign_date ASC, t.name ASC, u.name ASC",
+            ARRAY_A
+        );
+        
+        return $signups ? $signups : array();
+    }
+    
+    /**
+     * Get signup by ID
+     * 
+     * @param int $signup_id Signup ID
+     * @return array|null Signup record
+     */
+    public static function get_signup( $signup_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_signups';
+        
+        $signup = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$table_name} WHERE id = %d",
+            $signup_id
+        ), ARRAY_A );
+        
+        return $signup;
+    }
+    
+    /**
+     * Create or update signup
+     * 
+     * @param array $data Signup data (user_id, team_id, campaign_id, is_driver, notes, status)
+     * @return int|false Signup ID on success, false on failure
+     */
+    public static function save_signup( $data ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_signups';
+        
+        // Check if user is already signed up for this team+date
+        $existing = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id FROM {$table_name} 
+             WHERE user_id = %d AND team_id = %d AND campaign_id = %d",
+            $data['user_id'],
+            $data['team_id'],
+            $data['campaign_id']
+        ), ARRAY_A );
+        
+        $signup_data = array(
+            'user_id' => $data['user_id'],
+            'team_id' => $data['team_id'],
+            'campaign_id' => $data['campaign_id'],
+            'is_driver' => isset( $data['is_driver'] ) ? $data['is_driver'] : 0,
+            'notes' => isset( $data['notes'] ) ? $data['notes'] : '',
+            'status' => isset( $data['status'] ) ? $data['status'] : 'active',
+        );
+        
+        if ( $existing ) {
+            // Update existing signup
+            $result = $wpdb->update(
+                $table_name,
+                $signup_data,
+                array( 'id' => $existing['id'] ),
+                array( '%d', '%d', '%d', '%d', '%s', '%s' ),
+                array( '%d' )
+            );
+            
+            return $result !== false ? $existing['id'] : false;
+        } else {
+            // Create new signup
+            $result = $wpdb->insert( $table_name, $signup_data, array( '%d', '%d', '%d', '%d', '%s', '%s' ) );
+            return $result ? $wpdb->insert_id : false;
+        }
+    }
+    
+    /**
+     * Delete signup
+     * 
+     * @param int $signup_id Signup ID
+     * @return bool Success
+     */
+    public static function delete_signup( $signup_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_signups';
+        
+        $result = $wpdb->delete( $table_name, array( 'id' => $signup_id ), array( '%d' ) );
+        return $result !== false;
+    }
+    
+    /**
+     * Set driver for a team+campaign
+     * Ensures only one driver per team+campaign by clearing others
+     * 
+     * @param int $user_id User ID to set as driver
+     * @param int $team_id Team ID
+     * @param int $campaign_id Campaign ID
+     * @return bool Success
+     */
+    public static function set_driver( $user_id, $team_id, $campaign_id ) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_signups';
+        
+        // Start transaction
+        $wpdb->query( 'START TRANSACTION' );
+        
+        // Clear any existing driver for this team+campaign
+        $wpdb->update(
+            $table_name,
+            array( 'is_driver' => 0 ),
+            array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
+            array( '%d' ),
+            array( '%d', '%d' )
+        );
+        
+        // Set new driver
+        $result = $wpdb->update(
+            $table_name,
+            array( 'is_driver' => 1 ),
+            array( 'user_id' => $user_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
+            array( '%d' ),
+            array( '%d', '%d', '%d' )
+        );
+        
+        if ( $result !== false ) {
+            $wpdb->query( 'COMMIT' );
+            return true;
+        } else {
+            $wpdb->query( 'ROLLBACK' );
+            return false;
+        }
+    }
+    
+    /**
+     * Get signups grouped by team and campaign
+     * Useful for displaying rosters
+     * 
+     * @param int $campaign_id Campaign ID
+     * @return array Grouped signups
+     */
+    public static function get_signups_by_team_campaign( $campaign_id = null ) {
+        global $wpdb;
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $users_table = $wpdb->prefix . 'ss_team_members';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
+        
+        $where = 's.status = "active"';
+        if ( $campaign_id ) {
+            $where .= $wpdb->prepare( ' AND s.campaign_id = %d', $campaign_id );
+        }
+        
+        $signups = $wpdb->get_results(
+            "SELECT s.*, 
+                    u.name as user_name, u.phone as user_phone,
+                    t.name as team_name,
+                    c.campaign_date, c.campaign_name
+             FROM {$signups_table} s
+             LEFT JOIN {$users_table} u ON s.user_id = u.id
+             LEFT JOIN {$teams_table} t ON s.team_id = t.id
+             LEFT JOIN {$campaigns_table} c ON s.campaign_id = c.id
+             WHERE {$where}
+             ORDER BY c.campaign_date ASC, t.name ASC, s.is_driver DESC, u.name ASC",
+            ARRAY_A
+        );
+        
+        // Group by campaign and team
+        $grouped = array();
+        foreach ( $signups as $signup ) {
+            $date = $signup['campaign_date'];
+            $team = $signup['team_name'];
+            
+            if ( ! isset( $grouped[$date] ) ) {
+                $grouped[$date] = array();
+            }
+            
+            if ( ! isset( $grouped[$date][$team] ) ) {
+                $grouped[$date][$team] = array(
+                    'team_id' => $signup['team_id'],
+                    'campaign_id' => $signup['campaign_id'],
+                    'campaign_name' => $signup['campaign_name'],
+                    'members' => array(),
+                    'driver' => null,
+                );
+            }
+            
+            if ( $signup['is_driver'] ) {
+                $grouped[$date][$team]['driver'] = array(
+                    'id' => $signup['user_id'],
+                    'name' => $signup['user_name'],
+                    'phone' => $signup['user_phone'],
+                );
+            } else {
+                $grouped[$date][$team]['members'][] = array(
+                    'id' => $signup['user_id'],
+                    'name' => $signup['user_name'],
+                    'phone' => $signup['user_phone'],
+                );
+            }
+        }
+        
+        return $grouped;
+    }
 }
+
