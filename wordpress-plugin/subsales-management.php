@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.69
+ * Version: 2.2.1.72
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -9188,17 +9188,17 @@ function subsales_export_users_teams() {
     // ===== USERS SECTION =====
     fwrite( $output, "# ===== USERS SECTION =====\n" );
     fwrite( $output, "# Assign users to teams\n" );
-    fwrite( $output, "# Format: name, phone, email, status, teams\n" );
+    fwrite( $output, "# Format: name, phone, email, status, team1, team2, ...\n" );
     fwrite( $output, "# - phone: Must be exactly 10 digits\n" );
     fwrite( $output, "# - email: Can be blank to remove email\n" );
     fwrite( $output, "# - status: 'active' or 'inactive'\n" );
-    fwrite( $output, "# - teams: Comma-separated team names (must match teams defined above)\n" );
+    fwrite( $output, "# - teams: Each team in a separate column (quoted if team name contains commas)\n" );
     
     if ( $export_type === 'template' ) {
         // Template with example data
-        fwrite( $output, "# Example: John Doe, 2035551234, john@example.com, active, \"Team Alpha, Team Beta\"\n" );
+        fwrite( $output, "# Example: John Doe, 2035551234, john@example.com, active, \"Team Alpha\", \"Team Beta\"\n" );
         fputcsv( $output, array( 'name', 'phone', 'email', 'status', 'teams' ) );
-        fputcsv( $output, array( 'John Doe', '2035551234', 'john@example.com', 'active', 'Team Alpha, Team Beta' ) );
+        fputcsv( $output, array( 'John Doe', '2035551234', 'john@example.com', 'active', 'Team Alpha', 'Team Beta' ) );
         fputcsv( $output, array( 'Jane Smith', '2035555678', 'jane@example.com', 'active', 'Team Alpha' ) );
         fputcsv( $output, array( 'Bob Johnson', '2035559999', '', 'inactive', 'Team Beta' ) );
     } else {
@@ -9219,15 +9219,20 @@ function subsales_export_users_teams() {
             ), ARRAY_A );
             
             $team_names = array_map( function( $t ) { return $t['name']; }, $user_teams );
-            $teams_string = implode( ', ', $team_names );
             
-            fputcsv( $output, array(
+            // Build row: name, phone, email, status, then each team as a separate column
+            $row = array(
                 $user['name'],
                 $user['phone'],
                 $user['email'] ?? '',
-                $user['status'] ?? 'active',
-                $teams_string
-            ) );
+                $user['status'] ?? 'active'
+            );
+            // Add each team as a separate column (fputcsv will quote if needed)
+            foreach ( $team_names as $team ) {
+                $row[] = $team;
+            }
+            
+            fputcsv( $output, $row );
         }
     }
     
@@ -9287,16 +9292,21 @@ function subsales_process_import_preview( $file ) {
             continue;
         }
         
-        // Process team rows
-        if ( $section === 'teams' && $teams_header_found ) {
+        // Process team rows (header is optional for teams section)
+        if ( $section === 'teams' ) {
             if ( count( $row ) < 3 ) {
                 $errors[] = "Line {$line_num}: Invalid team format (need: team_name, access_code, status)";
                 continue;
             }
             
-            $team_name = trim( $row[0] );
-            $access_code = trim( $row[1] );
-            $status = trim( strtolower( $row[2] ) );
+            // Smart parsing: status is last, access_code is second-to-last, everything else is team name
+            // This handles team names with commas like "Me, Dom, and JJ"
+            $status = trim( strtolower( $row[ count( $row ) - 1 ] ) );
+            $access_code = trim( $row[ count( $row ) - 2 ] );
+            
+            // Team name is everything from start up to (but not including) the last 2 fields
+            $team_name_parts = array_slice( $row, 0, count( $row ) - 2 );
+            $team_name = trim( implode( ',', $team_name_parts ) );
             
             if ( empty( $team_name ) ) {
                 $errors[] = "Line {$line_num}: Team name is required";
@@ -9318,8 +9328,8 @@ function subsales_process_import_preview( $file ) {
             );
         }
         
-        // Process user rows
-        if ( $section === 'users' && $users_header_found ) {
+        // Process user rows (header is optional for users section)
+        if ( $section === 'users' ) {
             if ( count( $row ) < 5 ) {
                 $errors[] = "Line {$line_num}: Invalid user format (need: name, phone, email, status, teams)";
                 continue;
@@ -9363,11 +9373,17 @@ function subsales_process_import_preview( $file ) {
                 continue;
             }
             
-            // Parse teams
+            // Parse teams - collect all columns from index 4 onwards
+            // Each non-empty column is a team name (supports quoted team names with commas)
             $team_list = array();
-            if ( ! empty( $user_teams ) ) {
-                $team_list = array_map( 'trim', explode( ',', $user_teams ) );
-                
+            for ( $i = 4; $i < count( $row ); $i++ ) {
+                $team_name = trim( $row[$i] );
+                if ( ! empty( $team_name ) ) {
+                    $team_list[] = $team_name;
+                }
+            }
+            
+            if ( ! empty( $team_list ) ) {
                 // Validate that all teams exist in the teams section
                 // Compare sanitized names to match how they'll be stored
                 foreach ( $team_list as $team_name ) {
@@ -9381,7 +9397,11 @@ function subsales_process_import_preview( $file ) {
                         }
                     }
                     if ( ! $team_exists ) {
-                        $errors[] = "Line {$line_num}: Team '{$team_name}' not found in TEAMS section for user '{$name}'";
+                        // Enhanced debug output
+                        $available_teams = array_map( function( $t ) { 
+                            return subsales_sanitize_team_name( $t['name'] ); 
+                        }, $teams );
+                        $errors[] = "Line {$line_num}: Team '{$team_name}' (sanitized: '{$sanitized_user_team}') not found for user '{$name}'. Available teams: " . implode( ', ', array_map( function($t) { return "'{$t}'"; }, $available_teams ) );
                     }
                 }
             }
