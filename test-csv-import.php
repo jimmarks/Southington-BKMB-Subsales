@@ -85,6 +85,18 @@ function test_import_preview( $file_path ) {
         
         // Process team rows (header is optional for teams section)
         if ( $section === 'teams' ) {
+            // Remove trailing empty fields from CSV (from trailing commas)
+            $row = array_filter( $row, function( $val, $idx ) use ( $row ) {
+                // Keep all non-empty fields
+                if ( trim( $val ) !== '' ) return true;
+                // Keep empty fields if they're not at the end
+                for ( $i = $idx + 1; $i < count( $row ); $i++ ) {
+                    if ( trim( $row[$i] ) !== '' ) return true;
+                }
+                return false;
+            }, ARRAY_FILTER_USE_BOTH );
+            $row = array_values( $row ); // Re-index
+            
             if ( count( $row ) < 3 ) {
                 $errors[] = "Line {$line_num}: Invalid team format (need: team_name, access_code, status)";
                 continue;

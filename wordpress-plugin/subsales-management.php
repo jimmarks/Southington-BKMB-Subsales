@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.72
+ * Version: 2.2.1.73
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -3199,18 +3199,15 @@ function order_sync_verify_team_member( $email, $team_id ) {
 // ============================================================
 
 /**
- * Sanitize team name - allows letters, numbers, spaces, and common punctuation
+ * Sanitize team name - allows all printable characters from keyboard
  * 
  * @param string $name Team name
  * @return string Sanitized team name
  */
 function subsales_sanitize_team_name( $name ) {
-    // First do basic WordPress text sanitization
+    // Use WordPress sanitize_text_field which removes line breaks and control chars
+    // but preserves all printable characters including special symbols
     $name = sanitize_text_field( $name );
-    
-    // Allow only: letters (any language), numbers, spaces, dash, underscore, apostrophe, period, comma, ampersand, parentheses
-    // Remove all other special characters that could cause issues
-    $name = preg_replace( '/[^\p{L}\p{N}\s\-_\'.,&()]/u', '', $name );
     
     // Collapse multiple spaces to single space
     $name = preg_replace( '/\s+/', ' ', $name );
@@ -3235,17 +3232,15 @@ function subsales_sanitize_team_code( $code ) {
 }
 
 /**
- * Sanitize user/member name - allows letters, numbers, spaces, and common name punctuation
+ * Sanitize user/member name - allows all printable characters from keyboard
  * 
  * @param string $name User name
  * @return string Sanitized user name
  */
 function subsales_sanitize_user_name( $name ) {
-    // First do basic WordPress text sanitization
+    // Use WordPress sanitize_text_field which removes line breaks and control chars
+    // but preserves all printable characters including special symbols
     $name = sanitize_text_field( $name );
-    
-    // Allow only: letters (any language), numbers, spaces, dash, apostrophe, period
-    $name = preg_replace( '/[^\p{L}\p{N}\s\-\'.]/u', '', $name );
     
     // Collapse multiple spaces to single space
     $name = preg_replace( '/\s+/', ' ', $name );
@@ -9294,6 +9289,18 @@ function subsales_process_import_preview( $file ) {
         
         // Process team rows (header is optional for teams section)
         if ( $section === 'teams' ) {
+            // Remove trailing empty fields from CSV (from trailing commas)
+            $row = array_filter( $row, function( $val, $idx ) use ( $row ) {
+                // Keep all non-empty fields
+                if ( trim( $val ) !== '' ) return true;
+                // Keep empty fields if they're not at the end
+                for ( $i = $idx + 1; $i < count( $row ); $i++ ) {
+                    if ( trim( $row[$i] ) !== '' ) return true;
+                }
+                return false;
+            }, ARRAY_FILTER_USE_BOTH );
+            $row = array_values( $row ); // Re-index
+            
             if ( count( $row ) < 3 ) {
                 $errors[] = "Line {$line_num}: Invalid team format (need: team_name, access_code, status)";
                 continue;
