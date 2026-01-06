@@ -55,8 +55,8 @@ class Subsales_Teams {
                 ), 400 );
             }
             
-            $team_name = sanitize_text_field( $data['team_name'] );
-            $access_code = sanitize_text_field( $data['access_code'] );
+            $team_name = subsales_sanitize_team_name( $data['team_name'] );
+            $access_code = subsales_sanitize_team_code( $data['access_code'] );
             
             $team = Subsales_Database::get_team_by_credentials( $team_name, $access_code );
             
@@ -100,7 +100,7 @@ class Subsales_Teams {
                 ), 400 );
             }
             
-            $name = sanitize_text_field( $data['name'] );
+            $name = subsales_sanitize_user_name( $data['name'] );
             $phone = preg_replace( '/[^0-9]/', '', sanitize_text_field( $data['phone'] ) );
             $team_id = isset( $data['team_id'] ) ? intval( $data['team_id'] ) : 0;
             
@@ -319,7 +319,7 @@ class Subsales_Teams {
         $members_table = $wpdb->prefix . 'ss_team_members';
         
         $params = $request->get_json_params();
-        $name = sanitize_text_field( $params['name'] ?? '' );
+        $name = subsales_sanitize_user_name( $params['name'] ?? '' );
         $email = sanitize_email( $params['email'] ?? '' );
         $phone = sanitize_text_field( $params['phone'] ?? '' );
         $role = sanitize_text_field( $params['role'] ?? 'member' );
@@ -514,7 +514,7 @@ class Subsales_Teams {
         $formats = array();
         
         if ( isset( $params['name'] ) ) {
-            $name = sanitize_text_field( $params['name'] );
+            $name = subsales_sanitize_user_name( $params['name'] );
             if ( empty( $name ) ) {
                 return new WP_REST_Response( array( 'error' => 'Name cannot be empty' ), 400 );
             }

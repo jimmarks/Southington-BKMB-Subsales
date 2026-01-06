@@ -3195,6 +3195,73 @@ function order_sync_verify_team_member( $email, $team_id ) {
 
 
 // ============================================================
+// SANITIZATION FUNCTIONS
+// ============================================================
+
+/**
+ * Sanitize team name - allows letters, numbers, spaces, and common punctuation
+ * 
+ * @param string $name Team name
+ * @return string Sanitized team name
+ */
+function subsales_sanitize_team_name( $name ) {
+    // First do basic WordPress text sanitization
+    $name = sanitize_text_field( $name );
+    
+    // Allow only: letters (any language), numbers, spaces, dash, underscore, apostrophe, period, comma, ampersand, parentheses
+    // Remove all other special characters that could cause issues
+    $name = preg_replace( '/[^\p{L}\p{N}\s\-_\'.,&()]/u', '', $name );
+    
+    // Collapse multiple spaces to single space
+    $name = preg_replace( '/\s+/', ' ', $name );
+    
+    // Trim whitespace
+    $name = trim( $name );
+    
+    return $name;
+}
+
+/**
+ * Sanitize team access code - alphanumeric only (letters and numbers)
+ * 
+ * @param string $code Access code
+ * @return string Sanitized access code (alphanumeric only)
+ */
+function subsales_sanitize_team_code( $code ) {
+    // Remove all non-alphanumeric characters
+    $code = preg_replace( '/[^a-zA-Z0-9]/', '', $code );
+    
+    return $code;
+}
+
+/**
+ * Sanitize user/member name - allows letters, numbers, spaces, and common name punctuation
+ * 
+ * @param string $name User name
+ * @return string Sanitized user name
+ */
+function subsales_sanitize_user_name( $name ) {
+    // First do basic WordPress text sanitization
+    $name = sanitize_text_field( $name );
+    
+    // Allow only: letters (any language), numbers, spaces, dash, apostrophe, period
+    $name = preg_replace( '/[^\p{L}\p{N}\s\-\'.]/u', '', $name );
+    
+    // Collapse multiple spaces to single space
+    $name = preg_replace( '/\s+/', ' ', $name );
+    
+    // Trim whitespace
+    $name = trim( $name );
+    
+    return $name;
+}
+
+// ============================================================
+// End of Sanitization Functions
+// ============================================================
+
+
+// ============================================================
 // REST API ROUTES
 // Routes now registered via Subsales_REST_API class
 // Handler functions remain below for compatibility
@@ -3546,8 +3613,8 @@ function order_sync_run_init_ajax() {
     $product_vis = isset( $_POST['product_visible'] ) ? (array) $_POST['product_visible'] : array();
 
     // team
-    $team_name = isset( $_POST['team_name'] ) ? sanitize_text_field( $_POST['team_name'] ) : '';
-    $team_code = isset( $_POST['team_code'] ) ? sanitize_text_field( $_POST['team_code'] ) : '';
+    $team_name = isset( $_POST['team_name'] ) ? subsales_sanitize_team_name( $_POST['team_name'] ) : '';
+    $team_code = isset( $_POST['team_code'] ) ? subsales_sanitize_team_code( $_POST['team_code'] ) : '';
 
     // Create DB tables
     try {
@@ -3602,7 +3669,7 @@ function order_sync_run_init_ajax() {
     }
 
     // Create user if requested and assign to team
-    $user_name = isset( $_POST['user_name'] ) ? sanitize_text_field( $_POST['user_name'] ) : '';
+    $user_name = isset( $_POST['user_name'] ) ? subsales_sanitize_user_name( $_POST['user_name'] ) : '';
     $user_phone = isset( $_POST['user_phone'] ) ? sanitize_text_field( $_POST['user_phone'] ) : '';
     $user_email = isset( $_POST['user_email'] ) ? sanitize_email( $_POST['user_email'] ) : '';
     
@@ -9366,8 +9433,8 @@ function subsales_process_import_confirm( $import_data ) {
             $wpdb->insert(
                 $teams_table,
                 array(
-                    'name' => $team['name'],
-                    'access_code' => $team['access_code'],
+                    'name' => subsales_sanitize_team_name( $team['name'] ),
+                    'access_code' => subsales_sanitize_team_code( $team['access_code'] ),
                     'status' => $team['status']
                 ),
                 array( '%s', '%s', '%s' )
@@ -9382,7 +9449,7 @@ function subsales_process_import_confirm( $import_data ) {
                 $members_table,
                 array(
                     'team_id' => 0, // Legacy field, not used in multi-team system
-                    'name' => $user['name'],
+                    'name' => subsales_sanitize_user_name( $user['name'] ),
                     'phone' => $user['phone'],
                     'email' => $user['email'],
                     'role' => 'member',
@@ -9469,7 +9536,7 @@ function ss_teams_page() {
     // Handle user/member creation
     if ( isset( $_POST['add_user'] ) ) {
         check_admin_referer( 'order_sync_add_user' );
-        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $name = subsales_sanitize_user_name( $_POST['user_name'] ?? '' );
         $email = sanitize_email( $_POST['user_email'] ?? '' );
         $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
         $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
@@ -9511,7 +9578,7 @@ function ss_teams_page() {
     if ( isset( $_POST['edit_user'] ) ) {
         check_admin_referer( 'order_sync_edit_user' );
         $user_id = intval( $_POST['user_id'] ?? 0 );
-        $name = sanitize_text_field( $_POST['user_name'] ?? '' );
+        $name = subsales_sanitize_user_name( $_POST['user_name'] ?? '' );
         $email = sanitize_email( $_POST['user_email'] ?? '' );
         $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
         $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
@@ -9545,8 +9612,8 @@ function ss_teams_page() {
     // Handle team creation
     if ( isset( $_POST['add_team'] ) ) {
         check_admin_referer( 'order_sync_add_team' );
-        $name = sanitize_text_field( $_POST['team_name'] ?? '' );
-        $code = sanitize_text_field( $_POST['team_code'] ?? '' );
+        $name = subsales_sanitize_team_name( $_POST['team_name'] ?? '' );
+        $code = subsales_sanitize_team_code( $_POST['team_code'] ?? '' );
         $desc = sanitize_textarea_field( $_POST['team_description'] ?? '' );
         $status = isset( $_POST['team_active'] ) ? 'active' : 'inactive';
         if ( empty( $name ) || empty( $code ) ) {
@@ -9562,8 +9629,8 @@ function ss_teams_page() {
     if ( isset( $_POST['edit_team'] ) ) {
         check_admin_referer( 'order_sync_edit_team' );
         $tid = intval( $_POST['team_id'] ?? 0 );
-        $name = sanitize_text_field( $_POST['team_name'] ?? '' );
-        $code = sanitize_text_field( $_POST['team_code'] ?? '' );
+        $name = subsales_sanitize_team_name( $_POST['team_name'] ?? '' );
+        $code = subsales_sanitize_team_code( $_POST['team_code'] ?? '' );
         $desc = sanitize_textarea_field( $_POST['team_description'] ?? '' );
         $status = isset( $_POST['team_active'] ) ? 'active' : 'inactive';
         if ( $tid && ( ! empty( $name ) && ! empty( $code ) ) ) {
