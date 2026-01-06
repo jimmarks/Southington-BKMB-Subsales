@@ -56,6 +56,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -77,6 +78,9 @@ Subsales_Orders::init();
 
 // Initialize Admin Pages
 Subsales_Admin_Pages::init();
+
+// Initialize AJAX Handlers
+Subsales_AJAX_Handlers::init();
 
 
 // Activation/Deactivation hooks
@@ -1162,147 +1166,35 @@ function order_sync_admin_menu() {
     );
 }
 
-// AJAX handler to search/preview address across all sources
+// AJAX handlers for address search and openaddresses (kept here due to complex logic)
 add_action( 'wp_ajax_subsales_search_address', 'subsales_search_address_preview' );
 add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_openaddresses_zips' );
 add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
-add_action( 'wp_ajax_subsales_toggle_debug', 'subsales_toggle_debug_ajax' );
-add_action( 'wp_ajax_subsales_get_active_sessions_count', 'subsales_get_active_sessions_count_ajax' );
-add_action( 'wp_ajax_subsales_match_addresses_batch', 'subsales_match_addresses_batch_ajax' );
 
-// Background matching AJAX handlers
-add_action( 'wp_ajax_subsales_bg_match_start', 'subsales_bg_match_start_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_stop', 'subsales_bg_match_stop_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_resume', 'subsales_bg_match_resume_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_status', 'subsales_bg_match_status_ajax' );
-add_action( 'wp_ajax_subsales_bg_match_reset', 'subsales_bg_match_reset_ajax' );
+// NOTE: The following AJAX hooks are now registered in Subsales_AJAX_Handlers::init():
+// - subsales_toggle_debug
+// - subsales_get_active_sessions_count
+// - subsales_match_addresses_batch
+// - subsales_bg_match_* (start/stop/resume/status/reset)
+// - subsales_refresh_zip_index
+// - subsales_update_sales_mode
 
 // Import/Export handlers for users and teams
 add_action( 'admin_post_subsales_export_users_teams', 'subsales_export_users_teams' );
 add_action( 'admin_post_subsales_import_users_teams', 'subsales_import_users_teams' );
 
 // AJAX handler for batch address matching with auto-resume
-function subsales_match_addresses_batch_ajax() {
-    check_ajax_referer( 'subsales_match_addresses', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    // Call the Overpass matcher
-    if ( ! class_exists( 'Subsales_Overpass_Matcher' ) ) {
-        wp_send_json_error( 'Overpass Matcher class not loaded' );
-    }
-    
-    $result = Subsales_Overpass_Matcher::match_addresses();
-    
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-// Background matching AJAX handlers
-function subsales_bg_match_start_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::start_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_stop_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::stop_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_resume_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::resume_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-function subsales_bg_match_status_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $status = Subsales_Background_Matcher::get_complete_status();
-    wp_send_json_success( $status );
-}
-
-function subsales_bg_match_reset_ajax() {
-    check_ajax_referer( 'subsales_bg_match', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $result = Subsales_Background_Matcher::reset_job();
-    if ( $result['success'] ) {
-        wp_send_json_success( $result );
-    } else {
-        wp_send_json_error( $result );
-    }
-}
-
-// AJAX handler for getting active sessions count
-function subsales_get_active_sessions_count_ajax() {
-    check_ajax_referer( 'subsales_active_sessions', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $active_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
-    wp_send_json_success( array( 'count' => $active_count ) );
-}
-
-// AJAX handler for debug mode toggle
-function subsales_toggle_debug_ajax() {
-    check_ajax_referer( 'subsales_debug_toggle', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    $debug_enabled = get_option( 'subsales_debug_logging_enabled', false );
-    
-    if ( $debug_enabled ) {
-        // Disable debug mode
-        update_option( 'subsales_debug_logging_enabled', false );
-        delete_option( 'subsales_debug_logging_started' );
-        subsales_log( 'INFO', 'system', 'Debug logging manually disabled' );
-        wp_send_json_success( array( 'status' => 'disabled' ) );
-    } else {
-        // Enable debug mode
-        update_option( 'subsales_debug_logging_enabled', true );
-        update_option( 'subsales_debug_logging_started', time() );
-        subsales_log( 'INFO', 'system', 'Debug logging enabled (24-hour timeout)' );
-        wp_send_json_success( array( 'status' => 'enabled' ) );
-    }
-}
+// NOTE: The following AJAX handler functions have been moved to Subsales_AJAX_Handlers class:
+// - subsales_match_addresses_batch_ajax()
+// - subsales_bg_match_start_ajax()
+// - subsales_bg_match_stop_ajax()
+// - subsales_bg_match_resume_ajax()
+// - subsales_bg_match_status_ajax()
+// - subsales_bg_match_reset_ajax()
+// - subsales_get_active_sessions_count_ajax()
+// - subsales_toggle_debug_ajax()
+// - subsales_refresh_zip_index_ajax()
+// - subsales_update_sales_mode_ajax()
 
 function subsales_download_openaddresses() {
     check_ajax_referer( 'subsales_zip_generate', 'nonce' );
@@ -1689,56 +1581,7 @@ function subsales_delete_zip_extract() {
     wp_send_json_success( array( 'message' => 'ZIP extract deleted successfully', 'zip' => $zip ) );
 }
 
-// AJAX handler to manually refresh zip-index.json
-add_action( 'wp_ajax_subsales_refresh_zip_index', 'subsales_refresh_zip_index_ajax' );
-function subsales_refresh_zip_index_ajax() {
-    check_ajax_referer( 'subsales_refresh_index', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Permission denied' );
-    
-    $result = subsales_update_zip_index();
-    
-    if ( $result ) {
-        // Get the updated list
-        $upload = wp_upload_dir();
-        $zipdata_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/';
-        $existing_zips = array();
-        if ( is_dir( $zipdata_dir ) ) {
-            $files = glob( $zipdata_dir . '*.json' );
-            if ( is_array( $files ) ) {
-                foreach ( $files as $file ) {
-                    $basename = basename( $file, '.json' );
-                    if ( preg_match( '/^[0-9]{5}$/', $basename ) ) {
-                        $existing_zips[] = $basename;
-                    }
-                }
-            }
-        }
-        sort( $existing_zips );
-        wp_send_json_success( array( 'message' => 'Index refreshed successfully', 'zips' => $existing_zips ) );
-    } else {
-        wp_send_json_error( 'Failed to update index file' );
-    }
-}
-
-// AJAX handler for sales mode toggle
-add_action( 'wp_ajax_subsales_update_sales_mode', 'subsales_update_sales_mode_ajax' );
-function subsales_update_sales_mode_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    
-    check_ajax_referer( 'subsales_sales_mode', 'nonce' );
-    
-    $mode = isset( $_POST['mode'] ) ? sanitize_text_field( $_POST['mode'] ) : '';
-    
-    if ( ! in_array( $mode, array( 'legacy', 'user' ), true ) ) {
-        wp_send_json_error( 'Invalid mode. Must be "legacy" or "user".' );
-    }
-    
-    update_option( 'subsales_sales_mode', $mode );
-    
-    wp_send_json_success( array( 'mode' => $mode ) );
-}
+// NOTE: subsales_refresh_zip_index hook now registered in Subsales_AJAX_Handlers::init()
 
 // Helper: Get served ZIP codes as an array (handles both string and array formats)
 function subsales_get_served_zips() {
