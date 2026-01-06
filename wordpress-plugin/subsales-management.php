@@ -9369,10 +9369,13 @@ function subsales_process_import_preview( $file ) {
                 $team_list = array_map( 'trim', explode( ',', $user_teams ) );
                 
                 // Validate that all teams exist in the teams section
+                // Compare sanitized names to match how they'll be stored
                 foreach ( $team_list as $team_name ) {
+                    $sanitized_user_team = subsales_sanitize_team_name( $team_name );
                     $team_exists = false;
                     foreach ( $teams as $team ) {
-                        if ( $team['name'] === $team_name ) {
+                        $sanitized_team = subsales_sanitize_team_name( $team['name'] );
+                        if ( $sanitized_team === $sanitized_user_team ) {
                             $team_exists = true;
                             break;
                         }
@@ -9430,16 +9433,18 @@ function subsales_process_import_confirm( $import_data ) {
         // Insert teams
         $team_id_map = array(); // Map team names to IDs
         foreach ( $import_data['teams'] as $team ) {
+            $sanitized_name = subsales_sanitize_team_name( $team['name'] );
             $wpdb->insert(
                 $teams_table,
                 array(
-                    'name' => subsales_sanitize_team_name( $team['name'] ),
+                    'name' => $sanitized_name,
                     'access_code' => subsales_sanitize_team_code( $team['access_code'] ),
                     'status' => $team['status']
                 ),
                 array( '%s', '%s', '%s' )
             );
-            $team_id_map[ $team['name'] ] = $wpdb->insert_id;
+            // Map using sanitized name so lookups match what's in the database
+            $team_id_map[ $sanitized_name ] = $wpdb->insert_id;
         }
         
         // Insert users and their team assignments
@@ -9461,12 +9466,14 @@ function subsales_process_import_confirm( $import_data ) {
             
             // Insert team assignments
             foreach ( $user['teams'] as $team_name ) {
-                if ( isset( $team_id_map[ $team_name ] ) ) {
+                // Sanitize team name to match what's in the map
+                $sanitized_team_name = subsales_sanitize_team_name( $team_name );
+                if ( isset( $team_id_map[ $sanitized_team_name ] ) ) {
                     $wpdb->insert(
                         $user_teams_table,
                         array(
                             'user_id' => $user_id,
-                            'team_id' => $team_id_map[ $team_name ]
+                            'team_id' => $team_id_map[ $sanitized_team_name ]
                         ),
                         array( '%d', '%d' )
                     );
