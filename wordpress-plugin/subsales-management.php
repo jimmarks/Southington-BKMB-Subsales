@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.78
+ * Version: 2.2.1.79
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5844,6 +5844,504 @@ function subsales_serve_portal_assets() {
             exit;
         }
     }
+
+    // Serve signup page at /signup/ endpoint
+    $signup_slug = 'signup';
+    $signup_base = trim( parse_url( home_url( '/' . $signup_slug . '/' ), PHP_URL_PATH ), '/' );
+    
+    if ( $req_path === $signup_base || $req_path === $signup_base . '/' || $req_path === $signup_base . '/index.html' ) {
+        subsales_serve_signup_page();
+        exit;
+    }
+}
+
+/**
+ * Serve the signup page at /signup/ endpoint
+ * Self-registration interface for team members to sign up for selling dates
+ */
+function subsales_serve_signup_page() {
+    $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
+    $header_image_url = $header_image_id ? wp_get_attachment_url( $header_image_id ) : '';
+    $brand_name = get_option( 'subsales_branding', 'Subsales' );
+    $primary_color = get_option( 'order_sync_primary_color', '#2d6cdf' );
+    
+    header( 'Content-Type: text/html; charset=utf-8' );
+    header( 'Cache-Control: no-cache, must-revalidate' );
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title><?php echo esc_html( $brand_name ); ?> - Sign Up to Sell</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+                background: #f5f5f5;
+                color: #333;
+                line-height: 1.6;
+            }
+            .container {
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }
+            .header {
+                text-align: center;
+                padding: 20px 0;
+                background: white;
+                margin-bottom: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .header img {
+                max-width: 200px;
+                height: auto;
+                margin-bottom: 10px;
+            }
+            .header h1 {
+                color: <?php echo esc_attr( $primary_color ); ?>;
+                font-size: 24px;
+            }
+            .card {
+                background: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                margin-bottom: 20px;
+            }
+            .form-group {
+                margin-bottom: 20px;
+            }
+            label {
+                display: block;
+                font-weight: 600;
+                margin-bottom: 8px;
+                color: #555;
+            }
+            input[type="text"],
+            input[type="tel"],
+            select {
+                width: 100%;
+                padding: 12px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 16px;
+            }
+            input:focus, select:focus {
+                outline: none;
+                border-color: <?php echo esc_attr( $primary_color ); ?>;
+            }
+            .btn {
+                width: 100%;
+                padding: 14px;
+                background: <?php echo esc_attr( $primary_color ); ?>;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: opacity 0.2s;
+            }
+            .btn:hover {
+                opacity: 0.9;
+            }
+            .btn:disabled {
+                background: #ccc;
+                cursor: not-allowed;
+            }
+            .btn-secondary {
+                background: #6c757d;
+                margin-top: 10px;
+            }
+            .hidden {
+                display: none;
+            }
+            .error {
+                color: #dc3545;
+                font-size: 14px;
+                margin-top: 5px;
+            }
+            .success {
+                color: #28a745;
+                font-size: 14px;
+                margin-top: 5px;
+            }
+            .step-indicator {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 30px;
+            }
+            .step {
+                flex: 1;
+                text-align: center;
+                padding: 10px;
+                background: #e9ecef;
+                border-radius: 4px;
+                margin: 0 5px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #6c757d;
+            }
+            .step.active {
+                background: <?php echo esc_attr( $primary_color ); ?>;
+                color: white;
+            }
+            .step.completed {
+                background: #28a745;
+                color: white;
+            }
+            .checkbox-group {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .checkbox-item {
+                flex: 1 1 calc(50% - 10px);
+                min-width: 150px;
+            }
+            .checkbox-item label {
+                display: flex;
+                align-items: center;
+                padding: 12px;
+                border: 2px solid #ddd;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .checkbox-item input[type="checkbox"] {
+                margin-right: 10px;
+                width: 20px;
+                height: 20px;
+            }
+            .checkbox-item label:hover {
+                border-color: <?php echo esc_attr( $primary_color ); ?>;
+            }
+            .checkbox-item input[type="checkbox"]:checked + span {
+                font-weight: 600;
+            }
+            .mini-reg {
+                margin-top: 30px;
+            }
+            .mini-reg h3 {
+                margin-bottom: 15px;
+                color: #333;
+            }
+            .reg-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .reg-table th,
+            .reg-table td {
+                padding: 10px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+            .reg-table th {
+                background: #f8f9fa;
+                font-weight: 600;
+            }
+            .help-text {
+                font-size: 14px;
+                color: #6c757d;
+                margin-top: 5px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <?php if ( $header_image_url ) : ?>
+                    <img src="<?php echo esc_url( $header_image_url ); ?>" alt="<?php echo esc_attr( $brand_name ); ?>">
+                <?php endif; ?>
+                <h1><?php echo esc_html( $brand_name ); ?></h1>
+                <p>Sign Up to Sell</p>
+            </div>
+
+            <div class="card">
+                <div class="step-indicator">
+                    <div class="step active" id="step1-indicator">1. Team</div>
+                    <div class="step" id="step2-indicator">2. Your Info</div>
+                    <div class="step" id="step3-indicator">3. Dates</div>
+                </div>
+
+                <!-- Step 1: Select/Create Team -->
+                <div id="step1" class="step-content">
+                    <h2>Step 1: Select or Create Team</h2>
+                    <div class="form-group">
+                        <label for="team-search">Search for Your Team</label>
+                        <input type="text" id="team-search" placeholder="Start typing team name...">
+                        <div id="team-results"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="new-team-name">Or Create New Team</label>
+                        <input type="text" id="new-team-name" placeholder="Enter new team name">
+                        <div class="help-text">New teams will be created with a default access code</div>
+                    </div>
+                    <button class="btn" id="step1-next">Next</button>
+                    <div id="step1-error" class="error hidden"></div>
+                </div>
+
+                <!-- Step 2: Enter User Info -->
+                <div id="step2" class="step-content hidden">
+                    <h2>Step 2: Your Information</h2>
+                    <div class="form-group">
+                        <label for="user-phone">Phone Number (Required)</label>
+                        <input type="tel" id="user-phone" placeholder="(860) 555-1234" required>
+                        <div class="help-text">We'll use this to look up your existing registrations</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="user-name">Your Name (Required)</label>
+                        <input type="text" id="user-name" placeholder="First and Last Name" required>
+                    </div>
+                    <button class="btn" id="step2-next">Next</button>
+                    <button class="btn btn-secondary" id="step2-back">Back</button>
+                    <div id="step2-error" class="error hidden"></div>
+                </div>
+
+                <!-- Step 3: Select Dates -->
+                <div id="step3" class="step-content hidden">
+                    <h2>Step 3: Select Selling Dates</h2>
+                    <div class="form-group">
+                        <label>Which dates will you be selling?</label>
+                        <div id="dates-checkboxes" class="checkbox-group">
+                            <!-- Dynamically populated -->
+                        </div>
+                    </div>
+                    <button class="btn" id="step3-submit">Complete Signup</button>
+                    <button class="btn btn-secondary" id="step3-back">Back</button>
+                    <div id="step3-error" class="error hidden"></div>
+                    <div id="step3-success" class="success hidden"></div>
+                </div>
+
+                <!-- Mini Registration Page -->
+                <div id="mini-reg" class="mini-reg hidden">
+                    <h3>Your Current Registrations</h3>
+                    <div id="reg-list"></div>
+                    <button class="btn" id="add-another-team">Sign Up for Another Team</button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const apiBase = <?php echo wp_json_encode( rest_url( 'order-manager/v1' ) ); ?>;
+            let currentStep = 1;
+            let selectedTeam = null;
+            let userData = null;
+
+            // Step navigation
+            function showStep(step) {
+                document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
+                document.getElementById('step' + step).classList.remove('hidden');
+                
+                document.querySelectorAll('.step').forEach((el, idx) => {
+                    el.classList.remove('active', 'completed');
+                    if (idx + 1 < step) el.classList.add('completed');
+                    if (idx + 1 === step) el.classList.add('active');
+                });
+                
+                currentStep = step;
+            }
+
+            // Step 1: Team Selection
+            document.getElementById('team-search').addEventListener('input', async function(e) {
+                const query = e.target.value.trim();
+                if (query.length < 2) {
+                    document.getElementById('team-results').innerHTML = '';
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(query));
+                    const data = await response.json();
+                    
+                    const resultsDiv = document.getElementById('team-results');
+                    if (data.length === 0) {
+                        resultsDiv.innerHTML = '<p class="help-text">No teams found. Create a new team below.</p>';
+                    } else {
+                        resultsDiv.innerHTML = data.map(team => 
+                            `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
+                        ).join('');
+                        
+                        resultsDiv.querySelectorAll('button').forEach(btn => {
+                            btn.addEventListener('click', function() {
+                                selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
+                                document.getElementById('team-search').value = selectedTeam.name;
+                                document.getElementById('new-team-name').value = '';
+                                document.getElementById('team-results').innerHTML = '';
+                            });
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error searching teams:', error);
+                }
+            });
+
+            document.getElementById('step1-next').addEventListener('click', function() {
+                const teamSearch = document.getElementById('team-search').value.trim();
+                const newTeamName = document.getElementById('new-team-name').value.trim();
+                
+                if (!selectedTeam && !newTeamName) {
+                    document.getElementById('step1-error').textContent = 'Please select or create a team';
+                    document.getElementById('step1-error').classList.remove('hidden');
+                    return;
+                }
+                
+                if (newTeamName) {
+                    selectedTeam = { id: null, name: newTeamName, isNew: true };
+                }
+                
+                showStep(2);
+            });
+
+            // Step 2: User Info
+            document.getElementById('step2-next').addEventListener('click', async function() {
+                const phone = document.getElementById('user-phone').value.trim();
+                const name = document.getElementById('user-name').value.trim();
+                
+                if (!phone || !name) {
+                    document.getElementById('step2-error').textContent = 'Please fill in all fields';
+                    document.getElementById('step2-error').classList.remove('hidden');
+                    return;
+                }
+                
+                userData = { phone, name };
+                
+                // Load available campaigns for step 3
+                await loadCampaigns();
+                
+                showStep(3);
+            });
+
+            document.getElementById('step2-back').addEventListener('click', () => showStep(1));
+
+            // Step 3: Date Selection
+            async function loadCampaigns() {
+                try {
+                    const response = await fetch(apiBase + '/campaigns');
+                    const data = await response.json();
+                    
+                    const checkboxesDiv = document.getElementById('dates-checkboxes');
+                    if (data.length === 0) {
+                        checkboxesDiv.innerHTML = '<p class="help-text">No selling dates available yet. Check back soon!</p>';
+                    } else {
+                        checkboxesDiv.innerHTML = data.map(campaign => {
+                            const date = new Date(campaign.date);
+                            const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                            return `
+                                <div class="checkbox-item">
+                                    <label>
+                                        <input type="checkbox" value="${campaign.id}" data-date="${campaign.date}">
+                                        <span>${formatted}</span>
+                                    </label>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                } catch (error) {
+                    console.error('Error loading campaigns:', error);
+                    document.getElementById('step3-error').textContent = 'Failed to load selling dates';
+                    document.getElementById('step3-error').classList.remove('hidden');
+                }
+            }
+
+            document.getElementById('step3-submit').addEventListener('click', async function() {
+                const selectedDates = Array.from(document.querySelectorAll('#dates-checkboxes input:checked')).map(cb => cb.value);
+                
+                if (selectedDates.length === 0) {
+                    document.getElementById('step3-error').textContent = 'Please select at least one date';
+                    document.getElementById('step3-error').classList.remove('hidden');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(apiBase + '/signup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            team: selectedTeam,
+                            user: userData,
+                            campaign_ids: selectedDates
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        document.getElementById('step3-success').textContent = 'Signup complete! Loading your registrations...';
+                        document.getElementById('step3-success').classList.remove('hidden');
+                        
+                        setTimeout(() => {
+                            loadUserRegistrations();
+                        }, 1500);
+                    } else {
+                        throw new Error(result.message || 'Signup failed');
+                    }
+                } catch (error) {
+                    console.error('Error submitting signup:', error);
+                    document.getElementById('step3-error').textContent = error.message;
+                    document.getElementById('step3-error').classList.remove('hidden');
+                }
+            });
+
+            document.getElementById('step3-back').addEventListener('click', () => showStep(2));
+
+            // Mini Registration Page
+            async function loadUserRegistrations() {
+                document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
+                document.getElementById('mini-reg').classList.remove('hidden');
+                
+                try {
+                    const response = await fetch(apiBase + '/my-signups?phone=' + encodeURIComponent(userData.phone));
+                    const data = await response.json();
+                    
+                    const regList = document.getElementById('reg-list');
+                    if (data.length === 0) {
+                        regList.innerHTML = '<p>No registrations found.</p>';
+                    } else {
+                        regList.innerHTML = `
+                            <table class="reg-table">
+                                <thead>
+                                    <tr>
+                                        <th>Team</th>
+                                        <th>Date</th>
+                                        <th>Driver</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.map(reg => {
+                                        const date = new Date(reg.campaign_date);
+                                        const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                        return `
+                                            <tr>
+                                                <td>${reg.team_name}</td>
+                                                <td>${formatted}</td>
+                                                <td>${reg.driver_name || '<em>Not set</em>'}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        `;
+                    }
+                } catch (error) {
+                    console.error('Error loading registrations:', error);
+                }
+            }
+
+            document.getElementById('add-another-team').addEventListener('click', function() {
+                selectedTeam = null;
+                document.getElementById('team-search').value = '';
+                document.getElementById('new-team-name').value = '';
+                document.getElementById('mini-reg').classList.add('hidden');
+                showStep(1);
+            });
+        </script>
+    </body>
+    </html>
+    <?php
 }
 
 // Ensure geocode cache table exists (lightweight, called on demand)
