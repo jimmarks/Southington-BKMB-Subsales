@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.84
+ * Version: 2.2.1.85
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5708,8 +5708,21 @@ function subsales_haversine_distance( $lat1, $lon1, $lat2, $lon2 ){
     return $R * $c;
 }
 function subsales_serve_portal_assets() {
-    $portal_slug = get_option( 'order_sync_portal_slug', '' ); if ( empty( $portal_slug ) ) return;
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
+    
+    // Serve signup page at /signup/ endpoint (independent of portal)
+    $signup_slug = 'signup';
+    $signup_base = trim( parse_url( home_url( '/' . $signup_slug . '/' ), PHP_URL_PATH ), '/' );
+    
+    if ( $req_path === $signup_base || $req_path === $signup_base . '/' || $req_path === $signup_base . '/index.html' ) {
+        subsales_serve_signup_page();
+        exit;
+    }
+    
+    // Check if portal slug is configured before serving portal assets
+    $portal_slug = get_option( 'order_sync_portal_slug', '' ); 
+    if ( empty( $portal_slug ) ) return;
+    
     $portal_base = trim( parse_url( home_url( '/' . $portal_slug . '/' ), PHP_URL_PATH ), '/' );
 
     // Also serve manifest at the site root (/manifest.json) to handle cases where the browser requests it from /
@@ -5843,15 +5856,6 @@ function subsales_serve_portal_assets() {
             readfile( $file );
             exit;
         }
-    }
-
-    // Serve signup page at /signup/ endpoint
-    $signup_slug = 'signup';
-    $signup_base = trim( parse_url( home_url( '/' . $signup_slug . '/' ), PHP_URL_PATH ), '/' );
-    
-    if ( $req_path === $signup_base || $req_path === $signup_base . '/' || $req_path === $signup_base . '/index.html' ) {
-        subsales_serve_signup_page();
-        exit;
     }
 }
 
