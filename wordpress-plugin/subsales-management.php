@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.113
+ * Version: 2.2.1.114
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6365,39 +6365,59 @@ function subsales_serve_signup_page() {
                     
                     showStep(2);
                 } else {
-                    // User mode: Step 1 = User Info (Name AND Phone required)
-                    // In user mode, step 1 displays the step2 div, so errors go in step2-error
-                    const name = document.getElementById('user-name').value.trim();
-                    const phone = document.getElementById('user-phone').value.trim();
-                    
-                    if (!name) {
-                        document.getElementById('step2-error').textContent = 'Please enter your name';
-                        document.getElementById('step2-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    if (!phone) {
-                        document.getElementById('step2-error').textContent = 'Please enter your phone number';
-                        document.getElementById('step2-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    // Validate phone format (10 digits)
-                    const phoneDigits = phone.replace(/\D/g, '');
-                    if (phoneDigits.length !== 10) {
-                        document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
-                        document.getElementById('step2-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    // If user was selected from autocomplete, verify phone matches user ID in database
-                    if (userData && userData.id) {
-                        verifyUserAndProceed(userData.id, phoneDigits);
-                    } else {
-                        // New user - just store and proceed
-                        userData = { name: name, phone: phoneDigits };
-                        document.getElementById('step2-error').classList.add('hidden');
-                        showStep(2);
+                    // User mode: Check current step
+                    if (currentStep === 1) {
+                        // Step 1 = User Info (displays step2 div)
+                        const name = document.getElementById('user-name').value.trim();
+                        const phone = document.getElementById('user-phone').value.trim();
+                        
+                        if (!name) {
+                            document.getElementById('step2-error').textContent = 'Please enter your name';
+                            document.getElementById('step2-error').classList.remove('hidden');
+                            return;
+                        }
+                        
+                        if (!phone) {
+                            document.getElementById('step2-error').textContent = 'Please enter your phone number';
+                            document.getElementById('step2-error').classList.remove('hidden');
+                            return;
+                        }
+                        
+                        // Validate phone format (10 digits)
+                        const phoneDigits = phone.replace(/\D/g, '');
+                        if (phoneDigits.length !== 10) {
+                            document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
+                            document.getElementById('step2-error').classList.remove('hidden');
+                            return;
+                        }
+                        
+                        // If user was selected from autocomplete, verify phone matches user ID in database
+                        if (userData && userData.id) {
+                            verifyUserAndProceed(userData.id, phoneDigits);
+                        } else {
+                            // New user - just store and proceed
+                            userData = { name: name, phone: phoneDigits };
+                            document.getElementById('step2-error').classList.add('hidden');
+                            showStep(2);
+                        }
+                    } else if (currentStep === 2) {
+                        // Step 2 = Team Selection (displays step1 div)
+                        const teamSearch = document.getElementById('team-search').value.trim();
+                        const newTeamName = document.getElementById('new-team-name').value.trim();
+                        
+                        if (!selectedTeam && !newTeamName) {
+                            document.getElementById('step1-error').textContent = 'Please select or create a team';
+                            document.getElementById('step1-error').classList.remove('hidden');
+                            return;
+                        }
+                        
+                        if (newTeamName) {
+                            selectedTeam = { id: null, name: newTeamName, isNew: true };
+                        }
+                        
+                        document.getElementById('step1-error').classList.add('hidden');
+                        loadCampaigns();
+                        showStep(3);
                     }
                 }
             }
