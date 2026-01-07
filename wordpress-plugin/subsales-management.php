@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.106
+ * Version: 2.2.1.107
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6161,6 +6161,7 @@ function subsales_serve_signup_page() {
             let selectedTeam = null;
             let userData = null;
             let signupMode = 'legacy'; // Will be set from API
+            let adminEmail = ''; // Will be set from API
 
             // Load signup settings on page load
             async function loadSettings() {
@@ -6168,6 +6169,7 @@ function subsales_serve_signup_page() {
                     const response = await fetch(apiBase + '/signup/settings');
                     const data = await response.json();
                     signupMode = data.mode || 'legacy';
+                    adminEmail = data.admin_email || '';
                     
                     // Update step indicators and labels based on mode
                     if (signupMode === 'user') {
@@ -6420,8 +6422,12 @@ function subsales_serve_signup_page() {
                         errorDiv.classList.add('hidden');
                         showStep(2);
                     } else {
-                        // Phone doesn't match
-                        errorDiv.textContent = data.message || 'Phone number does not match this user';
+                        // Phone doesn't match - show error with email link
+                        let errorMessage = data.message || 'Phone number does not match this user';
+                        if (adminEmail) {
+                            errorMessage += '. If you think this is an error, please <a href="mailto:' + adminEmail + '">email ' + adminEmail + '</a>';
+                        }
+                        errorDiv.innerHTML = errorMessage;
                         errorDiv.classList.remove('hidden');
                     }
                 } catch (error) {
@@ -12403,6 +12409,7 @@ function subsales_rest_signup_settings( $request ) {
     return rest_ensure_response( array(
         'mode' => $login_mode,
         'brand_name' => get_option( 'subsales_branding', 'Subsales' ),
+        'admin_email' => get_option( 'subsales_admin_email', get_option( 'admin_email' ) ),
     ) );
 }
 
