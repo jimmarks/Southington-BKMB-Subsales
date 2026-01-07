@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.100
+ * Version: 2.2.1.101
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6323,8 +6323,9 @@ function subsales_serve_signup_page() {
                     
                     showStep(2);
                 } else {
-                    // User mode: Step 1 = User Info (Name first)
+                    // User mode: Step 1 = User Info (Name AND Phone required)
                     const name = document.getElementById('user-name').value.trim();
+                    const phone = document.getElementById('user-phone').value.trim();
                     
                     if (!name) {
                         document.getElementById('step1-error').textContent = 'Please enter your name';
@@ -6332,8 +6333,24 @@ function subsales_serve_signup_page() {
                         return;
                     }
                     
-                    // Check if name exists
-                    checkNameAndProceed(name);
+                    if (!phone) {
+                        document.getElementById('step1-error').textContent = 'Please enter your phone number';
+                        document.getElementById('step1-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    // Validate phone format (10 digits)
+                    const phoneDigits = phone.replace(/\D/g, '');
+                    if (phoneDigits.length !== 10) {
+                        document.getElementById('step1-error').textContent = 'Phone must be 10 digits';
+                        document.getElementById('step1-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    // Store user data and proceed to team selection
+                    userData = { name: name, phone: phoneDigits };
+                    document.getElementById('step1-error').classList.add('hidden');
+                    showStep(2);
                 }
             });
 
