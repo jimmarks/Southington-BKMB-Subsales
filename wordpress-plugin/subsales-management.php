@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.97
+ * Version: 2.2.1.98
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6277,16 +6277,15 @@ function subsales_serve_signup_page() {
                             resultsDiv.innerHTML = '<p class="help-text">No matches found. Continue to register as new user.</p>';
                         } else {
                             resultsDiv.innerHTML = data.map(user => 
-                                `<button class="btn btn-secondary" style="margin: 5px 0;" data-user-id="${user.id}" data-user-name="${user.name}" data-user-phone="${user.phone}">${user.name} (${user.phone})</button>`
+                                `<button class="btn btn-secondary" style="margin: 5px 0;" data-user-id="${user.id}" data-user-name="${user.name}" data-user-phone="${user.phone}">${user.name}</button>`
                             ).join('');
                             
                             resultsDiv.querySelectorAll('button').forEach(btn => {
                                 btn.addEventListener('click', function() {
                                     const nameField = document.getElementById('user-name');
-                                    const phoneField = document.getElementById('user-phone');
                                     
                                     if (nameField) nameField.value = this.dataset.userName;
-                                    if (phoneField) phoneField.value = this.dataset.userPhone;
+                                    // Don't auto-fill phone - user must enter it themselves
                                     
                                     userData = { 
                                         id: this.dataset.userId, 
