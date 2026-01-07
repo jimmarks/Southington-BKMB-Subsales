@@ -14,7 +14,8 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 }
 
 // Check if user wants to delete data on uninstall
-$delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 'yes' );
+// Default to 'no' (preserve data) for safety
+$delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 'no' );
 
 if ( $delete_on_uninstall !== 'yes' ) {
     // User chose to preserve data - only clean up the deletion option itself
