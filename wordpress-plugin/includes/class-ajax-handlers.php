@@ -386,7 +386,21 @@ class Subsales_AJAX_Handlers {
         wp_send_json_success( array( 'mode' => $mode ) );
     }
 
-    // NOTE: The following complex handlers have been intentionally left in the main file
+    /**
+     * Fetch orders (delegates to main function)
+     */
+    public static function fetch_orders() {
+        order_sync_fetch_orders_ajax();
+    }
+
+    /**
+     * Get order by DB ID (delegates to main function)
+     */
+    public static function get_order_by_db_id() {
+        subsales_get_order_by_db_id_ajax();
+    }
+
+    // NOTE: The following complex handlers delegate to standalone functions in the main file
     // to avoid moving hundreds of lines of business logic:
     // - search_address() - calls subsales_search_address_preview()
     // - download_openaddresses() - complex file handling
@@ -398,10 +412,8 @@ class Subsales_AJAX_Handlers {
     // - delete_zip_extract() - calls subsales_delete_zip_extract()
     // - generate_zip_extracts() - calls subsales_generate_zip_extracts()
     // - upload_zip_boundaries() - calls subsales_upload_zip_boundaries_ajax()
-    // - fetch_orders() - calls order_sync_fetch_orders_ajax()
-    // - get_order_by_db_id() - calls subsales_get_order_by_db_id_ajax()
     //
     // These will remain as standalone functions since they contain significant business
-    // logic that would require extensive refactoring. The above handlers that have been
-    // moved are the simpler wrappers that delegate to other classes.
+    // logic that would require extensive refactoring. The simpler handlers above
+    // delegate to those standalone functions.
 }

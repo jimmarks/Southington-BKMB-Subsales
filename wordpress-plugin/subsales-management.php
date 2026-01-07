@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.75
+ * Version: 2.2.1.77
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -3276,12 +3276,10 @@ function subsales_sanitize_user_name( $name ) {
 // Handler functions remain below for compatibility
 // ============================================================
 
-
-// AJAX endpoint for admin orders filtering/pagination
-add_action( 'wp_ajax_subsales_fetch_orders', 'order_sync_fetch_orders_ajax' );
-
-// AJAX handler to get order by database ID
-add_action( 'wp_ajax_subsales_get_order_by_db_id', 'subsales_get_order_by_db_id_ajax' );
+// NOTE: AJAX handlers now registered in Subsales_AJAX_Handlers::init()
+// The following registrations have been REMOVED to prevent conflicts:
+// - wp_ajax_subsales_fetch_orders (now in class-ajax-handlers.php)
+// - wp_ajax_subsales_get_order_by_db_id (now in class-ajax-handlers.php)
 function subsales_get_order_by_db_id_ajax() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_send_json_error( 'Insufficient permissions' );
