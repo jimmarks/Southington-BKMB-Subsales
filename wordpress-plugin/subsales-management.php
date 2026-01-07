@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.121
+ * Version: 2.2.1.122
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6609,18 +6609,17 @@ function subsales_serve_signup_page() {
                                     <tr>
                                         <th>Team</th>
                                         <th>Date</th>
-                                        <th>Driver</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${data.map(reg => {
                                         const date = new Date(reg.campaign_date + 'T00:00:00');
                                         const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                        const teamDisplay = reg.campaign_name ? `${reg.team_name} - ${reg.campaign_name}` : reg.team_name;
                                         return `
                                             <tr>
-                                                <td>${reg.team_name}</td>
+                                                <td>${teamDisplay}</td>
                                                 <td>${formatted}</td>
-                                                <td>${reg.driver_name || '<em>Not set</em>'}</td>
                                             </tr>
                                         `;
                                     }).join('')}
@@ -12867,16 +12866,16 @@ function subsales_rest_get_my_signups( $request ) {
             s.user_id,
             s.team_id,
             s.campaign_id,
-            s.driver_id,
+            s.is_driver,
+            s.status,
             t.name AS team_name,
-            c.date AS campaign_date,
-            driver.name AS driver_name
+            c.campaign_date AS campaign_date,
+            c.campaign_name AS campaign_name
         FROM {$signups_table} s
         LEFT JOIN {$teams_table} t ON s.team_id = t.id
         LEFT JOIN {$campaigns_table} c ON s.campaign_id = c.id
-        LEFT JOIN {$members_table} driver ON s.driver_id = driver.id
-        WHERE s.user_id = %d
-        ORDER BY c.date ASC",
+        WHERE s.user_id = %d AND s.status = 'active'
+        ORDER BY c.campaign_date ASC",
         $user->id
     ), ARRAY_A );
     
