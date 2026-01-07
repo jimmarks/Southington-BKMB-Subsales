@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.114
+ * Version: 2.2.1.115
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6109,50 +6109,87 @@ function subsales_serve_signup_page() {
 
             <div class="card">
                 <div class="step-indicator">
-                    <div class="step active" id="step1-indicator">1. Team</div>
-                    <div class="step" id="step2-indicator">2. Your Info</div>
-                    <div class="step" id="step3-indicator">3. Dates</div>
+                    <div class="step active" id="step1-indicator">1</div>
+                    <div class="step" id="step2-indicator">2</div>
+                    <div class="step" id="step3-indicator">3</div>
                 </div>
 
-                <!-- Step 1: Select/Create Team -->
-                <div id="step1" class="step-content">
-                    <h2 id="step1-heading">Step 1: Select or Create Team</h2>
+                <!-- Legacy Mode Steps -->
+                <!-- Legacy Step 1: Select/Create Team -->
+                <div id="legacy-step1" class="step-content hidden">
+                    <h2>Step 1: Select or Create Team</h2>
                     <div class="form-group">
-                        <label for="team-search">Search for Your Team</label>
-                        <input type="text" id="team-search" placeholder="Start typing team name...">
-                        <div id="team-results"></div>
+                        <label for="legacy-team-search">Search for Your Team</label>
+                        <input type="text" id="legacy-team-search" placeholder="Start typing team name...">
+                        <div id="legacy-team-results"></div>
                     </div>
                     <div class="form-group">
-                        <label for="new-team-name">Or Create New Team</label>
-                        <input type="text" id="new-team-name" placeholder="Enter new team name">
+                        <label for="legacy-new-team">Or Create New Team</label>
+                        <input type="text" id="legacy-new-team" placeholder="Enter new team name">
                         <div class="help-text">New teams will be created with a default access code</div>
                     </div>
-                    <button class="btn" id="step1-next">Next</button>
-                    <div id="step1-error" class="error hidden"></div>
+                    <button class="btn" id="legacy-step1-next">Next</button>
+                    <div id="legacy-step1-error" class="error hidden"></div>
                 </div>
 
-                <!-- Step 2: Enter User Info -->
-                <div id="step2" class="step-content hidden">
-                    <h2 id="step2-heading">Step 2: Your Information</h2>
+                <!-- Legacy Step 2: Enter User Info -->
+                <div id="legacy-step2" class="step-content hidden">
+                    <h2>Step 2: Your Information</h2>
                     <div class="form-group">
-                        <label for="user-name">Your Name (Required)</label>
-                        <input type="text" id="user-name" placeholder="Start typing your name..." required>
-                        <div id="name-results"></div>
+                        <label for="legacy-user-name">Your Name (Required)</label>
+                        <input type="text" id="legacy-user-name" placeholder="Enter your name..." required>
+                        <div class="help-text">Enter your full name</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="legacy-user-phone">Phone Number (Required)</label>
+                        <input type="tel" id="legacy-user-phone" placeholder="(860) 555-1234" required>
+                        <div class="help-text">We'll use this to look up your existing registrations</div>
+                    </div>
+                    <button class="btn" id="legacy-step2-next">Next</button>
+                    <button class="btn btn-secondary" id="legacy-step2-back">Back</button>
+                    <div id="legacy-step2-error" class="error hidden"></div>
+                </div>
+
+                <!-- User Mode Steps -->
+                <!-- User Step 1: Enter User Info -->
+                <div id="user-step1" class="step-content hidden">
+                    <h2>Step 1: Your Information</h2>
+                    <div class="form-group">
+                        <label for="user-user-name">Your Name (Required)</label>
+                        <input type="text" id="user-user-name" placeholder="Start typing your name..." required>
+                        <div id="user-name-results"></div>
                         <div class="help-text">Select your name or enter a new one</div>
                     </div>
                     <div class="form-group">
-                        <label for="user-phone">Phone Number (Required)</label>
-                        <input type="tel" id="user-phone" placeholder="(860) 555-1234" required>
+                        <label for="user-user-phone">Phone Number (Required)</label>
+                        <input type="tel" id="user-user-phone" placeholder="(860) 555-1234" required>
                         <div class="help-text">We'll use this to look up your existing registrations</div>
                     </div>
-                    <button class="btn" id="step2-next">Next</button>
-                    <button class="btn btn-secondary" id="step2-back">Back</button>
-                    <div id="step2-error" class="error hidden"></div>
+                    <button class="btn" id="user-step1-next">Next</button>
+                    <div id="user-step1-error" class="error hidden"></div>
                 </div>
 
-                <!-- Step 3: Select Dates -->
+                <!-- User Step 2: Select/Create Team -->
+                <div id="user-step2" class="step-content hidden">
+                    <h2>Step 2: Select or Create Team</h2>
+                    <div class="form-group">
+                        <label for="user-team-search">Search for Your Team</label>
+                        <input type="text" id="user-team-search" placeholder="Start typing team name...">
+                        <div id="user-team-results"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="user-new-team">Or Create New Team</label>
+                        <input type="text" id="user-new-team" placeholder="Enter new team name">
+                        <div class="help-text">New teams will be created with a default access code</div>
+                    </div>
+                    <button class="btn" id="user-step2-next">Next</button>
+                    <button class="btn btn-secondary" id="user-step2-back">Back</button>
+                    <div id="user-step2-error" class="error hidden"></div>
+                </div>
+
+                <!-- Shared Step 3: Select Dates -->
                 <div id="step3" class="step-content hidden">
-                    <h2 id="step3-heading">Step 3: Select Selling Dates</h2>
+                    <h2>Step 3: Select Selling Dates</h2>
                     <div class="form-group">
                         <label>Which dates will you be selling?</label>
                         <div id="dates-checkboxes" class="checkbox-group">
@@ -6196,64 +6233,38 @@ function subsales_serve_signup_page() {
                     signupMode = data.mode || 'legacy';
                     adminEmail = data.admin_email || '';
                     
-                    // Update step indicators and labels based on mode
+                    // Update step indicators based on mode
                     if (signupMode === 'user') {
-                        // User mode: Step 1 = User Info, Step 2 = Team, Step 3 = Dates
                         document.getElementById('step1-indicator').textContent = '1. Your Info';
                         document.getElementById('step2-indicator').textContent = '2. Team';
                         document.getElementById('step3-indicator').textContent = '3. Dates';
                     } else {
-                        // Legacy mode: Step 1 = Team, Step 2 = User Info, Step 3 = Dates
                         document.getElementById('step1-indicator').textContent = '1. Team';
                         document.getElementById('step2-indicator').textContent = '2. Your Info';
                         document.getElementById('step3-indicator').textContent = '3. Dates';
                     }
                     
-                    // Show the correct first step based on mode
                     showStep(1);
                 } catch (error) {
                     console.error('Error loading settings:', error);
-                    // Default to legacy mode on error
                     showStep(1);
                 }
             }
 
-            // Step navigation based on mode
+            // Step navigation - now much simpler!
             function showStep(step) {
                 document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
                 
-                // Map logical steps to actual step divs based on mode
-                let actualStep;
+                let stepDiv;
                 if (signupMode === 'user') {
-                    // User mode: step1=userInfo(step2), step2=team(step1), step3=dates(step3)
-                    if (step === 1) {
-                        actualStep = 'step2'; // Show user info
-                        document.getElementById('step2-heading').textContent = 'Step 1: Your Information';
-                        document.getElementById('step2-back').classList.add('hidden'); // Hide back on first step
-                    }
-                    else if (step === 2) {
-                        actualStep = 'step1'; // Show team
-                        document.getElementById('step1-heading').textContent = 'Step 2: Select or Create Team';
-                    }
-                    else {
-                        actualStep = 'step3'; // Show dates
-                        document.getElementById('step3-heading').textContent = 'Step 3: Select Selling Dates';
-                    }
+                    stepDiv = step === 3 ? 'step3' : `user-step${step}`;
                 } else {
-                    // Legacy mode: step1=team(step1), step2=userInfo(step2), step3=dates(step3)
-                    actualStep = 'step' + step;
-                    document.getElementById('step1-heading').textContent = 'Step 1: Select or Create Team';
-                    document.getElementById('step2-heading').textContent = 'Step 2: Your Information';
-                    document.getElementById('step3-heading').textContent = 'Step 3: Select Selling Dates';
-                    if (step === 1) {
-                        // No back button on step 1 in legacy mode either (though it's hidden anyway)
-                    } else {
-                        document.getElementById('step2-back').classList.remove('hidden');
-                    }
+                    stepDiv = step === 3 ? 'step3' : `legacy-step${step}`;
                 }
                 
-                document.getElementById(actualStep).classList.remove('hidden');
+                document.getElementById(stepDiv).classList.remove('hidden');
                 
+                // Update step indicators
                 document.querySelectorAll('.step').forEach((el, idx) => {
                     el.classList.remove('active', 'completed');
                     if (idx + 1 < step) el.classList.add('completed');
@@ -6263,48 +6274,51 @@ function subsales_serve_signup_page() {
                 currentStep = step;
             }
 
-            // Step 1: Team Selection (Legacy mode) OR User Info (User mode)
-            document.getElementById('team-search').addEventListener('input', async function(e) {
-                const query = e.target.value.trim();
-                if (query.length < 2) {
-                    document.getElementById('team-results').innerHTML = '';
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(query));
-                    const data = await response.json();
-                    
-                    const resultsDiv = document.getElementById('team-results');
-                    if (data.length === 0) {
-                        resultsDiv.innerHTML = '<p class="help-text">No teams found. Create a new team below.</p>';
-                    } else {
-                        resultsDiv.innerHTML = data.map(team => 
-                            `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
-                        ).join('');
-                        
-                        resultsDiv.querySelectorAll('button').forEach(btn => {
-                            btn.addEventListener('click', function() {
-                                selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
-                                document.getElementById('team-search').value = selectedTeam.name;
-                                document.getElementById('new-team-name').value = '';
-                                document.getElementById('team-results').innerHTML = '';
-                            });
-                        });
+            // Setup autocomplete handlers for both modes
+            function setupTeamSearch(searchFieldId, resultsFieldId, newTeamFieldId) {
+                document.getElementById(searchFieldId).addEventListener('input', async function(e) {
+                    const query = e.target.value.trim();
+                    if (query.length < 2) {
+                        document.getElementById(resultsFieldId).innerHTML = '';
+                        return;
                     }
-                } catch (error) {
-                    console.error('Error searching teams:', error);
-                }
-            });
+                    
+                    try {
+                        const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(query));
+                        const data = await response.json();
+                        
+                        const resultsDiv = document.getElementById(resultsFieldId);
+                        if (data.length === 0) {
+                            resultsDiv.innerHTML = '<p class="help-text">No teams found. Create a new team below.</p>';
+                        } else {
+                            resultsDiv.innerHTML = data.map(team => 
+                                `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
+                            ).join('');
+                            
+                            resultsDiv.querySelectorAll('button').forEach(btn => {
+                                btn.addEventListener('click', function() {
+                                    selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
+                                    document.getElementById(searchFieldId).value = selectedTeam.name;
+                                    document.getElementById(newTeamFieldId).value = '';
+                                    document.getElementById(resultsFieldId).innerHTML = '';
+                                });
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error searching teams:', error);
+                    }
+                });
+            }
 
-            // Step 2: Name autocomplete (User mode)
-            const userNameField = document.getElementById('user-name');
-            if (userNameField) {
-                userNameField.addEventListener('input', async function(e) {
+            function setupUserNameSearch(nameFieldId, resultsFieldId) {
+                const field = document.getElementById(nameFieldId);
+                if (!field) return;
+                
+                field.addEventListener('input', async function(e) {
                     const query = e.target.value.trim();
                     
                     if (query.length < 2) {
-                        document.getElementById('name-results').innerHTML = '';
+                        document.getElementById(resultsFieldId).innerHTML = '';
                         return;
                     }
                     
@@ -6313,7 +6327,7 @@ function subsales_serve_signup_page() {
                         const response = await fetch(url);
                         const data = await response.json();
                         
-                        const resultsDiv = document.getElementById('name-results');
+                        const resultsDiv = document.getElementById(resultsFieldId);
                         if (data.length === 0) {
                             resultsDiv.innerHTML = '<p class="help-text">No matches found. Continue to register as new user.</p>';
                         } else {
@@ -6323,18 +6337,13 @@ function subsales_serve_signup_page() {
                             
                             resultsDiv.querySelectorAll('button').forEach(btn => {
                                 btn.addEventListener('click', function() {
-                                    const nameField = document.getElementById('user-name');
-                                    
-                                    if (nameField) nameField.value = this.dataset.userName;
-                                    // Phone not returned from API for security - user must enter it
-                                    // Backend validates phone matches name during signup submission
-                                    
+                                    document.getElementById(nameFieldId).value = this.dataset.userName;
                                     userData = { 
                                         id: this.dataset.userId, 
                                         name: this.dataset.userName,
                                         existingUser: true 
                                     };
-                                    document.getElementById('name-results').innerHTML = '';
+                                    document.getElementById(resultsFieldId).innerHTML = '';
                                 });
                             });
                         }
@@ -6342,223 +6351,182 @@ function subsales_serve_signup_page() {
                         console.error('Error searching users:', error);
                     }
                 });
-            } else {
-                console.error('SUBSALES: user-name field not found!');
             }
 
-            // Handler for step 1 Next button
-            function handleStep1Next() {
-                if (signupMode === 'legacy') {
-                    // Legacy: Step 1 = Team
-                    const teamSearch = document.getElementById('team-search').value.trim();
-                    const newTeamName = document.getElementById('new-team-name').value.trim();
-                    
-                    if (!selectedTeam && !newTeamName) {
-                        document.getElementById('step1-error').textContent = 'Please select or create a team';
-                        document.getElementById('step1-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    if (newTeamName) {
-                        selectedTeam = { id: null, name: newTeamName, isNew: true };
-                    }
-                    
-                    showStep(2);
-                } else {
-                    // User mode: Check current step
-                    if (currentStep === 1) {
-                        // Step 1 = User Info (displays step2 div)
-                        const name = document.getElementById('user-name').value.trim();
-                        const phone = document.getElementById('user-phone').value.trim();
-                        
-                        if (!name) {
-                            document.getElementById('step2-error').textContent = 'Please enter your name';
-                            document.getElementById('step2-error').classList.remove('hidden');
-                            return;
-                        }
-                        
-                        if (!phone) {
-                            document.getElementById('step2-error').textContent = 'Please enter your phone number';
-                            document.getElementById('step2-error').classList.remove('hidden');
-                            return;
-                        }
-                        
-                        // Validate phone format (10 digits)
-                        const phoneDigits = phone.replace(/\D/g, '');
-                        if (phoneDigits.length !== 10) {
-                            document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
-                            document.getElementById('step2-error').classList.remove('hidden');
-                            return;
-                        }
-                        
-                        // If user was selected from autocomplete, verify phone matches user ID in database
-                        if (userData && userData.id) {
-                            verifyUserAndProceed(userData.id, phoneDigits);
-                        } else {
-                            // New user - just store and proceed
-                            userData = { name: name, phone: phoneDigits };
-                            document.getElementById('step2-error').classList.add('hidden');
-                            showStep(2);
-                        }
-                    } else if (currentStep === 2) {
-                        // Step 2 = Team Selection (displays step1 div)
-                        const teamSearch = document.getElementById('team-search').value.trim();
-                        const newTeamName = document.getElementById('new-team-name').value.trim();
-                        
-                        if (!selectedTeam && !newTeamName) {
-                            document.getElementById('step1-error').textContent = 'Please select or create a team';
-                            document.getElementById('step1-error').classList.remove('hidden');
-                            return;
-                        }
-                        
-                        if (newTeamName) {
-                            selectedTeam = { id: null, name: newTeamName, isNew: true };
-                        }
-                        
-                        document.getElementById('step1-error').classList.add('hidden');
-                        loadCampaigns();
-                        showStep(3);
-                    }
-                }
-            }
+            // Setup both modes
+            setupTeamSearch('legacy-team-search', 'legacy-team-results', 'legacy-new-team');
+            setupTeamSearch('user-team-search', 'user-team-results', 'user-new-team');
+            setupUserNameSearch('user-user-name', 'user-name-results');
+
+            // ========== LEGACY MODE HANDLERS ==========
             
-            // Attach step 1 button handler
-            document.getElementById('step1-next').addEventListener('click', handleStep1Next);
-            
-            // Step 2 next button handler (different logic for legacy vs user mode)
-            document.getElementById('step2-next').addEventListener('click', function() {
-                if (signupMode === 'user') {
-                    // In user mode, step 2 div is shown as step 1, so call handleStep1Next
-                    handleStep1Next();
-                } else {
-                    // In legacy mode, step 2 is actual step 2 (user info after team selection)
-                    handleStep2Next();
+            // Legacy Step 1: Team Selection → Next
+            document.getElementById('legacy-step1-next').addEventListener('click', function() {
+                const teamSearch = document.getElementById('legacy-team-search').value.trim();
+                const newTeamName = document.getElementById('legacy-new-team').value.trim();
+                const errorDiv = document.getElementById('legacy-step1-error');
+                
+                errorDiv.classList.add('hidden');
+                
+                if (!selectedTeam && !newTeamName) {
+                    errorDiv.textContent = 'Please select or create a team';
+                    errorDiv.classList.remove('hidden');
+                    return;
                 }
+                
+                if (newTeamName) {
+                    selectedTeam = { id: null, name: newTeamName, isNew: true };
+                }
+                
+                showStep(2);
             });
             
-            // Handler for step 2 Next button in legacy mode (Team → User Info → Dates)
-            function handleStep2Next() {
-                const name = document.getElementById('user-name').value.trim();
-                const phone = document.getElementById('user-phone').value.trim();
+            // Legacy Step 2: User Info → Next
+            document.getElementById('legacy-step2-next').addEventListener('click', function() {
+                const name = document.getElementById('legacy-user-name').value.trim();
+                const phone = document.getElementById('legacy-user-phone').value.trim();
+                const errorDiv = document.getElementById('legacy-step2-error');
                 
-                // Clear any previous errors
-                document.getElementById('step2-error').classList.add('hidden');
+                errorDiv.classList.add('hidden');
                 
                 if (!name) {
-                    document.getElementById('step2-error').textContent = 'Please enter your name';
-                    document.getElementById('step2-error').classList.remove('hidden');
+                    errorDiv.textContent = 'Please enter your name';
+                    errorDiv.classList.remove('hidden');
                     return;
                 }
                 
                 if (!phone) {
-                    document.getElementById('step2-error').textContent = 'Please enter your phone number';
-                    document.getElementById('step2-error').classList.remove('hidden');
+                    errorDiv.textContent = 'Please enter your phone number';
+                    errorDiv.classList.remove('hidden');
                     return;
                 }
                 
-                // Validate phone format (10 digits)
                 const phoneDigits = phone.replace(/\D/g, '');
                 if (phoneDigits.length !== 10) {
-                    document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
-                    document.getElementById('step2-error').classList.remove('hidden');
+                    errorDiv.textContent = 'Phone must be 10 digits';
+                    errorDiv.classList.remove('hidden');
                     return;
                 }
                 
-                // Store user data and proceed to step 3 (dates)
                 userData = { name: name, phone: phoneDigits };
                 loadCampaigns();
                 showStep(3);
-            }
-
-            // Verify user ID and phone match in database
-            async function verifyUserAndProceed(userId, phone) {
-                const errorDiv = document.getElementById('step2-error');
-                // In user mode, the visible button is step2-next; in legacy it would be step1-next (but legacy doesn't call this function)
-                const nextBtn = document.getElementById('step2-next');
+            });
+            
+            // Legacy Step 2: Back button
+            document.getElementById('legacy-step2-back').addEventListener('click', () => showStep(1));
+            
+            // ========== USER MODE HANDLERS ==========
+            
+            // User Step 1: User Info → Next
+            document.getElementById('user-step1-next').addEventListener('click', async function() {
+                const name = document.getElementById('user-user-name').value.trim();
+                const phone = document.getElementById('user-user-phone').value.trim();
+                const errorDiv = document.getElementById('user-step1-error');
+                const nextBtn = this;
                 
-                // Show loading state
-                nextBtn.disabled = true;
-                nextBtn.textContent = 'Verifying...';
                 errorDiv.classList.add('hidden');
                 
-                try {
-                    const url = apiBase + '/signup/verify-user';
-                    const payload = { user_id: userId, phone: phone };
-
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    const data = await response.json();
-                    if (data.valid) {
-                        // Phone matches - store user data and proceed
-                        userData = { id: userId, name: data.user.name, phone: phone };
-                        errorDiv.classList.add('hidden');
-                        showStep(2);
-                    } else {
-                        // Phone doesn't match - show error with email link
-                        let errorMessage = data.message || 'Phone number does not match this user';
-                        if (adminEmail) {
-                            errorMessage += '. If you think this is an error, please <a href="mailto:' + adminEmail + '?subject=Sign-up%20Issue">Email Us</a>';
-                        }
-                        errorDiv.innerHTML = errorMessage;
-                        errorDiv.classList.remove('hidden');
-                    }
-                } catch (error) {
-                    console.error('Error verifying user:', error);
-                    errorDiv.textContent = 'Error verifying phone number. Please try again.';
+                if (!name) {
+                    errorDiv.textContent = 'Please enter your name';
                     errorDiv.classList.remove('hidden');
-                } finally {
-                    // Reset button state
-                    nextBtn.disabled = false;
-                    nextBtn.textContent = 'Next';
+                    return;
                 }
-            }
-            
-            // User-based mode: Check name and handle login/register
-            async function checkNameAndProceed(name) {
-                try {
-                    const response = await fetch(apiBase + '/signup/check-name?name=' + encodeURIComponent(name));
-                    const data = await response.json();
+                
+                if (!phone) {
+                    errorDiv.textContent = 'Please enter your phone number';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                
+                const phoneDigits = phone.replace(/\D/g, '');
+                if (phoneDigits.length !== 10) {
+                    errorDiv.textContent = 'Phone must be 10 digits';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                
+                // If user was selected from autocomplete, verify phone matches
+                if (userData && userData.id) {
+                    // Show loading state
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Verifying...';
                     
-                    if (data.exists) {
-                        // User exists - prompt for phone to "login"
-                        document.getElementById('user-phone').placeholder = 'Enter your phone to continue';
-                        document.getElementById('step2-indicator').textContent = '2. Verify Phone';
-                        userData = { name: name, existingUser: true };
-                        showStep(2);
-                    } else {
-                        // New user - prompt for phone to "register"
-                        document.getElementById('user-phone').placeholder = 'Enter your phone number';
-                        document.getElementById('step2-indicator').textContent = '2. Register Phone';
-                        userData = { name: name, existingUser: false };
-                        showStep(2);
+                    try {
+                        const response = await fetch(apiBase + '/signup/verify-user', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: userData.id, phone: phoneDigits })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.valid) {
+                            userData = { id: userData.id, name: data.user.name, phone: phoneDigits };
+                            errorDiv.classList.add('hidden');
+                            showStep(2);
+                        } else {
+                            let errorMessage = data.message || 'Phone number does not match this user';
+                            if (adminEmail) {
+                                errorMessage += '. If you think this is an error, please <a href="mailto:' + adminEmail + '?subject=Sign-up%20Issue">Email Us</a>';
+                            }
+                            errorDiv.innerHTML = errorMessage;
+                            errorDiv.classList.remove('hidden');
+                        }
+                    } catch (error) {
+                        console.error('Error verifying user:', error);
+                        errorDiv.textContent = 'Error verifying phone number. Please try again.';
+                        errorDiv.classList.remove('hidden');
+                    } finally {
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Next';
                     }
-                } catch (error) {
-                    console.error('Error checking name:', error);
-                    document.getElementById('step1-error').textContent = 'Error checking name. Please try again.';
-                    document.getElementById('step1-error').classList.remove('hidden');
+                } else {
+                    // New user - just store and proceed
+                    userData = { name: name, phone: phoneDigits };
+                    showStep(2);
                 }
-            }
-
-            document.getElementById('step2-back').addEventListener('click', () => showStep(1));
-
-            // Step 3: Date Selection
+            });
+            
+            // User Step 2: Team Selection → Next
+            document.getElementById('user-step2-next').addEventListener('click', function() {
+                const teamSearch = document.getElementById('user-team-search').value.trim();
+                const newTeamName = document.getElementById('user-new-team').value.trim();
+                const errorDiv = document.getElementById('user-step2-error');
+                
+                errorDiv.classList.add('hidden');
+                
+                if (!selectedTeam && !newTeamName) {
+                    errorDiv.textContent = 'Please select or create a team';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                
+                if (newTeamName) {
+                    selectedTeam = { id: null, name: newTeamName, isNew: true };
+                }
+                
+                loadCampaigns();
+                showStep(3);
+            });
+            
+            // User Step 2: Back button
+            document.getElementById('user-step2-back').addEventListener('click', () => showStep(1));
+            
+            // ========== SHARED STEP 3 HANDLERS ==========
+            
+            // Step 3: Date Selection - Load campaigns
             async function loadCampaigns() {
                 try {
                     const response = await fetch(apiBase + '/campaigns');
                     const campaigns = await response.json();
-                    
-                    console.log('Campaigns loaded:', campaigns);
                     
                     const checkboxesDiv = document.getElementById('dates-checkboxes');
                     if (!campaigns || campaigns.length === 0) {
                         checkboxesDiv.innerHTML = '<p class="help-text">No selling dates available yet. Check back soon!</p>';
                     } else {
                         checkboxesDiv.innerHTML = campaigns.map(campaign => {
-                            const date = new Date(campaign.date + 'T00:00:00'); // Force local timezone
+                            const date = new Date(campaign.date + 'T00:00:00');
                             const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
                             return `
                                 <div class="checkbox-item">
@@ -6577,6 +6545,7 @@ function subsales_serve_signup_page() {
                 }
             }
 
+            // Step 3: Submit signup
             document.getElementById('step3-submit').addEventListener('click', async function() {
                 const selectedDates = Array.from(document.querySelectorAll('#dates-checkboxes input:checked')).map(cb => cb.value);
                 
@@ -6617,16 +6586,11 @@ function subsales_serve_signup_page() {
                 }
             });
 
-            document.getElementById('step3-back').addEventListener('click', () => {
-                if (signupMode === 'user') {
-                    // Go back to team selection (which is step1)
-                    showTeamSelectionForUserMode();
-                } else {
-                    showStep(2);
-                }
-            });
+            // Step 3: Back button
+            document.getElementById('step3-back').addEventListener('click', () => showStep(2));
 
-            // Mini Registration Page
+            // ========== MINI REGISTRATION PAGE ==========
+            
             async function loadUserRegistrations() {
                 document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
                 document.getElementById('mini-reg').classList.remove('hidden');
@@ -6671,8 +6635,14 @@ function subsales_serve_signup_page() {
 
             document.getElementById('add-another-team').addEventListener('click', function() {
                 selectedTeam = null;
-                document.getElementById('team-search').value = '';
-                document.getElementById('new-team-name').value = '';
+                // Clear appropriate fields based on mode
+                if (signupMode === 'legacy') {
+                    document.getElementById('legacy-team-search').value = '';
+                    document.getElementById('legacy-new-team').value = '';
+                } else {
+                    document.getElementById('user-team-search').value = '';
+                    document.getElementById('user-new-team').value = '';
+                }
                 document.getElementById('mini-reg').classList.add('hidden');
                 showStep(1);
             });
