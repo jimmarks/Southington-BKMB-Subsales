@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.98
+ * Version: 2.2.1.99
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -12491,6 +12491,16 @@ function subsales_rest_check_name( $request ) {
 function subsales_rest_submit_signup( $request ) {
     global $wpdb;
     
+    // Rate limiting: Check for recent signups from same IP
+    $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
+    $transient_key = 'signup_limit_' . md5( $ip_address );
+    $recent_signups = get_transient( $transient_key );
+    
+    if ( $recent_signups && $recent_signups >= 5 ) {
+        subsales_log( 'WARNING', 'signup', 'Rate limit exceeded', array( 'ip' => $ip_address ) );
+        return new WP_Error( 'rate_limit', 'Too many signup attempts. Please try again later.', array( 'status' => 429 ) );
+    }
+    
     $params = $request->get_json_params();
     
     if ( ! isset( $params['team'], $params['user'], $params['campaign_ids'] ) ) {
@@ -12501,27 +12511,51 @@ function subsales_rest_submit_signup( $request ) {
     $user = $params['user'];
     $campaign_ids = $params['campaign_ids'];
     
-    // Validate phone number
-    $phone = preg_replace( '/\D/', '', $user['phone'] );
+    // Validate and sanitize inputs
+    if ( ! is_array( $campaign_ids ) || empty( $campaign_ids ) ) {
+        return new WP_Error( 'invalid_dates', 'At least one date must be selected', array( 'status' => 400 ) );
+    }
+    
+    // Validate phone number (must be exactly 10 digits)
+    $phone = preg_replace( '/\D/', '', $user['phone'] ?? '' );
     if ( strlen( $phone ) !== 10 ) {
         return new WP_Error( 'invalid_phone', 'Phone must be 10 digits', array( 'status' => 400 ) );
     }
     
-    $user_name = sanitize_text_field( $user['name'] );
-    if ( empty( $user_name ) ) {
-        return new WP_Error( 'invalid_name', 'Name is required', array( 'status' => 400 ) );
+    // Validate and sanitize name (no HTML, max 100 chars)
+    $user_name = sanitize_text_field( $user['name'] ?? '' );
+    $user_name = substr( $user_name, 0, 100 );
+    if ( empty( $user_name ) || strlen( $user_name ) < 2 ) {
+        return new WP_Error( 'invalid_name', 'Name must be at least 2 characters', array( 'status' => 400 ) );
     }
+    
+    // Increment rate limit counter (expires after 15 minutes)
+    set_transient( $transient_key, ( $recent_signups ?: 0 ) + 1, 15 * MINUTE_IN_SECONDS );
     
     // 1. Get or create team
     $team_id = null;
     $teams_table = $wpdb->prefix . 'ss_teams';
     
     if ( ! empty( $team['id'] ) ) {
-        // Existing team
+        // Existing team - verify it exists
         $team_id = intval( $team['id'] );
+        $team_exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$teams_table} WHERE id = %d AND status = 'active'",
+            $team_id
+        ) );
+        
+        if ( ! $team_exists ) {
+            return new WP_Error( 'invalid_team', 'Selected team does not exist', array( 'status' => 400 ) );
+        }
     } elseif ( ! empty( $team['name'] ) ) {
-        // Create new team
+        // Create new team - validate name
         $team_name = sanitize_text_field( $team['name'] );
+        $team_name = substr( $team_name, 0, 100 );
+        
+        if ( empty( $team_name ) || strlen( $team_name ) < 2 ) {
+            return new WP_Error( 'invalid_team_name', 'Team name must be at least 2 characters', array( 'status' => 400 ) );
+        }
+        
         $access_code = strtoupper( substr( md5( $team_name . time() ), 0, 8 ) );
         
         $wpdb->insert( $teams_table, array(
