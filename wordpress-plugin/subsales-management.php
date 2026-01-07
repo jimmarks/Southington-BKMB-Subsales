@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.101
+ * Version: 2.2.1.102
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6097,7 +6097,7 @@ function subsales_serve_signup_page() {
 
                 <!-- Step 1: Select/Create Team -->
                 <div id="step1" class="step-content">
-                    <h2>Step 1: Select or Create Team</h2>
+                    <h2 id="step1-heading">Step 1: Select or Create Team</h2>
                     <div class="form-group">
                         <label for="team-search">Search for Your Team</label>
                         <input type="text" id="team-search" placeholder="Start typing team name...">
@@ -6114,7 +6114,7 @@ function subsales_serve_signup_page() {
 
                 <!-- Step 2: Enter User Info -->
                 <div id="step2" class="step-content hidden">
-                    <h2>Step 2: Your Information</h2>
+                    <h2 id="step2-heading">Step 2: Your Information</h2>
                     <div class="form-group">
                         <label for="user-name">Your Name (Required)</label>
                         <input type="text" id="user-name" placeholder="Start typing your name..." required>
@@ -6133,7 +6133,7 @@ function subsales_serve_signup_page() {
 
                 <!-- Step 3: Select Dates -->
                 <div id="step3" class="step-content hidden">
-                    <h2>Step 3: Select Selling Dates</h2>
+                    <h2 id="step3-heading">Step 3: Select Selling Dates</h2>
                     <div class="form-group">
                         <label>Which dates will you be selling?</label>
                         <div id="dates-checkboxes" class="checkbox-group">
@@ -6199,12 +6199,30 @@ function subsales_serve_signup_page() {
                 let actualStep;
                 if (signupMode === 'user') {
                     // User mode: step1=userInfo(step2), step2=team(step1), step3=dates(step3)
-                    if (step === 1) actualStep = 'step2'; // Show user info
-                    else if (step === 2) actualStep = 'step1'; // Show team
-                    else actualStep = 'step3'; // Show dates
+                    if (step === 1) {
+                        actualStep = 'step2'; // Show user info
+                        document.getElementById('step2-heading').textContent = 'Step 1: Your Information';
+                        document.getElementById('step2-back').classList.add('hidden'); // Hide back on first step
+                    }
+                    else if (step === 2) {
+                        actualStep = 'step1'; // Show team
+                        document.getElementById('step1-heading').textContent = 'Step 2: Select or Create Team';
+                    }
+                    else {
+                        actualStep = 'step3'; // Show dates
+                        document.getElementById('step3-heading').textContent = 'Step 3: Select Selling Dates';
+                    }
                 } else {
                     // Legacy mode: step1=team(step1), step2=userInfo(step2), step3=dates(step3)
                     actualStep = 'step' + step;
+                    document.getElementById('step1-heading').textContent = 'Step 1: Select or Create Team';
+                    document.getElementById('step2-heading').textContent = 'Step 2: Your Information';
+                    document.getElementById('step3-heading').textContent = 'Step 3: Select Selling Dates';
+                    if (step === 1) {
+                        // No back button on step 1 in legacy mode either (though it's hidden anyway)
+                    } else {
+                        document.getElementById('step2-back').classList.remove('hidden');
+                    }
                 }
                 
                 document.getElementById(actualStep).classList.remove('hidden');
@@ -6324,32 +6342,33 @@ function subsales_serve_signup_page() {
                     showStep(2);
                 } else {
                     // User mode: Step 1 = User Info (Name AND Phone required)
+                    // In user mode, step 1 displays the step2 div, so errors go in step2-error
                     const name = document.getElementById('user-name').value.trim();
                     const phone = document.getElementById('user-phone').value.trim();
                     
                     if (!name) {
-                        document.getElementById('step1-error').textContent = 'Please enter your name';
-                        document.getElementById('step1-error').classList.remove('hidden');
+                        document.getElementById('step2-error').textContent = 'Please enter your name';
+                        document.getElementById('step2-error').classList.remove('hidden');
                         return;
                     }
                     
                     if (!phone) {
-                        document.getElementById('step1-error').textContent = 'Please enter your phone number';
-                        document.getElementById('step1-error').classList.remove('hidden');
+                        document.getElementById('step2-error').textContent = 'Please enter your phone number';
+                        document.getElementById('step2-error').classList.remove('hidden');
                         return;
                     }
                     
                     // Validate phone format (10 digits)
                     const phoneDigits = phone.replace(/\D/g, '');
                     if (phoneDigits.length !== 10) {
-                        document.getElementById('step1-error').textContent = 'Phone must be 10 digits';
-                        document.getElementById('step1-error').classList.remove('hidden');
+                        document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
+                        document.getElementById('step2-error').classList.remove('hidden');
                         return;
                     }
                     
                     // Store user data and proceed to team selection
                     userData = { name: name, phone: phoneDigits };
-                    document.getElementById('step1-error').classList.add('hidden');
+                    document.getElementById('step2-error').classList.add('hidden');
                     showStep(2);
                 }
             });
