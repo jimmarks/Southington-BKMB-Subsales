@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.117
+ * Version: 2.2.1.118
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -12593,7 +12593,7 @@ function subsales_rest_get_campaigns( $request ) {
     }
     
     $campaigns = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, date, status FROM {$table} WHERE status = %s ORDER BY date ASC",
+        "SELECT id, campaign_date as date, campaign_name as name, status FROM {$table} WHERE status = %s ORDER BY campaign_date ASC",
         'active'
     ), ARRAY_A );
     
