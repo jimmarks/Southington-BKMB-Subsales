@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.74
+ * Version: 2.2.1.75
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -1131,6 +1131,15 @@ function order_sync_admin_menu() {
         'order_sync_delivery_page'
     );
     
+    add_submenu_page(
+        'subsales-management',
+        'Campaign Dates',
+        'Campaigns',
+        'manage_options',
+        'subsales-campaigns',
+        'subsales_campaigns_page'
+    );
+    
     // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
     // add_submenu_page(
     //     'subsales-management',
@@ -1170,6 +1179,11 @@ function order_sync_admin_menu() {
 add_action( 'wp_ajax_subsales_search_address', 'subsales_search_address_preview' );
 add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_openaddresses_zips' );
 add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
+
+// AJAX handlers for campaign management
+add_action( 'wp_ajax_subsales_toggle_campaign', 'subsales_ajax_toggle_campaign' );
+add_action( 'wp_ajax_subsales_delete_campaign', 'subsales_ajax_delete_campaign' );
+add_action( 'wp_ajax_subsales_get_campaign_signups', 'subsales_ajax_get_campaign_signups' );
 
 // NOTE: The following AJAX hooks are now registered in Subsales_AJAX_Handlers::init():
 // - subsales_toggle_debug
@@ -6675,6 +6689,14 @@ function order_sync_handle_generate_delivery() {
     exit;
 }
 
+// Campaign Dates Admin Page - visual calendar for managing selling dates
+function subsales_campaigns_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/campaigns-page.php';
+}
+
 // System Logs page - view all logging activity with filters
 function subsales_logs_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -11421,6 +11443,196 @@ function order_sync_orders_page() {
             return products.map(p => p.name + ' ×' + p.qty).join(', ');
         }
     };
+</script>
+<?php
+}
+
+// ========================================
+// Campaign AJAX Handlers
+// ========================================
+
+/**
+ * Toggle campaign date (activate/deactivate)
+ */
+function subsales_ajax_toggle_campaign() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $date = isset( $_POST['date'] ) ? sanitize_text_field( $_POST['date'] ) : '';
+    $action = isset( $_POST['campaign_action'] ) ? sanitize_text_field( $_POST['campaign_action'] ) : '';
+    
+    if ( ! $date || ! $action ) {
+        wp_send_json_error( array( 'message' => 'Missing parameters' ) );
+    }
+    
+    // Validate date format
+    if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) ) {
+        wp_send_json_error( array( 'message' => 'Invalid date format' ) );
+    }
+    
+    // Check if campaign exists
+    $campaign = Subsales_Database::get_campaign_by_date( $date );
+    
+    if ( $action === 'activate' ) {
+        if ( $campaign ) {
+            // Update existing campaign to active
+            $result = Subsales_Database::toggle_campaign_status( $campaign['id'], 'active' );
+        } else {
+            // Create new campaign
+            $result = Subsales_Database::save_campaign( array(
+                'campaign_date' => $date,
+                'campaign_name' => '',
+                'status' => 'active'
+            ) );
+        }
+        
+        if ( $result ) {
+            subsales_log( 'INFO', 'campaigns', 'Campaign date activated: ' . $date, array(), 'admin' );
+            wp_send_json_success( array( 'message' => 'Campaign activated' ) );
+        } else {
+            wp_send_json_error( array( 'message' => 'Failed to activate campaign' ) );
+        }
+    } elseif ( $action === 'deactivate' ) {
+        if ( $campaign ) {
+            $result = Subsales_Database::toggle_campaign_status( $campaign['id'], 'inactive' );
+            
+            if ( $result ) {
+                subsales_log( 'INFO', 'campaigns', 'Campaign date deactivated: ' . $date, array(), 'admin' );
+                wp_send_json_success( array( 'message' => 'Campaign deactivated' ) );
+            } else {
+                wp_send_json_error( array( 'message' => 'Failed to deactivate campaign' ) );
+            }
+        } else {
+            wp_send_json_error( array( 'message' => 'Campaign not found' ) );
+        }
+    } else {
+        wp_send_json_error( array( 'message' => 'Invalid action' ) );
+    }
+}
+
+/**
+ * Delete campaign date
+ */
+function subsales_ajax_delete_campaign() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $campaign_id = isset( $_POST['campaign_id'] ) ? intval( $_POST['campaign_id'] ) : 0;
+    
+    if ( ! $campaign_id ) {
+        wp_send_json_error( array( 'message' => 'Missing campaign ID' ) );
+    }
+    
+    $result = Subsales_Database::delete_campaign( $campaign_id );
+    
+    if ( $result ) {
+        subsales_log( 'INFO', 'campaigns', 'Campaign deleted: ID ' . $campaign_id, array(), 'admin' );
+        wp_send_json_success( array( 'message' => 'Campaign deleted' ) );
+    } else {
+        wp_send_json_error( array( 'message' => 'Cannot delete campaign with signups' ) );
+    }
+}
+
+/**
+ * Get campaign signups for modal display
+ */
+function subsales_ajax_get_campaign_signups() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $campaign_id = isset( $_POST['campaign_id'] ) ? intval( $_POST['campaign_id'] ) : 0;
+    
+    if ( ! $campaign_id ) {
+        wp_send_json_error( array( 'message' => 'Missing campaign ID' ) );
+    }
+    
+    $campaign = Subsales_Database::get_campaign( $campaign_id );
+    
+    if ( ! $campaign ) {
+        wp_send_json_error( array( 'message' => 'Campaign not found' ) );
+    }
+    
+    $signups = Subsales_Database::get_signups( array(
+        'campaign_id' => $campaign_id,
+        'status' => 'active'
+    ) );
+    
+    // Group by team
+    $teams = array();
+    foreach ( $signups as $signup ) {
+        $team_id = $signup['team_id'];
+        if ( ! isset( $teams[ $team_id ] ) ) {
+            $teams[ $team_id ] = array(
+                'team_name' => $signup['team_name'],
+                'members' => array(),
+                'driver' => null
+            );
+        }
+        
+        $member = array(
+            'name' => $signup['user_name'],
+            'phone' => $signup['user_phone'],
+            'email' => $signup['user_email']
+        );
+        
+        if ( $signup['is_driver'] ) {
+            $teams[ $team_id ]['driver'] = $member;
+        } else {
+            $teams[ $team_id ]['members'][] = $member;
+        }
+    }
+    
+    // Build HTML
+    $date_formatted = date( 'F j, Y', strtotime( $campaign['campaign_date'] ) );
+    $html = '<h2>Signups for ' . esc_html( $date_formatted ) . '</h2>';
+    
+    if ( empty( $teams ) ) {
+        $html .= '<p>No signups yet for this date.</p>';
+    } else {
+        $html .= '<div class="subsales-signups-list">';
+        
+        foreach ( $teams as $team ) {
+            $html .= '<div class="subsales-signup-team">';
+            $html .= '<h3>' . esc_html( $team['team_name'] ) . '</h3>';
+            
+            if ( $team['driver'] ) {
+                $html .= '<p><strong>Driver:</strong> ' . esc_html( $team['driver']['name'] );
+                if ( $team['driver']['phone'] ) {
+                    $html .= ' (' . esc_html( $team['driver']['phone'] ) . ')';
+                }
+                $html .= '</p>';
+            }
+            
+            if ( ! empty( $team['members'] ) ) {
+                $html .= '<p><strong>Members:</strong></p><ul>';
+                foreach ( $team['members'] as $member ) {
+                    $html .= '<li>' . esc_html( $member['name'] );
+                    if ( $member['phone'] ) {
+                        $html .= ' (' . esc_html( $member['phone'] ) . ')';
+                    }
+                    $html .= '</li>';
+                }
+                $html .= '</ul>';
+            }
+            
+            $html .= '</div>';
+        }
+        
+        $html .= '</div>';
+    }
+    
+    wp_send_json_success( array( 'html' => $html ) );
+}
+
     </script>
     <?php
 }
