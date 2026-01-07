@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.105
+ * Version: 2.2.1.106
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6459,73 +6459,6 @@ function subsales_serve_signup_page() {
                     document.getElementById('step1-error').textContent = 'Error checking name. Please try again.';
                     document.getElementById('step1-error').classList.remove('hidden');
                 }
-            }
-
-            // Step 2: User Info (Legacy mode) OR Phone Verification (User mode) OR Team Selection (User mode after phone)
-            document.getElementById('step2-next').addEventListener('click', async function() {
-                if (signupMode === 'legacy') {
-                    // Legacy mode: Step 2 = User Info
-                    const phone = document.getElementById('user-phone').value.trim();
-                    const name = document.getElementById('user-name').value.trim();
-                    
-                    if (!phone || !name) {
-                        document.getElementById('step2-error').textContent = 'Please fill in all fields';
-                        document.getElementById('step2-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    userData = { phone, name };
-                    
-                    // Load available campaigns for step 3
-                    await loadCampaigns();
-                    
-                    showStep(3);
-                } else {
-                    // User mode: Step 2 = Phone (then go to team selection)
-                    const phone = document.getElementById('user-phone').value.trim();
-                    
-                    if (!phone) {
-                        document.getElementById('step2-error').textContent = 'Please enter your phone number';
-                        document.getElementById('step2-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    userData.phone = phone;
-                    
-                    // Now show team selection (which is in step1 div but we'll repurpose)
-                    // For user mode, team comes after phone
-                    showTeamSelectionForUserMode();
-                }
-            });
-
-            function showTeamSelectionForUserMode() {
-                // Hide step2, show step1 content but label it as "Select Team"
-                document.getElementById('step2').classList.add('hidden');
-                document.getElementById('step1').classList.remove('hidden');
-                document.querySelectorAll('.step')[0].classList.add('completed');
-                document.querySelectorAll('.step')[1].classList.add('active');
-                document.getElementById('step2-indicator').textContent = '2. Team';
-                
-                // Update step1 button to go to dates
-                const step1Next = document.getElementById('step1-next');
-                step1Next.onclick = async function() {
-                    const teamSearch = document.getElementById('team-search').value.trim();
-                    const newTeamName = document.getElementById('new-team-name').value.trim();
-                    
-                    if (!selectedTeam && !newTeamName) {
-                        document.getElementById('step1-error').textContent = 'Please select or create a team';
-                        document.getElementById('step1-error').classList.remove('hidden');
-                        return;
-                    }
-                    
-                    if (newTeamName) {
-                        selectedTeam = { id: null, name: newTeamName, isNew: true };
-                    }
-                    
-                    // Load campaigns
-                    await loadCampaigns();
-                    showStep(3);
-                };
             }
 
             document.getElementById('step2-back').addEventListener('click', () => showStep(1));
