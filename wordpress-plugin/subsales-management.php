@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.102
+ * Version: 2.2.1.103
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6366,13 +6366,58 @@ function subsales_serve_signup_page() {
                         return;
                     }
                     
-                    // Store user data and proceed to team selection
-                    userData = { name: name, phone: phoneDigits };
-                    document.getElementById('step2-error').classList.add('hidden');
-                    showStep(2);
+                    // If user was selected from autocomplete, verify phone matches user ID in database
+                    if (userData && userData.id) {
+                        verifyUserAndProceed(userData.id, phoneDigits);
+                    } else {
+                        // New user - just store and proceed
+                        userData = { name: name, phone: phoneDigits };
+                        document.getElementById('step2-error').classList.add('hidden');
+                        showStep(2);
+                    }
                 }
             });
 
+            // Verify user ID and phone match in database
+            async function verifyUserAndProceed(userId, phone) {
+                const errorDiv = document.getElementById('step2-error');
+                const nextBtn = document.getElementById('step1-next');
+                
+                // Show loading state
+                nextBtn.disabled = true;
+                nextBtn.textContent = 'Verifying...';
+                errorDiv.classList.add('hidden');
+                
+                try {
+                    const response = await fetch(apiBase + '/signup/verify-user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: userId, phone: phone })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.valid) {
+                        // Phone matches - store user data and proceed
+                        userData = { id: userId, name: data.user.name, phone: phone };
+                        errorDiv.classList.add('hidden');
+                        showStep(2);
+                    } else {
+                        // Phone doesn't match
+                        errorDiv.textContent = data.message || 'Phone number does not match this user';
+                        errorDiv.classList.remove('hidden');
+                    }
+                } catch (error) {
+                    console.error('Error verifying user:', error);
+                    errorDiv.textContent = 'Error verifying phone number. Please try again.';
+                    errorDiv.classList.remove('hidden');
+                } finally {
+                    // Reset button state
+                    nextBtn.disabled = false;
+                    nextBtn.textContent = 'Next';
+                }
+            }
+            
             // User-based mode: Check name and handle login/register
             async function checkNameAndProceed(name) {
                 try {
@@ -12441,6 +12486,54 @@ function subsales_rest_search_teams( $request ) {
     }
     
     return rest_ensure_response( $teams );
+}
+
+/**
+ * Verify user ID and phone number match
+ * POST /wp-json/order-manager/v1/signup/verify-user
+ * Body: {"user_id": 123, "phone": "8604187663"}
+ */
+function subsales_rest_verify_user( $request ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_team_members';
+    
+    $user_id = $request->get_param( 'user_id' );
+    $phone = $request->get_param( 'phone' );
+    
+    // Validate inputs
+    if ( empty( $user_id ) || empty( $phone ) ) {
+        return new WP_Error( 'missing_params', 'User ID and phone are required', array( 'status' => 400 ) );
+    }
+    
+    // Strip non-digits from phone
+    $phone = preg_replace( '/\D/', '', $phone );
+    
+    if ( strlen( $phone ) !== 10 ) {
+        return new WP_Error( 'invalid_phone', 'Phone must be 10 digits', array( 'status' => 400 ) );
+    }
+    
+    // Check if user ID and phone match in database
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id, name, phone FROM {$table} WHERE id = %d AND phone = %s",
+        $user_id,
+        $phone
+    ), ARRAY_A );
+    
+    if ( ! $user ) {
+        return rest_ensure_response( array(
+            'valid' => false,
+            'message' => 'Phone number does not match our records for this user'
+        ) );
+    }
+    
+    return rest_ensure_response( array(
+        'valid' => true,
+        'user' => array(
+            'id' => $user['id'],
+            'name' => $user['name']
+            // Do NOT return phone for security
+        )
+    ) );
 }
 
 /**
