@@ -233,12 +233,14 @@ class Subsales_REST_API {
             'permission_callback' => '__return_true',
         ));
         
-        // Signup/Campaign API        register_rest_route( 'order-manager/v1', '/teams', array(
+        // Signup/Campaign API
+        register_rest_route( 'order-manager/v1', '/teams', array(
             'methods' => 'GET',
             'callback' => 'subsales_rest_search_teams',
             'permission_callback' => '__return_true',
         ));
-                register_rest_route( 'order-manager/v1', '/campaigns', array(
+        
+        register_rest_route( 'order-manager/v1', '/campaigns', array(
             'methods' => 'GET',
             'callback' => 'subsales_rest_get_campaigns',
             'permission_callback' => '__return_true',
