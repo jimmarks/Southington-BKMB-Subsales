@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.108
+ * Version: 2.2.1.109
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6275,10 +6275,8 @@ function subsales_serve_signup_page() {
             // Step 2: Name autocomplete (User mode)
             const userNameField = document.getElementById('user-name');
             if (userNameField) {
-                console.log('SUBSALES: Name autocomplete listener attached');
                 userNameField.addEventListener('input', async function(e) {
                     const query = e.target.value.trim();
-                    console.log('SUBSALES: Name input event, query:', query);
                     
                     if (query.length < 2) {
                         document.getElementById('name-results').innerHTML = '';
@@ -6287,10 +6285,8 @@ function subsales_serve_signup_page() {
                     
                     try {
                         const url = apiBase + '/users/search?name=' + encodeURIComponent(query);
-                        console.log('SUBSALES: Fetching:', url);
                         const response = await fetch(url);
                         const data = await response.json();
-                        console.log('SUBSALES: User search results:', data);
                         
                         const resultsDiv = document.getElementById('name-results');
                         if (data.length === 0) {
@@ -6327,7 +6323,6 @@ function subsales_serve_signup_page() {
 
             // Handler for step 1 Next button
             function handleStep1Next() {
-                console.log('SUBSALES: handleStep1Next called, mode:', signupMode);
                 if (signupMode === 'legacy') {
                     // Legacy: Step 1 = Team
                     const teamSearch = document.getElementById('team-search').value.trim();
@@ -6371,12 +6366,9 @@ function subsales_serve_signup_page() {
                     }
                     
                     // If user was selected from autocomplete, verify phone matches user ID in database
-                    console.log('SUBSALES: userData before verification:', userData);
                     if (userData && userData.id) {
-                        console.log('SUBSALES: Calling verifyUserAndProceed with userId:', userData.id, 'phone:', phoneDigits);
                         verifyUserAndProceed(userData.id, phoneDigits);
                     } else {
-                        console.log('SUBSALES: New user - skipping verification');
                         // New user - just store and proceed
                         userData = { name: name, phone: phoneDigits };
                         document.getElementById('step2-error').classList.add('hidden');
@@ -6391,7 +6383,6 @@ function subsales_serve_signup_page() {
 
             // Verify user ID and phone match in database
             async function verifyUserAndProceed(userId, phone) {
-                console.log('SUBSALES: verifyUserAndProceed called with:', { userId, phone });
                 const errorDiv = document.getElementById('step2-error');
                 // In user mode, the visible button is step2-next; in legacy it would be step1-next (but legacy doesn't call this function)
                 const nextBtn = document.getElementById('step2-next');
@@ -6404,18 +6395,14 @@ function subsales_serve_signup_page() {
                 try {
                     const url = apiBase + '/signup/verify-user';
                     const payload = { user_id: userId, phone: phone };
-                    console.log('SUBSALES: Posting to:', url, 'payload:', payload);
-                    
+
                     const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    
-                    console.log('SUBSALES: Response status:', response.status);
+
                     const data = await response.json();
-                    console.log('SUBSALES: Response data:', data);
-                    
                     if (data.valid) {
                         // Phone matches - store user data and proceed
                         userData = { id: userId, name: data.user.name, phone: phone };
