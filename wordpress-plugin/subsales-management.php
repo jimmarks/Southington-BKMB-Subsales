@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.104
+ * Version: 2.2.1.105
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6323,7 +6323,9 @@ function subsales_serve_signup_page() {
                 console.error('SUBSALES: user-name field not found!');
             }
 
-            document.getElementById('step1-next').addEventListener('click', function() {
+            // Handler for step 1 Next button
+            function handleStep1Next() {
+                console.log('SUBSALES: handleStep1Next called, mode:', signupMode);
                 if (signupMode === 'legacy') {
                     // Legacy: Step 1 = Team
                     const teamSearch = document.getElementById('team-search').value.trim();
@@ -6379,13 +6381,18 @@ function subsales_serve_signup_page() {
                         showStep(2);
                     }
                 }
-            });
+            }
+            
+            // Attach to both buttons since User mode shows step2 div as step 1
+            document.getElementById('step1-next').addEventListener('click', handleStep1Next);
+            document.getElementById('step2-next').addEventListener('click', handleStep1Next);
 
             // Verify user ID and phone match in database
             async function verifyUserAndProceed(userId, phone) {
                 console.log('SUBSALES: verifyUserAndProceed called with:', { userId, phone });
                 const errorDiv = document.getElementById('step2-error');
-                const nextBtn = document.getElementById('step1-next');
+                // In user mode, the visible button is step2-next; in legacy it would be step1-next (but legacy doesn't call this function)
+                const nextBtn = document.getElementById('step2-next');
                 
                 // Show loading state
                 nextBtn.disabled = true;
