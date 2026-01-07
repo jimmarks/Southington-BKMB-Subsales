@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.120
+ * Version: 2.2.1.121
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -4805,14 +4805,14 @@ function order_sync_process_import_file( $tmp, $update_existing = false ) {
                 if ( empty( $team_name ) ) { $skipped++; continue; }
                 $access_code = isset( $map['access_code'] ) ? $row[$map['access_code']] : '';
                 $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE team_name = %s", $team_name ) );
+                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE name = %s", $team_name ) );
                 if ( $existing ) {
                     if ( $update_existing ) {
-                        $res = $wpdb->update( $table, array( 'access_code'=>$access_code ), array( 'team_name'=>$team_name ), array('%s'), array('%s') );
+                        $res = $wpdb->update( $table, array( 'access_code'=>$access_code ), array( 'name'=>$team_name ), array('%s'), array('%s') );
                         if ( $res !== false ) $updated++; else $skipped++;
                     } else { $skipped++; }
                 } else {
-                    $ins = $wpdb->insert( $table, array( 'team_name'=>$team_name,'access_code'=>$access_code,'created_at'=>$created_at ), array('%s','%s','%s') );
+                    $ins = $wpdb->insert( $table, array( 'name'=>$team_name,'access_code'=>$access_code,'created_at'=>$created_at ), array('%s','%s','%s') );
                     if ( $ins !== false ) $imported++; else $skipped++;
                 }
             }
