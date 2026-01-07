@@ -240,6 +240,12 @@ class Subsales_REST_API {
             'permission_callback' => '__return_true',
         ));
         
+        register_rest_route( 'order-manager/v1', '/users/search', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_search_users',
+            'permission_callback' => '__return_true',
+        ));
+        
         register_rest_route( 'order-manager/v1', '/campaigns', array(
             'methods' => 'GET',
             'callback' => 'subsales_rest_get_campaigns',

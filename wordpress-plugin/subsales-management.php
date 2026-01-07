@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.88
+ * Version: 2.2.1.89
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6117,8 +6117,9 @@ function subsales_serve_signup_page() {
                     <h2>Step 2: Your Information</h2>
                     <div class="form-group">
                         <label for="user-name">Your Name (Required)</label>
-                        <input type="text" id="user-name" placeholder="First and Last Name" required>
-                        <div class="help-text">Enter your full name</div>
+                        <input type="text" id="user-name" placeholder="Start typing your name..." required>
+                        <div id="name-results"></div>
+                        <div class="help-text">Select your name or enter a new one</div>
                     </div>
                     <div class="form-group">
                         <label for="user-phone">Phone Number (Required)</label>
@@ -6248,6 +6249,45 @@ function subsales_serve_signup_page() {
                     }
                 } catch (error) {
                     console.error('Error searching teams:', error);
+                }
+            });
+
+            // Step 2: Name autocomplete (User mode)
+            document.getElementById('user-name').addEventListener('input', async function(e) {
+                const query = e.target.value.trim();
+                if (query.length < 2) {
+                    document.getElementById('name-results').innerHTML = '';
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(apiBase + '/users/search?name=' + encodeURIComponent(query));
+                    const data = await response.json();
+                    
+                    const resultsDiv = document.getElementById('name-results');
+                    if (data.length === 0) {
+                        resultsDiv.innerHTML = '<p class="help-text">No matches found. Continue to register as new user.</p>';
+                    } else {
+                        resultsDiv.innerHTML = data.map(user => 
+                            `<button class="btn btn-secondary" style="margin: 5px 0;" data-user-id="${user.id}" data-user-name="${user.name}" data-user-phone="${user.phone}">${user.name} (${user.phone})</button>`
+                        ).join('');
+                        
+                        resultsDiv.querySelectorAll('button').forEach(btn => {
+                            btn.addEventListener('click', function() {
+                                document.getElementById('user-name').value = this.dataset.userName;
+                                document.getElementById('user-phone').value = this.dataset.userPhone;
+                                userData = { 
+                                    id: this.dataset.userId, 
+                                    name: this.dataset.userName, 
+                                    phone: this.dataset.userPhone,
+                                    existingUser: true 
+                                };
+                                document.getElementById('name-results').innerHTML = '';
+                            });
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error searching users:', error);
                 }
             });
 
@@ -12337,6 +12377,48 @@ function subsales_rest_search_teams( $request ) {
             "SELECT id, name, status FROM {$table} WHERE status = %s ORDER BY name ASC LIMIT 50",
             'active'
         ), ARRAY_A );
+    } else {
+        // Search teams by name
+        $teams = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name, status FROM {$table} WHERE status = %s AND name LIKE %s ORDER BY name ASC LIMIT 50",
+            'active',
+            '%' . $wpdb->esc_like( $search ) . '%'
+        ), ARRAY_A );
+    }
+    
+    if ( ! $teams ) {
+        return rest_ensure_response( array() );
+    }
+    
+    return rest_ensure_response( $teams );
+}
+
+/**
+ * Search users by name
+ * GET /wp-json/order-manager/v1/users/search?name=query
+ */
+function subsales_rest_search_users( $request ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_team_members';
+    
+    $search = $request->get_param( 'name' );
+    
+    if ( empty( $search ) || strlen( $search ) < 2 ) {
+        return rest_ensure_response( array() );
+    }
+    
+    // Search users by name
+    $users = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, name, phone FROM {$table} WHERE name LIKE %s ORDER BY name ASC LIMIT 20",
+        '%' . $wpdb->esc_like( $search ) . '%'
+    ), ARRAY_A );
+    
+    if ( ! $users ) {
+        return rest_ensure_response( array() );
+    }
+    
+    return rest_ensure_response( $users );
+}
     } else {
         // Search teams by name
         $teams = $wpdb->get_results( $wpdb->prepare(
