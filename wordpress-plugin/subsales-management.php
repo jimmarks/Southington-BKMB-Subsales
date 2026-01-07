@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.109
+ * Version: 2.2.1.110
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -8983,11 +8983,13 @@ function order_sync_settings_page() {
     if ( isset( $_POST['save_branding'] ) ) {
         check_admin_referer( 'order_sync_settings_nonce' );
         $branding = isset( $_POST['subsales_branding'] ) ? sanitize_text_field( $_POST['subsales_branding'] ) : '';
+        $admin_email = isset( $_POST['subsales_admin_email'] ) ? sanitize_email( $_POST['subsales_admin_email'] ) : '';
         $style_variant = isset( $_POST['style_variant'] ) ? sanitize_text_field( $_POST['style_variant'] ) : 'default';
         $primary_color = isset( $_POST['primary_color'] ) ? sanitize_text_field( $_POST['primary_color'] ) : '#2d6cdf';
         $header_image = isset( $_POST['subsales_header_image'] ) ? intval( $_POST['subsales_header_image'] ) : 0;
 
         update_option( 'subsales_branding', $branding );
+        update_option( 'subsales_admin_email', $admin_email );
         update_option( 'order_sync_style_variant', $style_variant );
         update_option( 'order_sync_primary_color', $primary_color );
         update_option( 'subsales_header_image', $header_image );
@@ -9130,6 +9132,7 @@ function order_sync_settings_page() {
     $portal_slug = get_option( 'order_sync_portal_slug', 'subsales-portal' );
     $delete_on_uninstall = get_option( 'subsales_delete_on_uninstall', 0 );
     $branding = get_option( 'subsales_branding', 'Subsales' );
+    $admin_email = get_option( 'subsales_admin_email', get_option( 'admin_email' ) );
     $style_variant = get_option( 'order_sync_style_variant', 'default' );
     $primary_color = get_option( 'order_sync_primary_color', '#2d6cdf' );
     $portal_url = esc_url_raw( home_url( '/' . $portal_slug . '/' ) );
@@ -9303,6 +9306,13 @@ function order_sync_settings_page() {
                             <td>
                                 <input type="text" name="subsales_branding" value="<?php echo esc_attr( $branding ); ?>" class="regular-text" />
                                 <p class="description">Optional branding string that will be shown in the PWA header and admin pages.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Admin Contact Email</th>
+                            <td>
+                                <input type="email" name="subsales_admin_email" value="<?php echo esc_attr( $admin_email ); ?>" class="regular-text" />
+                                <p class="description">Email address for support inquiries. Shown to users when they encounter signup errors.</p>
                             </td>
                         </tr>
                         <tr>
