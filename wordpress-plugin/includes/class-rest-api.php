@@ -232,6 +232,37 @@ class Subsales_REST_API {
             'callback' => array( __CLASS__, 'pwa_log' ),
             'permission_callback' => '__return_true',
         ));
+        
+        // Signup/Campaign API
+        register_rest_route( 'order-manager/v1', '/campaigns', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_get_campaigns',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/signup', array(
+            'methods' => 'POST',
+            'callback' => 'subsales_rest_submit_signup',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/my-signups', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_get_my_signups',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/signup/check-name', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_check_name',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/signup/settings', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_signup_settings',
+            'permission_callback' => '__return_true',
+        ));
     }
     
     /**

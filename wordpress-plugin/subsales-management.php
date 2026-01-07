@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.79
+ * Version: 2.2.1.80
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6088,13 +6088,14 @@ function subsales_serve_signup_page() {
                 <div id="step2" class="step-content hidden">
                     <h2>Step 2: Your Information</h2>
                     <div class="form-group">
+                        <label for="user-name">Your Name (Required)</label>
+                        <input type="text" id="user-name" placeholder="First and Last Name" required>
+                        <div class="help-text">Enter your full name</div>
+                    </div>
+                    <div class="form-group">
                         <label for="user-phone">Phone Number (Required)</label>
                         <input type="tel" id="user-phone" placeholder="(860) 555-1234" required>
                         <div class="help-text">We'll use this to look up your existing registrations</div>
-                    </div>
-                    <div class="form-group">
-                        <label for="user-name">Your Name (Required)</label>
-                        <input type="text" id="user-name" placeholder="First and Last Name" required>
                     </div>
                     <button class="btn" id="step2-next">Next</button>
                     <button class="btn btn-secondary" id="step2-back">Back</button>
@@ -6130,6 +6131,25 @@ function subsales_serve_signup_page() {
             let currentStep = 1;
             let selectedTeam = null;
             let userData = null;
+            let signupMode = 'legacy'; // Will be set from API
+
+            // Load signup settings on page load
+            async function loadSettings() {
+                try {
+                    const response = await fetch(apiBase + '/signup/settings');
+                    const data = await response.json();
+                    signupMode = data.mode || 'legacy';
+                    
+                    // Update step indicators and labels based on mode
+                    if (signupMode === 'user') {
+                        document.getElementById('step1-indicator').textContent = '1. Your Info';
+                        document.getElementById('step2-indicator').textContent = '2. Team';
+                        document.getElementById('step3-indicator').textContent = '3. Dates';
+                    }
+                } catch (error) {
+                    console.error('Error loading settings:', error);
+                }
+            }
 
             // Step navigation
             function showStep(step) {
@@ -6145,7 +6165,7 @@ function subsales_serve_signup_page() {
                 currentStep = step;
             }
 
-            // Step 1: Team Selection
+            // Step 1: Team Selection (Legacy mode) OR User Info (User mode)
             document.getElementById('team-search').addEventListener('input', async function(e) {
                 const query = e.target.value.trim();
                 if (query.length < 2) {
@@ -6180,40 +6200,129 @@ function subsales_serve_signup_page() {
             });
 
             document.getElementById('step1-next').addEventListener('click', function() {
-                const teamSearch = document.getElementById('team-search').value.trim();
-                const newTeamName = document.getElementById('new-team-name').value.trim();
-                
-                if (!selectedTeam && !newTeamName) {
-                    document.getElementById('step1-error').textContent = 'Please select or create a team';
-                    document.getElementById('step1-error').classList.remove('hidden');
-                    return;
+                if (signupMode === 'legacy') {
+                    // Legacy: Step 1 = Team
+                    const teamSearch = document.getElementById('team-search').value.trim();
+                    const newTeamName = document.getElementById('new-team-name').value.trim();
+                    
+                    if (!selectedTeam && !newTeamName) {
+                        document.getElementById('step1-error').textContent = 'Please select or create a team';
+                        document.getElementById('step1-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    if (newTeamName) {
+                        selectedTeam = { id: null, name: newTeamName, isNew: true };
+                    }
+                    
+                    showStep(2);
+                } else {
+                    // User mode: Step 1 = User Info (Name first)
+                    const name = document.getElementById('user-name').value.trim();
+                    
+                    if (!name) {
+                        document.getElementById('step1-error').textContent = 'Please enter your name';
+                        document.getElementById('step1-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    // Check if name exists
+                    checkNameAndProceed(name);
                 }
-                
-                if (newTeamName) {
-                    selectedTeam = { id: null, name: newTeamName, isNew: true };
-                }
-                
-                showStep(2);
             });
 
-            // Step 2: User Info
-            document.getElementById('step2-next').addEventListener('click', async function() {
-                const phone = document.getElementById('user-phone').value.trim();
-                const name = document.getElementById('user-name').value.trim();
-                
-                if (!phone || !name) {
-                    document.getElementById('step2-error').textContent = 'Please fill in all fields';
-                    document.getElementById('step2-error').classList.remove('hidden');
-                    return;
+            // User-based mode: Check name and handle login/register
+            async function checkNameAndProceed(name) {
+                try {
+                    const response = await fetch(apiBase + '/signup/check-name?name=' + encodeURIComponent(name));
+                    const data = await response.json();
+                    
+                    if (data.exists) {
+                        // User exists - prompt for phone to "login"
+                        document.getElementById('user-phone').placeholder = 'Enter your phone to continue';
+                        document.getElementById('step2-indicator').textContent = '2. Verify Phone';
+                        userData = { name: name, existingUser: true };
+                        showStep(2);
+                    } else {
+                        // New user - prompt for phone to "register"
+                        document.getElementById('user-phone').placeholder = 'Enter your phone number';
+                        document.getElementById('step2-indicator').textContent = '2. Register Phone';
+                        userData = { name: name, existingUser: false };
+                        showStep(2);
+                    }
+                } catch (error) {
+                    console.error('Error checking name:', error);
+                    document.getElementById('step1-error').textContent = 'Error checking name. Please try again.';
+                    document.getElementById('step1-error').classList.remove('hidden');
                 }
-                
-                userData = { phone, name };
-                
-                // Load available campaigns for step 3
-                await loadCampaigns();
-                
-                showStep(3);
+            }
+
+            // Step 2: User Info (Legacy mode) OR Phone Verification (User mode) OR Team Selection (User mode after phone)
+            document.getElementById('step2-next').addEventListener('click', async function() {
+                if (signupMode === 'legacy') {
+                    // Legacy mode: Step 2 = User Info
+                    const phone = document.getElementById('user-phone').value.trim();
+                    const name = document.getElementById('user-name').value.trim();
+                    
+                    if (!phone || !name) {
+                        document.getElementById('step2-error').textContent = 'Please fill in all fields';
+                        document.getElementById('step2-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    userData = { phone, name };
+                    
+                    // Load available campaigns for step 3
+                    await loadCampaigns();
+                    
+                    showStep(3);
+                } else {
+                    // User mode: Step 2 = Phone (then go to team selection)
+                    const phone = document.getElementById('user-phone').value.trim();
+                    
+                    if (!phone) {
+                        document.getElementById('step2-error').textContent = 'Please enter your phone number';
+                        document.getElementById('step2-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    userData.phone = phone;
+                    
+                    // Now show team selection (which is in step1 div but we'll repurpose)
+                    // For user mode, team comes after phone
+                    showTeamSelectionForUserMode();
+                }
             });
+
+            function showTeamSelectionForUserMode() {
+                // Hide step2, show step1 content but label it as "Select Team"
+                document.getElementById('step2').classList.add('hidden');
+                document.getElementById('step1').classList.remove('hidden');
+                document.querySelectorAll('.step')[0].classList.add('completed');
+                document.querySelectorAll('.step')[1].classList.add('active');
+                document.getElementById('step2-indicator').textContent = '2. Team';
+                
+                // Update step1 button to go to dates
+                const step1Next = document.getElementById('step1-next');
+                step1Next.onclick = async function() {
+                    const teamSearch = document.getElementById('team-search').value.trim();
+                    const newTeamName = document.getElementById('new-team-name').value.trim();
+                    
+                    if (!selectedTeam && !newTeamName) {
+                        document.getElementById('step1-error').textContent = 'Please select or create a team';
+                        document.getElementById('step1-error').classList.remove('hidden');
+                        return;
+                    }
+                    
+                    if (newTeamName) {
+                        selectedTeam = { id: null, name: newTeamName, isNew: true };
+                    }
+                    
+                    // Load campaigns
+                    await loadCampaigns();
+                    showStep(3);
+                };
+            }
 
             document.getElementById('step2-back').addEventListener('click', () => showStep(1));
 
@@ -6221,14 +6330,16 @@ function subsales_serve_signup_page() {
             async function loadCampaigns() {
                 try {
                     const response = await fetch(apiBase + '/campaigns');
-                    const data = await response.json();
+                    const campaigns = await response.json();
+                    
+                    console.log('Campaigns loaded:', campaigns);
                     
                     const checkboxesDiv = document.getElementById('dates-checkboxes');
-                    if (data.length === 0) {
+                    if (!campaigns || campaigns.length === 0) {
                         checkboxesDiv.innerHTML = '<p class="help-text">No selling dates available yet. Check back soon!</p>';
                     } else {
-                        checkboxesDiv.innerHTML = data.map(campaign => {
-                            const date = new Date(campaign.date);
+                        checkboxesDiv.innerHTML = campaigns.map(campaign => {
+                            const date = new Date(campaign.date + 'T00:00:00'); // Force local timezone
                             const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
                             return `
                                 <div class="checkbox-item">
@@ -6272,6 +6383,7 @@ function subsales_serve_signup_page() {
                     if (response.ok) {
                         document.getElementById('step3-success').textContent = 'Signup complete! Loading your registrations...';
                         document.getElementById('step3-success').classList.remove('hidden');
+                        document.getElementById('step3-error').classList.add('hidden');
                         
                         setTimeout(() => {
                             loadUserRegistrations();
@@ -6286,7 +6398,14 @@ function subsales_serve_signup_page() {
                 }
             });
 
-            document.getElementById('step3-back').addEventListener('click', () => showStep(2));
+            document.getElementById('step3-back').addEventListener('click', () => {
+                if (signupMode === 'user') {
+                    // Go back to team selection (which is step1)
+                    showTeamSelectionForUserMode();
+                } else {
+                    showStep(2);
+                }
+            });
 
             // Mini Registration Page
             async function loadUserRegistrations() {
@@ -6298,7 +6417,7 @@ function subsales_serve_signup_page() {
                     const data = await response.json();
                     
                     const regList = document.getElementById('reg-list');
-                    if (data.length === 0) {
+                    if (!data || data.length === 0) {
                         regList.innerHTML = '<p>No registrations found.</p>';
                     } else {
                         regList.innerHTML = `
@@ -6312,7 +6431,7 @@ function subsales_serve_signup_page() {
                                 </thead>
                                 <tbody>
                                     ${data.map(reg => {
-                                        const date = new Date(reg.campaign_date);
+                                        const date = new Date(reg.campaign_date + 'T00:00:00');
                                         const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                                         return `
                                             <tr>
@@ -6338,6 +6457,9 @@ function subsales_serve_signup_page() {
                 document.getElementById('mini-reg').classList.add('hidden');
                 showStep(1);
             });
+
+            // Initialize on page load
+            loadSettings();
         </script>
     </body>
     </html>
@@ -12127,5 +12249,281 @@ function subsales_ajax_get_campaign_signups() {
     }
     
     wp_send_json_success( array( 'html' => $html ) );
+}
+
+// ============================================================
+// SIGNUP / CAMPAIGN REST API HANDLERS
+// ============================================================
+
+/**
+ * Get signup settings (mode, etc.)
+ * GET /wp-json/order-manager/v1/signup/settings
+ */
+function subsales_rest_signup_settings( $request ) {
+    $mode = get_option( 'subsales_sales_mode', 'legacy' );
+    
+    return rest_ensure_response( array(
+        'mode' => $mode,
+        'brand_name' => get_option( 'subsales_branding', 'Subsales' ),
+    ) );
+}
+
+/**
+ * Get all active campaigns
+ * GET /wp-json/order-manager/v1/campaigns
+ */
+function subsales_rest_get_campaigns( $request ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_campaigns';
+    
+    $campaigns = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, date, status FROM {$table} WHERE status = %s ORDER BY date ASC",
+        'active'
+    ), ARRAY_A );
+    
+    if ( ! $campaigns ) {
+        return rest_ensure_response( array() );
+    }
+    
+    return rest_ensure_response( $campaigns );
+}
+
+/**
+ * Check if name exists in system
+ * GET /wp-json/order-manager/v1/signup/check-name?name=John+Doe
+ */
+function subsales_rest_check_name( $request ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'ss_team_members';
+    
+    $name = sanitize_text_field( $request->get_param( 'name' ) );
+    
+    if ( empty( $name ) ) {
+        return new WP_Error( 'missing_name', 'Name is required', array( 'status' => 400 ) );
+    }
+    
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id, name, phone, email FROM {$table} WHERE name = %s LIMIT 1",
+        $name
+    ), ARRAY_A );
+    
+    if ( $existing ) {
+        return rest_ensure_response( array(
+            'exists' => true,
+            'user' => $existing
+        ) );
+    }
+    
+    return rest_ensure_response( array( 'exists' => false ) );
+}
+
+/**
+ * Submit signup (create/link user, team, signups)
+ * POST /wp-json/order-manager/v1/signup
+ * Body: { team: {id, name, isNew}, user: {phone, name}, campaign_ids: [1,2,3] }
+ */
+function subsales_rest_submit_signup( $request ) {
+    global $wpdb;
+    
+    $params = $request->get_json_params();
+    
+    if ( ! isset( $params['team'], $params['user'], $params['campaign_ids'] ) ) {
+        return new WP_Error( 'missing_data', 'Missing required fields', array( 'status' => 400 ) );
+    }
+    
+    $team = $params['team'];
+    $user = $params['user'];
+    $campaign_ids = $params['campaign_ids'];
+    
+    // Validate phone number
+    $phone = preg_replace( '/\D/', '', $user['phone'] );
+    if ( strlen( $phone ) !== 10 ) {
+        return new WP_Error( 'invalid_phone', 'Phone must be 10 digits', array( 'status' => 400 ) );
+    }
+    
+    $user_name = sanitize_text_field( $user['name'] );
+    if ( empty( $user_name ) ) {
+        return new WP_Error( 'invalid_name', 'Name is required', array( 'status' => 400 ) );
+    }
+    
+    // 1. Get or create team
+    $team_id = null;
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    
+    if ( ! empty( $team['id'] ) ) {
+        // Existing team
+        $team_id = intval( $team['id'] );
+    } elseif ( ! empty( $team['name'] ) ) {
+        // Create new team
+        $team_name = sanitize_text_field( $team['name'] );
+        $access_code = strtoupper( substr( md5( $team_name . time() ), 0, 8 ) );
+        
+        $wpdb->insert( $teams_table, array(
+            'name' => $team_name,
+            'access_code' => $access_code,
+            'status' => 'active',
+            'created_at' => current_time( 'mysql' )
+        ), array( '%s', '%s', '%s', '%s' ) );
+        
+        $team_id = $wpdb->insert_id;
+        
+        subsales_log( 'INFO', 'signup', 'New team created via signup', array(
+            'team_id' => $team_id,
+            'team_name' => $team_name
+        ) );
+    }
+    
+    if ( ! $team_id ) {
+        return new WP_Error( 'team_error', 'Failed to get or create team', array( 'status' => 500 ) );
+    }
+    
+    // 2. Get or create user
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    
+    $existing_user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id FROM {$members_table} WHERE phone = %s",
+        $phone
+    ) );
+    
+    if ( $existing_user ) {
+        $user_id = $existing_user->id;
+        
+        // Update name if different
+        $wpdb->update( $members_table, 
+            array( 'name' => $user_name ),
+            array( 'id' => $user_id ),
+            array( '%s' ),
+            array( '%d' )
+        );
+    } else {
+        // Create new user
+        $wpdb->insert( $members_table, array(
+            'name' => $user_name,
+            'phone' => $phone,
+            'email' => '',
+            'created_at' => current_time( 'mysql' )
+        ), array( '%s', '%s', '%s', '%s' ) );
+        
+        $user_id = $wpdb->insert_id;
+        
+        subsales_log( 'INFO', 'signup', 'New user created via signup', array(
+            'user_id' => $user_id,
+            'name' => $user_name,
+            'phone' => $phone
+        ) );
+    }
+    
+    if ( ! $user_id ) {
+        return new WP_Error( 'user_error', 'Failed to get or create user', array( 'status' => 500 ) );
+    }
+    
+    // 3. Link user to team if not already linked
+    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+    
+    $link_exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+        $user_id,
+        $team_id
+    ) );
+    
+    if ( ! $link_exists ) {
+        $wpdb->insert( $user_teams_table, array(
+            'user_id' => $user_id,
+            'team_id' => $team_id,
+            'created_at' => current_time( 'mysql' )
+        ), array( '%d', '%d', '%s' ) );
+    }
+    
+    // 4. Create signups for each campaign
+    $signups_table = $wpdb->prefix . 'ss_signups';
+    $created_signups = 0;
+    
+    foreach ( $campaign_ids as $campaign_id ) {
+        $campaign_id = intval( $campaign_id );
+        
+        // Check if signup already exists
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$signups_table} 
+            WHERE user_id = %d AND team_id = %d AND campaign_id = %d",
+            $user_id,
+            $team_id,
+            $campaign_id
+        ) );
+        
+        if ( ! $exists ) {
+            $wpdb->insert( $signups_table, array(
+                'user_id' => $user_id,
+                'team_id' => $team_id,
+                'campaign_id' => $campaign_id,
+                'driver_id' => null,
+                'created_at' => current_time( 'mysql' )
+            ), array( '%d', '%d', '%d', '%d', '%s' ) );
+            
+            $created_signups++;
+        }
+    }
+    
+    subsales_log( 'INFO', 'signup', 'Signup completed', array(
+        'user_id' => $user_id,
+        'team_id' => $team_id,
+        'campaigns' => count( $campaign_ids ),
+        'new_signups' => $created_signups
+    ) );
+    
+    return rest_ensure_response( array(
+        'success' => true,
+        'user_id' => $user_id,
+        'team_id' => $team_id,
+        'signups_created' => $created_signups
+    ) );
+}
+
+/**
+ * Get user's signups by phone number
+ * GET /wp-json/order-manager/v1/my-signups?phone=8605551234
+ */
+function subsales_rest_get_my_signups( $request ) {
+    global $wpdb;
+    
+    $phone = preg_replace( '/\D/', '', $request->get_param( 'phone' ) );
+    
+    if ( empty( $phone ) ) {
+        return new WP_Error( 'missing_phone', 'Phone number is required', array( 'status' => 400 ) );
+    }
+    
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $signups_table = $wpdb->prefix . 'ss_signups';
+    $teams_table = $wpdb->prefix . 'ss_teams';
+    $campaigns_table = $wpdb->prefix . 'ss_campaigns';
+    
+    $user = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id, name FROM {$members_table} WHERE phone = %s",
+        $phone
+    ) );
+    
+    if ( ! $user ) {
+        return rest_ensure_response( array() );
+    }
+    
+    $signups = $wpdb->get_results( $wpdb->prepare(
+        "SELECT 
+            s.id,
+            s.user_id,
+            s.team_id,
+            s.campaign_id,
+            s.driver_id,
+            t.name AS team_name,
+            c.date AS campaign_date,
+            driver.name AS driver_name
+        FROM {$signups_table} s
+        LEFT JOIN {$teams_table} t ON s.team_id = t.id
+        LEFT JOIN {$campaigns_table} c ON s.campaign_id = c.id
+        LEFT JOIN {$members_table} driver ON s.driver_id = driver.id
+        WHERE s.user_id = %d
+        ORDER BY c.date ASC",
+        $user->id
+    ), ARRAY_A );
+    
+    return rest_ensure_response( $signups );
 }
 
