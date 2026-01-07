@@ -170,12 +170,6 @@ class Subsales_REST_API {
             'permission_callback' => 'order_sync_check_permissions',
         ));
         
-        register_rest_route( 'order-manager/v1', '/users/search', array(
-            'methods' => 'GET',
-            'callback' => array( 'Subsales_Teams', 'search_users' ),
-            'permission_callback' => '__return_true', // Public for PWA login
-        ));
-        
         // Team Assignment API
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
             'methods' => 'GET',
