@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.122
+ * Version: 2.2.1.123
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6169,9 +6169,20 @@ function subsales_serve_signup_page() {
                     <div id="user-step1-error" class="error hidden"></div>
                 </div>
 
-                <!-- User Step 2: Select/Create Team -->
+                <!-- User Step 2: Current Registrations & Team Selection -->
                 <div id="user-step2" class="step-content hidden">
-                    <h2>Step 2: Select or Create Team</h2>
+                    <h2>Step 2: Your Registrations</h2>
+                    
+                    <!-- Show current registrations -->
+                    <div id="user-current-signups" class="current-signups">
+                        <h3>Current Sign-ups</h3>
+                        <div id="user-current-signups-list">Loading...</div>
+                    </div>
+                    
+                    <hr style="margin: 20px 0; border: 1px solid #ddd;">
+                    
+                    <!-- Add another team/date -->
+                    <h3>Sign Up for Another Date</h3>
                     <div class="form-group">
                         <label for="user-team-search">Search for Your Team</label>
                         <input type="text" id="user-team-search" placeholder="Start typing team name...">
@@ -6182,7 +6193,7 @@ function subsales_serve_signup_page() {
                         <input type="text" id="user-new-team" placeholder="Enter new team name">
                         <div class="help-text">New teams will be created with a default access code</div>
                     </div>
-                    <button class="btn" id="user-step2-next">Next</button>
+                    <button class="btn" id="user-step2-next">Next - Select Dates</button>
                     <button class="btn btn-secondary" id="user-step2-back">Back</button>
                     <div id="user-step2-error" class="error hidden"></div>
                 </div>
@@ -6222,6 +6233,7 @@ function subsales_serve_signup_page() {
             let currentStep = 1;
             let selectedTeam = null;
             let userData = null;
+            let userSignups = []; // Store user's existing signups
             let signupMode = 'legacy'; // Will be set from API
             let adminEmail = ''; // Will be set from API
 
@@ -6484,9 +6496,57 @@ function subsales_serve_signup_page() {
                 } else {
                     // New user - just store and proceed
                     userData = { name: name, phone: phoneDigits };
+                    await loadUserSignups(); // Load any existing signups
                     showStep(2);
                 }
             });
+            
+            // Load user's existing signups
+            async function loadUserSignups() {
+                if (!userData || !userData.phone) {
+                    userSignups = [];
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(apiBase + '/my-signups?phone=' + encodeURIComponent(userData.phone));
+                    const data = await response.json();
+                    userSignups = data || [];
+                    
+                    // Display in Step 2
+                    const listDiv = document.getElementById('user-current-signups-list');
+                    if (userSignups.length === 0) {
+                        listDiv.innerHTML = '<p class="help-text">You have no current registrations.</p>';
+                    } else {
+                        listDiv.innerHTML = `
+                            <table class="reg-table">
+                                <thead>
+                                    <tr>
+                                        <th>Team</th>
+                                        <th>Date</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${userSignups.map(reg => {
+                                        const date = new Date(reg.campaign_date + 'T00:00:00');
+                                        const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                                        const teamDisplay = reg.campaign_name ? `${reg.team_name} - ${reg.campaign_name}` : reg.team_name;
+                                        return `
+                                            <tr>
+                                                <td>${teamDisplay}</td>
+                                                <td>${formatted}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        `;
+                    }
+                } catch (error) {
+                    console.error('Error loading signups:', error);
+                    userSignups = [];
+                }
+            }
             
             // User Step 2: Team Selection → Next
             document.getElementById('user-step2-next').addEventListener('click', function() {
@@ -6521,22 +6581,33 @@ function subsales_serve_signup_page() {
                     const response = await fetch(apiBase + '/campaigns');
                     const campaigns = await response.json();
                     
+                    // Get list of dates user is already signed up for on this team
+                    const existingDates = userSignups
+                        .filter(signup => signup.team_id == selectedTeam.id)
+                        .map(signup => signup.campaign_date);
+                    
                     const checkboxesDiv = document.getElementById('dates-checkboxes');
                     if (!campaigns || campaigns.length === 0) {
                         checkboxesDiv.innerHTML = '<p class="help-text">No selling dates available yet. Check back soon!</p>';
                     } else {
-                        checkboxesDiv.innerHTML = campaigns.map(campaign => {
-                            const date = new Date(campaign.date + 'T00:00:00');
-                            const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-                            return `
-                                <div class="checkbox-item">
+                        const availableCampaigns = campaigns.filter(campaign => !existingDates.includes(campaign.date));
+                        
+                        if (availableCampaigns.length === 0) {
+                            checkboxesDiv.innerHTML = '<p class="help-text">You are already signed up for all available dates on this team!</p>';
+                        } else {
+                            checkboxesDiv.innerHTML = availableCampaigns.map(campaign => {
+                                const date = new Date(campaign.date + 'T00:00:00');
+                                const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+                                const displayName = campaign.name ? `${formatted} - ${campaign.name}` : formatted;
+                                return `
                                     <label>
-                                        <input type="checkbox" value="${campaign.id}" data-date="${campaign.date}">
-                                        <span>${formatted}</span>
+                                        <input type="checkbox" name="campaign" value="${campaign.id}">
+                                        ${displayName}
                                     </label>
-                                </div>
-                            `;
-                        }).join('');
+                                `;
+                            }).join('');
+                        }
+                        }
                     }
                 } catch (error) {
                     console.error('Error loading campaigns:', error);
@@ -6569,12 +6640,17 @@ function subsales_serve_signup_page() {
                     const result = await response.json();
                     
                     if (response.ok) {
-                        document.getElementById('step3-success').textContent = 'Signup complete! Loading your registrations...';
+                        document.getElementById('step3-success').textContent = 'Signup complete!';
                         document.getElementById('step3-success').classList.remove('hidden');
                         document.getElementById('step3-error').classList.add('hidden');
                         
-                        setTimeout(() => {
-                            loadUserRegistrations();
+                        // Reload signups and return to step 2
+                        setTimeout(async () => {
+                            await loadUserSignups();
+                            selectedTeam = null;
+                            document.getElementById('user-team-search').value = '';
+                            document.getElementById('user-new-team').value = '';
+                            showStep(2);
                         }, 1500);
                     } else {
                         throw new Error(result.message || 'Signup failed');
