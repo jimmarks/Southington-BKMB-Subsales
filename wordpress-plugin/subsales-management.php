@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.86
+ * Version: 2.2.1.87
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5710,9 +5710,13 @@ function subsales_haversine_distance( $lat1, $lon1, $lat2, $lon2 ){
 function subsales_serve_portal_assets() {
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
     
+    // Debug logging
+    error_log( 'SUBSALES DEBUG: template_redirect called, req_path=' . $req_path );
+    
     // Serve signup page at /signup/ endpoint (independent of portal)
     // Match: signup, signup/, signup/index.html
     if ( $req_path === 'signup' || strpos( $req_path, 'signup/' ) === 0 ) {
+        error_log( 'SUBSALES DEBUG: Serving signup page' );
         subsales_serve_signup_page();
         exit;
     }
