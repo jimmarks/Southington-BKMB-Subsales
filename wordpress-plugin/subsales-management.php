@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.87
+ * Version: 2.2.1.88
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5637,7 +5637,11 @@ function order_sync_get_plugin_version() {
 }
 
 // Serve portal assets from plugin folder at portal path
+// High priority (1) to intercept before WordPress routes to 404
 add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
+
+// Also try to catch 404s for signup
+add_action( 'wp', 'subsales_catch_signup_404', 1 );
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
 add_action( 'rest_api_init', function(){
@@ -5858,6 +5862,24 @@ function subsales_serve_portal_assets() {
             readfile( $file );
             exit;
         }
+    }
+}
+
+/**
+ * Catch signup 404s at wp hook (earlier than template_redirect)
+ */
+function subsales_catch_signup_404() {
+    $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
+    error_log( 'SUBSALES DEBUG: wp hook called, req_path=' . $req_path . ', is_404=' . ( is_404() ? 'yes' : 'no' ) );
+    
+    if ( $req_path === 'signup' || strpos( $req_path, 'signup/' ) === 0 ) {
+        error_log( 'SUBSALES DEBUG: wp hook - serving signup' );
+        // Mark as not 404
+        global $wp_query;
+        $wp_query->is_404 = false;
+        status_header( 200 );
+        subsales_serve_signup_page();
+        exit;
     }
 }
 
@@ -12290,10 +12312,11 @@ function subsales_ajax_get_campaign_signups() {
  * GET /wp-json/order-manager/v1/signup/settings
  */
 function subsales_rest_signup_settings( $request ) {
-    $mode = get_option( 'subsales_sales_mode', 'legacy' );
+    // Get login mode from settings (legacy = team-based, user = user-based)
+    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
     
     return rest_ensure_response( array(
-        'mode' => $mode,
+        'mode' => $login_mode,
         'brand_name' => get_option( 'subsales_branding', 'Subsales' ),
     ) );
 }
