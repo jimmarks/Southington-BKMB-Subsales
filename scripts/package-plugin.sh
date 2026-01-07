@@ -32,6 +32,23 @@ echo "New version: $NEW_VERSION"
 sed -i "s/^ \* Version: $CURRENT_VERSION/ * Version: $NEW_VERSION/" "$PLUGIN_FILE"
 echo "Updated plugin file to version $NEW_VERSION"
 
+## Validate PHP syntax before packaging
+echo "Validating PHP syntax..."
+SYNTAX_ERRORS=0
+while IFS= read -r -d '' file; do
+    if ! php -l "$file" > /dev/null 2>&1; then
+        echo "ERROR: Syntax error in $file"
+        php -l "$file"
+        SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
+    fi
+done < <(find "$PLUGIN_DIR" -name "*.php" -not -path "*/vendor/*" -print0)
+
+if [ $SYNTAX_ERRORS -gt 0 ]; then
+    echo "❌ Found $SYNTAX_ERRORS PHP syntax error(s). Aborting package."
+    exit 1
+fi
+echo "✓ All PHP files passed syntax validation"
+
 ## Clean previous artifacts
 rm -rf "$ROOT_DIR/subsales-management" "$PKG_PATH"
 
