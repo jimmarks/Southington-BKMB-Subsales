@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.103
+ * Version: 2.2.1.104
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6367,9 +6367,12 @@ function subsales_serve_signup_page() {
                     }
                     
                     // If user was selected from autocomplete, verify phone matches user ID in database
+                    console.log('SUBSALES: userData before verification:', userData);
                     if (userData && userData.id) {
+                        console.log('SUBSALES: Calling verifyUserAndProceed with userId:', userData.id, 'phone:', phoneDigits);
                         verifyUserAndProceed(userData.id, phoneDigits);
                     } else {
+                        console.log('SUBSALES: New user - skipping verification');
                         // New user - just store and proceed
                         userData = { name: name, phone: phoneDigits };
                         document.getElementById('step2-error').classList.add('hidden');
@@ -6380,6 +6383,7 @@ function subsales_serve_signup_page() {
 
             // Verify user ID and phone match in database
             async function verifyUserAndProceed(userId, phone) {
+                console.log('SUBSALES: verifyUserAndProceed called with:', { userId, phone });
                 const errorDiv = document.getElementById('step2-error');
                 const nextBtn = document.getElementById('step1-next');
                 
@@ -6389,13 +6393,19 @@ function subsales_serve_signup_page() {
                 errorDiv.classList.add('hidden');
                 
                 try {
-                    const response = await fetch(apiBase + '/signup/verify-user', {
+                    const url = apiBase + '/signup/verify-user';
+                    const payload = { user_id: userId, phone: phone };
+                    console.log('SUBSALES: Posting to:', url, 'payload:', payload);
+                    
+                    const response = await fetch(url, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: userId, phone: phone })
+                        body: JSON.stringify(payload)
                     });
                     
+                    console.log('SUBSALES: Response status:', response.status);
                     const data = await response.json();
+                    console.log('SUBSALES: Response data:', data);
                     
                     if (data.valid) {
                         // Phone matches - store user data and proceed
