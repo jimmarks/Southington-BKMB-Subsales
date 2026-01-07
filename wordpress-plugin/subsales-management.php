@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.110
+ * Version: 2.2.1.111
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5932,6 +5932,24 @@ function subsales_serve_signup_page() {
                 color: <?php echo esc_attr( $primary_color ); ?>;
                 font-size: 24px;
             }
+            .footer {
+                text-align: center;
+                padding: 20px 0;
+                margin-top: 20px;
+            }
+            .footer-email-btn {
+                display: inline-block;
+                padding: 10px 20px;
+                background: <?php echo esc_attr( $primary_color ); ?>;
+                color: white;
+                text-decoration: none;
+                border-radius: 6px;
+                font-size: 14px;
+                transition: opacity 0.2s;
+            }
+            .footer-email-btn:hover {
+                opacity: 0.9;
+            }
             .card {
                 background: white;
                 padding: 30px;
@@ -6152,6 +6170,12 @@ function subsales_serve_signup_page() {
                     <div id="reg-list"></div>
                     <button class="btn" id="add-another-team">Sign Up for Another Team</button>
                 </div>
+            </div>
+
+            <div class="footer">
+                <?php if ( $admin_email ) : ?>
+                    <a href="mailto:<?php echo esc_attr( $admin_email ); ?>?subject=Sign-up%20Issue" class="footer-email-btn">✉ Email Us</a>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -6412,7 +6436,7 @@ function subsales_serve_signup_page() {
                         // Phone doesn't match - show error with email link
                         let errorMessage = data.message || 'Phone number does not match this user';
                         if (adminEmail) {
-                            errorMessage += '. If you think this is an error, please <a href="mailto:' + adminEmail + '">email ' + adminEmail + '</a>';
+                            errorMessage += '. If you think this is an error, please <a href="mailto:' + adminEmail + '?subject=Sign-up%20Issue">Email Us</a>';
                         }
                         errorDiv.innerHTML = errorMessage;
                         errorDiv.classList.remove('hidden');
