@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.80
+ * Version: 2.2.1.82
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6142,19 +6142,43 @@ function subsales_serve_signup_page() {
                     
                     // Update step indicators and labels based on mode
                     if (signupMode === 'user') {
+                        // User mode: Step 1 = User Info, Step 2 = Team, Step 3 = Dates
                         document.getElementById('step1-indicator').textContent = '1. Your Info';
                         document.getElementById('step2-indicator').textContent = '2. Team';
                         document.getElementById('step3-indicator').textContent = '3. Dates';
+                    } else {
+                        // Legacy mode: Step 1 = Team, Step 2 = User Info, Step 3 = Dates
+                        document.getElementById('step1-indicator').textContent = '1. Team';
+                        document.getElementById('step2-indicator').textContent = '2. Your Info';
+                        document.getElementById('step3-indicator').textContent = '3. Dates';
                     }
+                    
+                    // Show the correct first step based on mode
+                    showStep(1);
                 } catch (error) {
                     console.error('Error loading settings:', error);
+                    // Default to legacy mode on error
+                    showStep(1);
                 }
             }
 
-            // Step navigation
+            // Step navigation based on mode
             function showStep(step) {
                 document.querySelectorAll('.step-content').forEach(el => el.classList.add('hidden'));
-                document.getElementById('step' + step).classList.remove('hidden');
+                
+                // Map logical steps to actual step divs based on mode
+                let actualStep;
+                if (signupMode === 'user') {
+                    // User mode: step1=userInfo(step2), step2=team(step1), step3=dates(step3)
+                    if (step === 1) actualStep = 'step2'; // Show user info
+                    else if (step === 2) actualStep = 'step1'; // Show team
+                    else actualStep = 'step3'; // Show dates
+                } else {
+                    // Legacy mode: step1=team(step1), step2=userInfo(step2), step3=dates(step3)
+                    actualStep = 'step' + step;
+                }
+                
+                document.getElementById(actualStep).classList.remove('hidden');
                 
                 document.querySelectorAll('.step').forEach((el, idx) => {
                     el.classList.remove('active', 'completed');
