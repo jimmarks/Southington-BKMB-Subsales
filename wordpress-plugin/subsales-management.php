@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.112
+ * Version: 2.2.1.113
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -6402,9 +6402,53 @@ function subsales_serve_signup_page() {
                 }
             }
             
-            // Attach to both buttons since User mode shows step2 div as step 1
+            // Attach step 1 button handler
             document.getElementById('step1-next').addEventListener('click', handleStep1Next);
-            document.getElementById('step2-next').addEventListener('click', handleStep1Next);
+            
+            // Step 2 next button handler (different logic for legacy vs user mode)
+            document.getElementById('step2-next').addEventListener('click', function() {
+                if (signupMode === 'user') {
+                    // In user mode, step 2 div is shown as step 1, so call handleStep1Next
+                    handleStep1Next();
+                } else {
+                    // In legacy mode, step 2 is actual step 2 (user info after team selection)
+                    handleStep2Next();
+                }
+            });
+            
+            // Handler for step 2 Next button in legacy mode (Team → User Info → Dates)
+            function handleStep2Next() {
+                const name = document.getElementById('user-name').value.trim();
+                const phone = document.getElementById('user-phone').value.trim();
+                
+                // Clear any previous errors
+                document.getElementById('step2-error').classList.add('hidden');
+                
+                if (!name) {
+                    document.getElementById('step2-error').textContent = 'Please enter your name';
+                    document.getElementById('step2-error').classList.remove('hidden');
+                    return;
+                }
+                
+                if (!phone) {
+                    document.getElementById('step2-error').textContent = 'Please enter your phone number';
+                    document.getElementById('step2-error').classList.remove('hidden');
+                    return;
+                }
+                
+                // Validate phone format (10 digits)
+                const phoneDigits = phone.replace(/\D/g, '');
+                if (phoneDigits.length !== 10) {
+                    document.getElementById('step2-error').textContent = 'Phone must be 10 digits';
+                    document.getElementById('step2-error').classList.remove('hidden');
+                    return;
+                }
+                
+                // Store user data and proceed to step 3 (dates)
+                userData = { name: name, phone: phoneDigits };
+                loadCampaigns();
+                showStep(3);
+            }
 
             // Verify user ID and phone match in database
             async function verifyUserAndProceed(userId, phone) {
