@@ -254,6 +254,23 @@ class Subsales_Database {
             KEY status (status)
         ) $charset_collate;";
         
+        // Team Campaigns table for team/date-specific data (driver info)
+        $team_campaigns_table_name = $wpdb->prefix . 'ss_team_campaigns';
+        $team_campaigns_sql = "CREATE TABLE $team_campaigns_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            team_id bigint(20) unsigned NOT NULL,
+            campaign_id bigint(20) unsigned NOT NULL,
+            driver_name varchar(255) DEFAULT '',
+            driver_updated_by varchar(255) DEFAULT '',
+            driver_updated_at datetime DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY team_campaign (team_id, campaign_id),
+            KEY team_id (team_id),
+            KEY campaign_id (campaign_id)
+        ) $charset_collate;";
+        
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql );
         dbDelta( $teams_sql );
@@ -266,6 +283,7 @@ class Subsales_Database {
         dbDelta( $addresses_sql );
         dbDelta( $campaigns_sql );
         dbDelta( $signups_sql );
+        dbDelta( $team_campaigns_sql );
         
         // Run schema migrations
         self::migrate_phone_column( $team_members_table_name );
@@ -273,6 +291,47 @@ class Subsales_Database {
         self::migrate_tally_columns( $table_name );
         self::migrate_user_teams( $team_members_table_name, $user_teams_table_name );
         self::migrate_edit_type_enum( $edit_history_table_name );
+        self::migrate_team_campaigns_table( $team_campaigns_table_name );
+    }
+    
+    /**
+     * Schema migration: Ensure team_campaigns table exists
+     */
+    private static function migrate_team_campaigns_table( $team_campaigns_table_name ) {
+        global $wpdb;
+        
+        // Check if table exists
+        $table_exists = $wpdb->get_var( 
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$team_campaigns_table_name}'"
+        );
+        
+        if ( $table_exists ) {
+            return; // Table already exists
+        }
+        
+        // Create the table
+        $charset_collate = $wpdb->get_charset_collate();
+        $sql = "CREATE TABLE $team_campaigns_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            team_id bigint(20) unsigned NOT NULL,
+            campaign_id bigint(20) unsigned NOT NULL,
+            driver_name varchar(255) DEFAULT '',
+            driver_updated_by varchar(255) DEFAULT '',
+            driver_updated_at datetime DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY team_campaign (team_id, campaign_id),
+            KEY team_id (team_id),
+            KEY campaign_id (campaign_id)
+        ) $charset_collate;";
+        
+        require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+        dbDelta( $sql );
+        
+        subsales_log( 'INFO', 'system', 'Created team_campaigns table via migration' );
     }
     
     /**
@@ -1178,7 +1237,13 @@ class Subsales_Database {
                 $heartbeat_format[] = '%f';
             }
             
-            $wpdb->insert( $heartbeats_table, $heartbeat_data, $heartbeat_format );
+            $insert_result = $wpdb->insert( $heartbeats_table, $heartbeat_data, $heartbeat_format );
+            
+            // Log insert errors for debugging
+            if ( $insert_result === false && ! empty( $wpdb->last_error ) ) {
+                error_log( 'Subsales: PWA heartbeat insert failed: ' . $wpdb->last_error );
+                error_log( 'Subsales: Heartbeat data: ' . wp_json_encode( $heartbeat_data ) );
+            }
             
             // Clean up old heartbeats (keep only last 100 per session)
             // Use a simpler approach to avoid MySQL subquery limitations
@@ -1191,11 +1256,12 @@ class Subsales_Database {
             ) );
             
             if ( ! empty( $old_ids ) ) {
-                $ids_placeholder = implode( ',', array_fill( 0, count( $old_ids ), '%d' ) );
-                $wpdb->query( $wpdb->prepare(
-                    "DELETE FROM {$heartbeats_table} WHERE id IN ({$ids_placeholder})",
-                    $old_ids
-                ) );
+                // WordPress 6.2+ requires each value to be passed as a separate parameter
+                // Build the query safely without using prepare() with array
+                $ids_str = implode( ',', array_map( 'absint', $old_ids ) );
+                if ( ! empty( $ids_str ) ) {
+                    $wpdb->query( "DELETE FROM {$heartbeats_table} WHERE id IN ({$ids_str})" );
+                }
             }
         }
         

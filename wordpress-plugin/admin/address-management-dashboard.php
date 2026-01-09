@@ -306,45 +306,125 @@ if ( is_dir( $base ) ) {
 
 <!-- ZIP Boundaries Upload Modal -->
 <div id="boundaries-modal-overlay" class="subsales-modal-overlay" onclick="this.classList.remove('open'); document.getElementById('boundaries-upload-modal').style.display='none'"></div>
-<div id="boundaries-upload-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:30px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.15); z-index:100000; max-width:600px; width:90%; max-height:90vh; overflow-y:auto;">
-    <h3 style="margin-top:0;">🗺️ Upload ZIP Code Boundaries</h3>
+<div id="boundaries-upload-modal" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:30px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.15); z-index:100000; max-width:700px; width:90%; max-height:90vh; overflow-y:auto;">
+    <h3 style="margin-top:0;">🗺️ ZIP Code Boundaries</h3>
     
     <div style="padding: 15px; background: #e7f3ff; border-left: 4px solid #2271b1; margin-bottom: 20px; border-radius: 3px;">
-        <p style="margin: 0 0 10px 0; font-weight: 600;">Upload Census ZCTA Shapefile</p>
+        <p style="margin: 0 0 10px 0; font-weight: 600;">Census ZCTA Shapefile Loading</p>
         <p style="margin: 0; font-size: 13px; line-height: 1.6;">
-            This file contains ZIP code boundary polygons for your state. Once uploaded, addresses will be assigned ZIPs instantly without Google API calls.
+            This file contains ZIP code boundary polygons for your state. Once loaded, addresses will be assigned ZIPs instantly without Google API calls.
         </p>
     </div>
     
-    <details open style="margin-bottom: 20px;">
-        <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">
-            📥 Download Instructions
+    <!-- Auto-Download Section -->
+    <details open style="margin-bottom: 25px; border: 2px solid #2271b1; border-radius: 6px; overflow: hidden;">
+        <summary style="cursor: pointer; font-weight: 600; padding: 12px 15px; background: #2271b1; color: #fff; user-select: none;">
+            ⚡ Option 1: Auto-Download from Census (Recommended)
         </summary>
-        <div style="padding: 15px; border: 1px solid #dcdcde; border-top: none; border-radius: 0 0 4px 4px;">
-            <ol style="margin: 0; padding-left: 20px; line-height: 1.8;">
-                <li>Go to <a href="https://www.census.gov/cgi-bin/geo/shapefiles/index.php" target="_blank" rel="noopener">Census TIGER/Line Shapefiles</a></li>
-                <li>Select <strong>Year</strong>: Choose <strong>2023</strong> (most recent)</li>
-                <li>Select <strong>Layer Type</strong>: Choose <strong>"ZIP Code Tabulation Areas"</strong></li>
-                <li>Select <strong>State</strong>: Choose your state (e.g., Connecticut)</li>
-                <li>Click <strong>Download</strong> to get the ZIP file</li>
-                <li>Upload the downloaded file below</li>
-            </ol>
+        <div style="padding: 20px; background: #f9f9f9;">
+            <div style="padding: 12px; background: #d4edda; border-left: 3px solid #28a745; border-radius: 3px; margin-bottom: 15px; font-size: 13px;">
+                <strong>✓ Automatic:</strong> Downloads and filters Census data for your configured ZIPs.<br>
+                <strong>✓ Efficient:</strong> Only downloads your state (5-50MB instead of 500MB national file).<br>
+                <strong>✓ Current:</strong> Gets latest Census boundaries automatically.
+            </div>
             
-            <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-left: 3px solid #856404; border-radius: 3px; font-size: 12px;">
-                <strong>Expected file:</strong> <code>tl_2023_##_zcta520.zip</code> (where ## is your state FIPS code)<br>
-                <strong>Size:</strong> Typically 5-50 MB depending on state<br>
-                <strong>Note:</strong> The system will automatically extract only the <?php echo count( $configured_zips ); ?> ZIP code<?php echo count( $configured_zips ) !== 1 ? 's' : ''; ?> you configured: <?php echo implode( ', ', $configured_zips ); ?>
+            <form id="census-config-form" style="background: #fff; padding: 15px; border-radius: 4px; border: 1px solid #ddd; margin-bottom: 15px;">
+                <h4 style="margin-top: 0; margin-bottom: 12px; font-size: 14px;">Census Configuration</h4>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                    <div>
+                        <label for="census_year" style="display: block; font-weight: 600; margin-bottom: 4px; font-size: 13px;">Year:</label>
+                        <input type="number" id="census_year" name="census_year" value="<?php echo esc_attr( get_option( 'subsales_census_year', 2023 ) ); ?>" min="2010" max="<?php echo date( 'Y' ) - 1; ?>" style="width: 100%;" />
+                        <p class="description" style="margin: 3px 0 0 0; font-size: 11px;">Census data year</p>
+                    </div>
+                    <div>
+                        <label for="census_state" style="display: block; font-weight: 600; margin-bottom: 4px; font-size: 13px;">State (optional):</label>
+                        <input type="text" id="census_state" name="census_state" value="<?php echo esc_attr( get_option( 'subsales_census_state', '' ) ); ?>" placeholder="CT" maxlength="2" style="width: 100%; text-transform: uppercase;" />
+                        <p class="description" style="margin: 3px 0 0 0; font-size: 11px;">State abbreviation</p>
+                    </div>
+                </div>
+                
+                <div style="margin-bottom: 12px;">
+                    <label for="census_zip_filter" style="display: block; font-weight: 600; margin-bottom: 4px; font-size: 13px;">ZIP Filter (optional):</label>
+                    <input type="text" id="census_zip_filter" name="census_zip_filter" value="<?php echo esc_attr( get_option( 'subsales_census_zip_filter', '' ) ); ?>" placeholder="06" style="width: 100%;" />
+                    <p class="description" style="margin: 3px 0 0 0; font-size: 11px;">Filter by ZIP prefix (e.g., "06" for Connecticut). Leave empty to auto-detect from configured ZIPs.</p>
+                </div>
+                
+                <details style="margin-top: 12px;">
+                    <summary style="cursor: pointer; font-size: 12px; color: #666;">Advanced: Custom Census URL Pattern</summary>
+                    <div style="margin-top: 8px;">
+                        <input type="text" id="census_url_pattern" name="census_url_pattern" value="<?php echo esc_attr( get_option( 'subsales_census_url_pattern', 'https://www2.census.gov/geo/tiger/TIGER{year}/ZCTA520/tl_{year}_us_zcta520.zip' ) ); ?>" style="width: 100%; font-family: monospace; font-size: 11px;" />
+                        <p class="description" style="margin: 3px 0 0 0; font-size: 10px;">Use <code>{year}</code> placeholder. Default uses Census TIGER/Line ZCTA520.</p>
+                    </div>
+                </details>
+                
+                <div style="margin-top: 15px; text-align: right;">
+                    <button type="button" id="save-census-config-btn" class="button">Save Configuration</button>
+                </div>
+            </form>
+            
+            <div style="text-align: center;">
+                <button type="button" id="auto-download-boundaries-btn" class="button button-primary button-hero" style="padding: 12px 30px; height: auto; font-size: 14px;">
+                    🚀 Auto-Download Census Boundaries
+                </button>
+            </div>
+            
+            <div id="census-download-progress" style="display:none; margin-top: 15px; padding: 15px; background: #fff; border-radius: 4px; border: 1px solid #ddd;">
+                <div style="margin-bottom: 10px;">
+                    <strong id="census-progress-text">Initializing...</strong>
+                </div>
+                <div class="subsales-progress-bar">
+                    <div id="census-progress-fill" class="subsales-progress-fill" style="width:0%;"></div>
+                </div>
+                <div id="census-log" style="margin-top: 10px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; white-space: pre-wrap; background: #f6f7f7; padding: 8px; border: 1px solid #ddd; border-radius: 3px;"></div>
             </div>
         </div>
     </details>
+    
+    <!-- Manual Upload Section -->
+    <details style="margin-bottom: 20px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
+        <summary style="cursor: pointer; font-weight: 600; padding: 12px 15px; background: #f6f7f7; user-select: none;">
+            📥 Option 2: Manual Upload
+        </summary>
+        <div style="padding: 20px;">
+            <div style="padding: 12px; background: #fff3cd; border-left: 3px solid #856404; border-radius: 3px; margin-bottom: 15px; font-size: 12px;">
+                <strong>Note:</strong> Manual upload requires downloading the file yourself first. Use auto-download instead for easier setup.
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+                <h4 style="margin: 0 0 10px 0; font-size: 14px;">Download Instructions:</h4>
+                <ol style="margin: 0; padding-left: 20px; line-height: 1.8; font-size: 13px;">
+                    <li>Visit <a href="https://www.census.gov/cgi-bin/geo/shapefiles/index.php" target="_blank" rel="noopener">Census TIGER/Line Shapefiles</a></li>
+                    <li>Select <strong>Year</strong>: Choose latest year (e.g., 2023)</li>
+                    <li>Select <strong>Layer Type</strong>: Choose <strong>"ZIP Code Tabulation Areas"</strong></li>
+                    <li>Select <strong>State</strong>: Choose your state or "Nationwide"</li>
+                    <li>Click <strong>Download</strong> to get the ZIP file</li>
+                    <li>Upload the downloaded file below</li>
+                </ol>
+            </div>
     
     <form id="upload-boundaries-form" enctype="multipart/form-data">
         <p>
             <label for="boundaries_file"><strong>Select ZCTA Shapefile:</strong></label><br>
             <input type="file" name="boundaries_file" id="boundaries_file" accept=".zip" required style="width:100%; margin-top:8px;" />
         </p>
-        <p class="description" style="font-size: 12px;">
+        <p class="description" style="font-size: 12px; margin-bottom: 8px;">
             Upload the Census ZCTA shapefile ZIP archive. Must contain .shp, .dbf, .shx, and .prj files.
+        </p>
+        <?php
+        $upload_max = wp_max_upload_size();
+        $php_max = min(
+            wp_convert_hr_to_bytes( ini_get( 'upload_max_filesize' ) ),
+            wp_convert_hr_to_bytes( ini_get( 'post_max_size' ) )
+        );
+        ?>
+        <p class="description" style="font-size: 11px; color: #666; background: #f9f9f9; padding: 8px; border-left: 3px solid #2271b1; border-radius: 3px;">
+            <strong>ℹ️ Upload Limits:</strong><br>
+            Server: <?php echo size_format( $php_max ); ?><br>
+            WordPress: <?php echo size_format( $upload_max ); ?><br>
+            <?php if ( $upload_max < 500 * MB_IN_BYTES ) : ?>
+                <span style="color: #d63638;">⚠️ Large Census files (500MB+) may require increased PHP limits.</span>
+            <?php endif; ?>
         </p>
         
         <div id="boundaries-upload-progress" style="display:none; margin: 15px 0; padding: 15px; background: #f6f7f7; border-radius: 4px;">
@@ -358,10 +438,15 @@ if ( is_dir( $base ) ) {
         </div>
         
         <p style="margin-top:20px; text-align:right;">
-            <button type="button" class="button" onclick="document.getElementById('boundaries-upload-modal').style.display='none'; document.getElementById('boundaries-modal-overlay').classList.remove('open')">Cancel</button>
             <button type="submit" id="boundaries-submit-btn" class="button button-primary">Upload and Process</button>
         </p>
     </form>
+        </div>
+    </details>
+    
+    <div style="text-align: right; padding-top: 15px; border-top: 1px solid #ddd;">
+        <button type="button" class="button" onclick="document.getElementById('boundaries-upload-modal').style.display='none'; document.getElementById('boundaries-modal-overlay').classList.remove('open')">Close</button>
+    </div>
 </div>
 
 <!-- Upload Modal -->

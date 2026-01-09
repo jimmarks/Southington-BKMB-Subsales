@@ -93,6 +93,19 @@ class Subsales_Admin_Pages {
     }
 
     /**
+     * Render the campaigns page
+     *
+     * @return void
+     */
+    public static function render_campaigns_page() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( 'Unauthorized' );
+        }
+        
+        include SUBSALES_PLUGIN_PATH . 'admin/campaigns-page.php';
+    }
+
+    /**
      * Render the logs page
      *
      * @return void

@@ -19,11 +19,10 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-function order_sync_settings_page() {
-    // Check user capabilities
-    if ( ! current_user_can( 'manage_options' ) ) {
-        return;
-    }
+// Check user capabilities
+if ( ! current_user_can( 'manage_options' ) ) {
+    return;
+}
 
     // Handle per-panel form submission
     if ( isset( $_POST['save_overall'] ) ) {
@@ -32,6 +31,7 @@ function order_sync_settings_page() {
         $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
         $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
         $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
+        $individual_session_duration = isset( $_POST['individual_session_duration'] ) ? intval( $_POST['individual_session_duration'] ) : 1209600000; // 14 days
         $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
@@ -39,6 +39,7 @@ function order_sync_settings_page() {
         update_option( 'order_sync_interval', $sync_interval );
         update_option( 'order_sync_portal_slug', $portal_slug );
         update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'subsales_individual_session_duration', $individual_session_duration );
         update_option( 'order_sync_login_mode', $login_mode );
 
         if ( $portal_slug !== $old_slug ) {
@@ -344,15 +345,32 @@ function order_sync_settings_page() {
                             </td>
                         </tr>
                         <tr>
-                            <th scope="row">Default session duration</th>
+                            <th scope="row">Team mode session duration</th>
                             <td>
                                 <select name="session_duration">
                                     <option value="120000" <?php selected( 120000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 minutes (Test)</option>
                                     <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
                                     <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
-                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours (default)</option>
+                                    <option value="172800000" <?php selected( 172800000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 days</option>
+                                    <option value="604800000" <?php selected( 604800000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>7 days</option>
                                 </select>
-                                <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
+                                <p class="description">Session duration for Team-based sales mode. Shorter duration recommended for shared devices.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Individual mode session duration</th>
+                            <td>
+                                <select name="individual_session_duration">
+                                    <option value="120000" <?php selected( 120000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>2 minutes (Test)</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>24 hours</option>
+                                    <option value="259200000" <?php selected( 259200000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>3 days</option>
+                                    <option value="604800000" <?php selected( 604800000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>7 days</option>
+                                    <option value="1209600000" <?php selected( 1209600000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>14 days (default)</option>
+                                    <option value="1814400000" <?php selected( 1814400000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>21 days</option>
+                                    <option value="2592000000" <?php selected( 2592000000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>30 days</option>
+                                </select>
+                                <p class="description">Session duration for Individual sales mode. Longer duration recommended for extended campaigns (2+ weeks).</p>
                             </td>
                         </tr>
                         <tr>
@@ -1089,7 +1107,10 @@ function order_sync_settings_page() {
                         $wpdb->prefix . 'ss_logs' => 'System Logs',
                         $wpdb->prefix . 'ss_pwa_sessions' => 'PWA Sessions',
                         $wpdb->prefix . 'ss_pwa_heartbeats' => 'PWA Heartbeats',
-                        $wpdb->prefix . 'ss_addresses' => 'Address Lookup'
+                        $wpdb->prefix . 'ss_addresses' => 'Address Lookup',
+                        $wpdb->prefix . 'ss_campaigns' => 'Campaigns',
+                        $wpdb->prefix . 'ss_signups' => 'Campaign Signups',
+                        $wpdb->prefix . 'ss_team_campaigns' => 'Team Campaign Data'
                     );
                     
                     foreach ( $tables as $table => $name ) {
@@ -1102,5 +1123,3 @@ function order_sync_settings_page() {
         </table>
                 </div>
     </div> <!-- .wrap -->
-    <?php
-}

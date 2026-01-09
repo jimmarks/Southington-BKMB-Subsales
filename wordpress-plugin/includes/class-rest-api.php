@@ -259,8 +259,32 @@ class Subsales_REST_API {
         ));
         
         register_rest_route( 'order-manager/v1', '/my-signups', array(
-            'methods' => 'GET',
+            'methods' => 'POST',
             'callback' => 'subsales_rest_get_my_signups',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/signup/(?P<id>\d+)', array(
+            'methods' => 'DELETE',
+            'callback' => 'subsales_rest_delete_signup',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/signup/(?P<id>\d+)', array(
+            'methods' => 'PUT',
+            'callback' => 'subsales_rest_update_signup',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/team-roster', array(
+            'methods' => 'GET',
+            'callback' => 'subsales_rest_get_team_roster',
+            'permission_callback' => '__return_true',
+        ));
+        
+        register_rest_route( 'order-manager/v1', '/team-driver', array(
+            'methods' => 'PUT',
+            'callback' => 'subsales_rest_update_team_driver',
             'permission_callback' => '__return_true',
         ));
         

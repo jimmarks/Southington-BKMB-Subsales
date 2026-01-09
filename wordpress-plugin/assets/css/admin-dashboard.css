@@ -28,7 +28,9 @@
   .subsales-box .postbox-header{ padding:8px 10px }
   .subsales-box .inside{ padding:8px }
 }
+.subsales-box .stat-container{ display:flex; flex-direction:column; align-items:center; gap:4px; width:100% }
 .subsales-box .stat-value{ font-size:28px; font-weight:700; color:#0073aa; margin:0 }
+.subsales-box .stat-inactive{ font-size:12px; font-weight:500; color:#666; margin:0; padding:2px 8px; background:#f0f0f0; border-radius:10px }
 
 /* Compact variant: tighter spacing for admins who prefer denser dashboards */
 .subsales-dashboard-grid.subsales-compact{ gap:6px }
@@ -39,6 +41,7 @@
 .subsales-dashboard-grid.subsales-compact .subsales-box .postbox-header h2{ font-size:0.95rem; gap:6px }
 .subsales-dashboard-grid.subsales-compact .subsales-box .inside{ padding:6px }
 .subsales-dashboard-grid.subsales-compact .subsales-box .stat-value{ font-size:20px }
+.subsales-dashboard-grid.subsales-compact .subsales-box .stat-inactive{ font-size:11px; padding:1px 6px }
 .subsales-dashboard-grid.subsales-compact .subsales-box .ss-icon{ font-size:18px }
 
 /* Toggle control small helper */

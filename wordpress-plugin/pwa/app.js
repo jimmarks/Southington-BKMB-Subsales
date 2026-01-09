@@ -261,7 +261,10 @@
                 <div id="checkNumberRow" class="hidden check-number-row"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
                 <label>Delivery Instructions</label>
                 <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
-                <div class="btn-row"><button id="saveOrderBtn" class="sm-btn">Save Order</button></div>
+                <div class="btn-row" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px;">
+                  <button id="saveOrderBtn" class="sm-btn">Save Order</button>
+                  <button id="clearFormBtn" class="sm-btn" style="background-color: #dc3545; color: white;">Clear Form</button>
+                </div>
               </div>
               <aside class="sm-aside">
                 <h3>Status</h3>
@@ -739,6 +742,7 @@
   const appSection = qs('#appSection');
   const loginBtn = qs('#loginBtn');
   const saveOrderBtn = qs('#saveOrderBtn');
+  const clearFormBtn = qs('#clearFormBtn');
   const ordersList = qs('#ordersList');
   const networkStatus = qs('#networkStatus');
   const syncStatus = qs('#syncStatus');
@@ -1441,7 +1445,7 @@
         }
         
         userNameSuggestions.innerHTML = users.map(u => 
-          `<div class="sm-suggestion-item" data-name="${escapeHtml(u.name)}" data-phone="${escapeHtml(u.phone)}">${escapeHtml(u.name)}</div>`
+          `<div class="sm-suggestion-item" data-name="${escapeHtml(u.name)}">${escapeHtml(u.name)}</div>`
         ).join('');
         userNameSuggestions.classList.remove('hidden');
         
@@ -1627,6 +1631,29 @@
         if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
         if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
         
+        // Request GPS permission at login (non-blocking)
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              if (window.PWALogger) {
+                window.PWALogger.log('gps', 'GPS permission granted at login', {
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude
+                });
+              }
+            },
+            (error) => {
+              if (window.PWALogger) {
+                window.PWALogger.log('gps', 'GPS permission denied at login', {
+                  error_code: error.code,
+                  error_message: error.message
+                });
+              }
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
+          );
+        }
+        
         // Load address autocomplete module and prefetch ZIP data (non-blocking - happens in background)
         loadAddressAutocomplete().then(() => {
 
@@ -1702,8 +1729,11 @@
   // Helper to proceed to app from user login
   async function proceedToAppFromUserLogin() {
     try {
-      // Session duration
-      const sd = cfg.sessionDuration || localStorage.getItem('sessionDuration') || '86400000';
+      // Use appropriate session duration based on mode
+      const isIndividual = localStorage.getItem('selectedTeamId') === '-1';
+      const sd = isIndividual ? 
+        (cfg.individualSessionDuration || '1209600000') : // 14 days for individual
+        (cfg.sessionDuration || '86400000'); // 24 hours for team
       const durMs = parseInt(sd, 10) || 86400000;
       const expiryMs = Date.now() + durMs;
       const expiryISO = new Date(expiryMs).toISOString();
@@ -1886,6 +1916,30 @@
       // no members to select — enter app
   if (loginSection) { loginSection.classList.add('hidden'); try{ loginSection.style.display='none'; }catch(e){} }
   if (appSection) { appSection.classList.remove('hidden'); try{ appSection.style.display='block'; }catch(e){} }
+      
+      // Request GPS permission at login (non-blocking)
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (window.PWALogger) {
+              window.PWALogger.log('gps', 'GPS permission granted at login (legacy)', {
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude
+              });
+            }
+          },
+          (error) => {
+            if (window.PWALogger) {
+              window.PWALogger.log('gps', 'GPS permission denied at login (legacy)', {
+                error_code: error.code,
+                error_message: error.message
+              });
+            }
+          },
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      }
+      
       // reveal any server-side auth-only controls
       revealAuthControls();
       trySync();
@@ -2120,6 +2174,43 @@
     });
   }
 
+  // Clear form button handler
+  clearFormBtn && clearFormBtn.addEventListener('click', ()=>{
+    if (confirm('Are you sure you want to clear all form fields? This cannot be undone.')) {
+      // Clear all form fields
+      customerInput && (customerInput.value = '');
+      addressInput && (addressInput.value = '');
+      cellInput && (cellInput.value = '');
+      notesInput && (notesInput.value = '');
+      checkNumberInput && (checkNumberInput.value = '');
+      donationAmount && (donationAmount.value = '0');
+      
+      // Clear all product quantities
+      const prodInputs = document.querySelectorAll('.sm-prod-row input[type="number"]');
+      prodInputs.forEach(inp => inp.value = '0');
+      
+      // Reset payment method to cash
+      const cashRadio = document.querySelector('input[name="paymentMethod"][value="cash"]');
+      if (cashRadio) cashRadio.checked = true;
+      
+      // Hide check number field
+      const checkRow = document.getElementById('checkNumberRow');
+      if (checkRow) checkRow.classList.add('hidden');
+      
+      // Clear any stored selection data
+      if (addressInput) {
+        try { delete addressInput.dataset.subsalesSelected; } catch(e) {}
+      }
+      
+      // Focus on customer name
+      customerInput && customerInput.focus();
+      
+      if(window.PWALogger && window.PWALogger.debugEnabled){
+        window.PWALogger.log('ui', 'Form cleared by user');
+      }
+    }
+  });
+
   saveOrderBtn && saveOrderBtn.addEventListener('click', async ()=>{
     // Track activity
     if (window.PWASessionTracking) {
@@ -2247,6 +2338,17 @@
       const pos = await getCurrentPositionPromise(5000);
       const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
       
+      // Store authentication credentials with order for post-logout sync
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
+      const authCreds = {};
+      if (loginMode === 'user') {
+        authCreds._sync_user_id = localStorage.getItem('userId') || '';
+        authCreds._sync_team_id = localStorage.getItem('selectedTeamId') || '';
+      } else {
+        authCreds._sync_team_name = localStorage.getItem('teamName') || '';
+        authCreds._sync_team_code = localStorage.getItem('teamCode') || '';
+      }
+      
       order = {
         id: 'o-' + Date.now(),
         customer,
@@ -2265,7 +2367,8 @@
         entered_by_name: enteredByName,
         teamName: teamName,
         teamCode: teamCode,
-        geo
+        geo,
+        ...authCreds
       };
     }
     
@@ -2338,13 +2441,23 @@
         
         for (const op of ops) {
           try{
+            // Use embedded credentials from payload as fallback
+            const opHeaders = { ...headers };
+            if (op.payload && op.payload._sync_user_id && op.payload._sync_team_id) {
+              opHeaders['X-User-ID'] = op.payload._sync_user_id;
+              opHeaders['X-Team-ID'] = op.payload._sync_team_id;
+            } else if (op.payload && op.payload._sync_team_name && op.payload._sync_team_code) {
+              opHeaders['X-Team-Name'] = op.payload._sync_team_name;
+              opHeaders['X-Access-Code'] = op.payload._sync_team_code;
+            }
+            
             if (op.type === 'delete'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
-              const resp = await fetch(url, { method: 'DELETE', headers: headers });
+              const resp = await fetch(url, { method: 'DELETE', headers: opHeaders });
               if (resp.ok) { await Storage.removeQueuedOp(op._id); }
             } else if (op.type === 'update'){
               const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(op.order_id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(op.order_id);
-              const updateHeaders = { ...headers, 'Content-Type':'application/json' };
+              const updateHeaders = { ...opHeaders, 'Content-Type':'application/json' };
               // Add team member authentication headers for PWA edits
               const memberEmail = localStorage.getItem('memberEmail');
               const memberCode = localStorage.getItem('memberCode');
@@ -2395,6 +2508,17 @@
       for (const order of list) {
         try {
           const url = apiBase ? (apiBase + '/orders') : '/wp-json/order-manager/v1/orders';
+          
+          // Use embedded credentials as fallback if current session is expired
+          const syncHeaders = { ...headers };
+          if (order._sync_user_id && order._sync_team_id) {
+            syncHeaders['X-User-ID'] = order._sync_user_id;
+            syncHeaders['X-Team-ID'] = order._sync_team_id;
+          } else if (order._sync_team_name && order._sync_team_code) {
+            syncHeaders['X-Team-Name'] = order._sync_team_name;
+            syncHeaders['X-Access-Code'] = order._sync_team_code;
+          }
+          
           const payload = {
             order_id: order.id,
             user_id: order.subsales_user_id || localStorage.getItem('userId') || '',
@@ -2414,7 +2538,7 @@
 
           const resp = await fetch(url, {
             method: 'POST',
-            headers: headers,
+            headers: syncHeaders,
             body: JSON.stringify(payload)
           });
           if (resp.ok) {

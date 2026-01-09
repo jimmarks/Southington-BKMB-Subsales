@@ -219,9 +219,14 @@
         $progressFill.css('width', '100%');
         
         if (!resp || !resp.success) {
-          $log.append('\n❌ ERROR: ' + (resp.data || 'Upload failed') + '\n');
-          alert('Upload failed: ' + (resp.data || 'Unknown error'));
+          var errorMsg = 'Upload failed';
+          if (resp && resp.data) {
+            errorMsg = resp.data;
+          }
+          $log.append('\n❌ ERROR: ' + errorMsg + '\n');
+          alert('Upload failed: ' + errorMsg);
           $btn.prop('disabled', false).text('Upload and Process');
+          $progress.hide();
           return;
         }
         
@@ -244,9 +249,22 @@
         setTimeout(function(){ location.reload(); }, 1000);
         
       }).fail(function(xhr){
-        $log.append('\n❌ AJAX ERROR: ' + xhr.status + ' ' + xhr.statusText + '\n');
-        alert('Upload request failed: ' + xhr.status + ' ' + xhr.statusText);
+        var errorMsg = 'HTTP ' + xhr.status + ': ' + xhr.statusText;
+        
+        // Try to parse JSON error response
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          if (resp && resp.data) {
+            errorMsg = resp.data;
+          }
+        } catch(e) {
+          // Not JSON, use status text
+        }
+        
+        $log.append('\n❌ ERROR: ' + errorMsg + '\n');
+        alert('Upload request failed:\n\n' + errorMsg + '\n\nPlease check:\n- File is a valid ZIP file\n- ZIP codes are configured in settings\n- File size is within server limits');
         $btn.prop('disabled', false).text('Upload and Process');
+        $progress.hide();
       });
     });
 
@@ -663,6 +681,150 @@
       }).fail(function(xhr){
         alert('ZIP reassignment request failed: ' + xhr.status + ' ' + xhr.statusText);
         $btn.prop('disabled', false).html('🔄 Reassign ZIP Codes');
+      });
+    });
+    
+    // =======================================
+    // Census Configuration Save Handler
+    // =======================================
+    
+    $('#save-census-config-btn').on('click', function(e){
+      e.preventDefault();
+      
+      var $btn = $(this);
+      var year = $('#census_year').val();
+      var state = $('#census_state').val().trim().toUpperCase();
+      var zipFilter = $('#census_zip_filter').val().trim();
+      var urlPattern = $('#census_url_pattern').val().trim();
+      
+      $btn.prop('disabled', true).text('Saving...');
+      
+      $.post(SubsalesZipAdmin.ajaxUrl, {
+        action: 'subsales_save_census_config',
+        nonce: SubsalesZipAdmin.uploadNonce,
+        census_year: year,
+        census_state: state,
+        census_zip_filter: zipFilter,
+        census_url_pattern: urlPattern
+      }).done(function(resp){
+        if (!resp || !resp.success) {
+          alert('Failed to save configuration: ' + (resp && resp.data ? resp.data : 'Unknown error'));
+        } else {
+          alert('✅ Census configuration saved successfully!');
+        }
+      }).fail(function(xhr){
+        alert('Configuration save request failed: ' + xhr.status + ' ' + xhr.statusText);
+      }).always(function(){
+        $btn.prop('disabled', false).text('Save Configuration');
+      });
+    });
+    
+    // =======================================
+    // Census Auto-Download Handler
+    // =======================================
+    
+    $('#auto-download-boundaries-btn').on('click', function(e){
+      e.preventDefault();
+      
+      console.log('=== Census Auto-Download Button Clicked ===');
+      
+      var $btn = $(this);
+      var $progress = $('#census-download-progress');
+      var $progressFill = $('#census-progress-fill');
+      var $progressText = $('#census-progress-text');
+      var $log = $('#census-log');
+      
+      if (!confirm('Auto-download Census ZCTA boundaries?\n\nThis will:\n• Download the Census shapefile for your configured year\n• Filter to only your configured ZIP codes\n• Import boundary polygons automatically\n\nThis may take 2-5 minutes. Continue?')) {
+        console.log('User cancelled');
+        return;
+      }
+      
+      console.log('Starting Census download...');
+      console.log('AJAX URL:', SubsalesZipAdmin.ajaxUrl);
+      console.log('Nonce:', SubsalesZipAdmin.uploadNonce ? 'present' : 'MISSING');
+      
+      $btn.prop('disabled', true).html('🚀 Downloading...');
+      $progress.show();
+      $progressText.text('Downloading from Census Bureau...');
+      $progressFill.css('width', '10%');
+      $log.text('Starting Census auto-download...\n');
+      
+      var startTime = Date.now();
+      
+      console.log('Sending AJAX request...');
+      
+      $.post(SubsalesZipAdmin.ajaxUrl, {
+        action: 'subsales_auto_download_census',
+        nonce: SubsalesZipAdmin.uploadNonce
+      }).done(function(resp){
+        console.log('AJAX done - response:', resp);
+        if (!resp || !resp.success) {
+          var errorMsg = resp && resp.data ? resp.data : 'Unknown error';
+          console.error('Census download FAILED:', errorMsg);
+          console.error('Full response:', resp);
+          
+          $progressText.text('❌ Failed');
+          $progressFill.css('width', '0%');
+          $log.append('\n❌ ERROR: ' + errorMsg + '\n');
+          
+          alert('Census auto-download failed:\n\n' + errorMsg + '\n\nPlease check:\n• Census configuration is correct\n• Server has internet access\n• Census URL is valid\n\nYou can try manual upload instead.');
+        } else {
+          console.log('Census download SUCCESS:', resp.data);
+          var data = resp.data;
+          var elapsed = Math.round((Date.now() - startTime) / 1000);
+          
+          $progressText.text('✅ Complete!');
+          $progressFill.css('width', '100%');
+          $log.append('\n✅ SUCCESS!\n');
+          $log.append('ZIP codes loaded: ' + data.zip_count + '\n');
+          $log.append('ZIPs: ' + data.zips.join(', ') + '\n');
+          
+          if (data.missing_zips && data.missing_zips.length > 0) {
+            $log.append('\n⚠️ Missing ZIPs (not in Census data): ' + data.missing_zips.join(', ') + '\n');
+          }
+          
+          $log.append('Records skipped (filtered): ' + data.skipped.toLocaleString() + '\n');
+          $log.append('Time elapsed: ' + elapsed + ' seconds\n');
+          
+          var alertMsg = '✅ Census boundaries loaded successfully!\n\n';
+          alertMsg += 'ZIP codes imported: ' + data.zip_count + '\n';
+          alertMsg += 'Time: ' + elapsed + ' seconds\n';
+          
+          if (data.missing_zips && data.missing_zips.length > 0) {
+            alertMsg += '\n⚠️ Warning: Some configured ZIPs were not found in Census data:\n' + data.missing_zips.join(', ');
+          }
+          
+          alertMsg += '\n\nPage will reload to show updated boundary status.';
+          
+          alert(alertMsg);
+          
+          setTimeout(function(){ location.reload(); }, 1500);
+        }
+      }).fail(function(xhr){
+        console.error('AJAX request FAILED');
+        console.error('Status:', xhr.status);
+        console.error('Status Text:', xhr.statusText);
+        console.error('Response Text:', xhr.responseText);
+        
+        var errorMsg = 'HTTP ' + xhr.status + ': ' + xhr.statusText;
+        
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          console.error('Parsed response:', resp);
+          if (resp && resp.data) {
+            errorMsg = resp.data;
+          }
+        } catch(e) {
+          console.error('Could not parse response as JSON');
+        }
+        
+        $progressText.text('❌ Failed');
+        $progressFill.css('width', '0%');
+        $log.append('\n❌ ERROR: ' + errorMsg + '\n');
+        
+        alert('Census auto-download request failed:\n\n' + errorMsg + '\n\nPlease check:\n• Server has internet access\n• Census website is accessible\n• PHP limits are sufficient\n\nYou can try manual upload instead.');
+      }).always(function(){
+        $btn.prop('disabled', false).html('🚀 Auto-Download Census Boundaries');
       });
     });
   });

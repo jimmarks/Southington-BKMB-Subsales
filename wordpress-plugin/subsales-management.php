@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.123
+ * Version: 2.2.1.179
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.0.0.95' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.2.1.162' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -55,8 +55,10 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-rest-api.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-pwa.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-signups.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-census-boundaries.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -76,11 +78,17 @@ Subsales_PWA::init();
 // Initialize Orders
 Subsales_Orders::init();
 
+// Initialize Signups (campaigns & registration)
+Subsales_Signups::init();
+
 // Initialize Admin Pages
 Subsales_Admin_Pages::init();
 
 // Initialize AJAX Handlers
 Subsales_AJAX_Handlers::init();
+
+// Initialize Census Boundaries
+Subsales_Census_Boundaries::init();
 
 
 // Activation/Deactivation hooks
@@ -1089,7 +1097,7 @@ function order_sync_admin_menu() {
         'Subsales',                     // Menu title
         'manage_options',                    // Capability
         'subsales-management',          // Menu slug
-        'order_sync_main_page',              // Function
+        array( 'Subsales_Admin_Pages', 'render_main_dashboard' ),  // Function
         'dashicons-clipboard',               // Icon
         26                                   // Position (after Comments)
     );
@@ -1101,7 +1109,7 @@ function order_sync_admin_menu() {
         'Settings',
         'manage_options',
         'subsales-settings',
-        'order_sync_settings_page'
+        array( 'Subsales_Admin_Pages', 'render_settings_page' )
     );
     
     add_submenu_page(
@@ -1110,7 +1118,7 @@ function order_sync_admin_menu() {
         'Teams',
         'manage_options',
         'subsales-teams',
-        'ss_teams_page'
+        'ss_teams_page'  // TODO: Extract to Subsales_Admin_Pages::render_teams_page()
     );
     
     add_submenu_page(
@@ -1119,7 +1127,7 @@ function order_sync_admin_menu() {
         'Orders',
         'manage_options',
         'subsales-orders',
-        'order_sync_orders_page'
+        array( 'Subsales_Admin_Pages', 'render_orders_page' )
     );
 
     add_submenu_page(
@@ -1128,7 +1136,7 @@ function order_sync_admin_menu() {
         'Delivery',
         'manage_options',
         'subsales-delivery',
-        'order_sync_delivery_page'
+        array( 'Subsales_Admin_Pages', 'render_delivery_page' )
     );
     
     add_submenu_page(
@@ -1137,7 +1145,7 @@ function order_sync_admin_menu() {
         'Campaigns',
         'manage_options',
         'subsales-campaigns',
-        'subsales_campaigns_page'
+        array( 'Subsales_Admin_Pages', 'render_campaigns_page' )
     );
     
     // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
@@ -1766,27 +1774,61 @@ function subsales_generate_zip_extracts() {
 // AJAX handler to upload and process ZIP boundaries shapefile (Census ZCTA)
 add_action( 'wp_ajax_subsales_upload_zip_boundaries', 'subsales_upload_zip_boundaries_ajax' );
 function subsales_upload_zip_boundaries_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    check_ajax_referer( 'subsales_upload_address', 'nonce' );
+    // Increase PHP limits for large Census Bureau files
+    @ini_set( 'memory_limit', '512M' );
+    @ini_set( 'max_execution_time', '300' );
+    @ini_set( 'upload_max_filesize', '600M' );
+    @ini_set( 'post_max_size', '600M' );
     
+    // Check permissions
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied', 403 );
+        return;
+    }
+    
+    // Verify nonce
+    if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'subsales_upload_address' ) ) {
+        wp_send_json_error( 'Invalid security token. Please refresh the page and try again.', 403 );
+        return;
+    }
+    
+    // Check file upload
     if ( ! isset( $_FILES['boundaries_file'] ) || $_FILES['boundaries_file']['error'] !== UPLOAD_ERR_OK ) {
-        wp_send_json_error( 'File upload failed' );
+        $error_msg = 'File upload failed';
+        if ( isset( $_FILES['boundaries_file']['error'] ) ) {
+            switch ( $_FILES['boundaries_file']['error'] ) {
+                case UPLOAD_ERR_INI_SIZE:
+                case UPLOAD_ERR_FORM_SIZE:
+                    $error_msg = 'File is too large';
+                    break;
+                case UPLOAD_ERR_PARTIAL:
+                    $error_msg = 'File was only partially uploaded';
+                    break;
+                case UPLOAD_ERR_NO_FILE:
+                    $error_msg = 'No file was uploaded';
+                    break;
+                default:
+                    $error_msg = 'File upload failed (error code: ' . $_FILES['boundaries_file']['error'] . ')';
+            }
+        }
+        wp_send_json_error( $error_msg, 400 );
+        return;
     }
     
     $file = $_FILES['boundaries_file'];
     $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
     
     if ( $file_ext !== 'zip' ) {
-        wp_send_json_error( 'Invalid file type. Please upload a ZIP file containing ZCTA shapefile.' );
+        wp_send_json_error( 'Invalid file type. Please upload a ZIP file containing ZCTA shapefile.', 400 );
+        return;
     }
     
     // Parse ZCTA shapefile and extract polygons for configured ZIPs
     $result = subsales_parse_zcta_shapefile( $file['tmp_name'] );
     
     if ( is_wp_error( $result ) ) {
-        wp_send_json_error( $result->get_error_message() );
+        wp_send_json_error( $result->get_error_message(), 400 );
+        return;
     }
     
     // Log the operation
@@ -1977,21 +2019,6 @@ function subsales_parse_zcta_geometries( $shp_file ) {
     fclose( $fh );
     
     return $geometries;
-}
-
-// Helper function to cleanup temp directory
-function subsales_cleanup_temp_dir( $dir ) {
-    if ( ! is_dir( $dir ) ) {
-        return;
-    }
-    
-    $files = array_diff( scandir( $dir ), array( '.', '..' ) );
-    foreach ( $files as $file ) {
-        $path = $dir . '/' . $file;
-        is_dir( $path ) ? subsales_cleanup_temp_dir( $path ) : @unlink( $path );
-    }
-    
-    @rmdir( $dir );
 }
 
 // AJAX handler to upload and process address files
@@ -2989,6 +3016,76 @@ function subsales_update_zip_index( $zips = null ) {
     $written = file_put_contents( $index_file, $json );
     
     return $written !== false;
+}
+
+// REST API callback: serve PWA manifest dynamically
+function subsales_serve_pwa_manifest( $request ) {
+    $manifest_file = SUBSALES_PLUGIN_PATH . 'pwa/manifest.json';
+    
+    if ( ! file_exists( $manifest_file ) ) {
+        return new WP_Error( 'manifest_not_found', 'Manifest file not found', array( 'status' => 404 ) );
+    }
+    
+    // Read and parse manifest
+    $manifest_raw = file_get_contents( $manifest_file );
+    $manifest = json_decode( $manifest_raw, true );
+    
+    if ( ! is_array( $manifest ) ) {
+        return new WP_Error( 'manifest_invalid', 'Invalid manifest JSON', array( 'status' => 500 ) );
+    }
+    
+    // Rewrite icon URLs to absolute plugin paths
+    if ( isset( $manifest['icons'] ) && is_array( $manifest['icons'] ) ) {
+        $plugin_base = SUBSALES_PLUGIN_URL . 'pwa/';
+        foreach ( $manifest['icons'] as $i => $icon ) {
+            if ( isset( $icon['src'] ) ) {
+                // If src is relative, make it absolute
+                if ( strpos( $icon['src'], '//' ) === false && strpos( $icon['src'], 'http' ) !== 0 ) {
+                    $manifest['icons'][ $i ]['src'] = $plugin_base . ltrim( $icon['src'], '/' );
+                }
+            }
+        }
+    }
+    
+    // Return manifest with proper headers
+    $response = new WP_REST_Response( $manifest, 200 );
+    $response->header( 'Content-Type', 'application/json' );
+    $response->header( 'Cache-Control', 'public, max-age=3600' );
+    $response->header( 'Access-Control-Allow-Origin', '*' );
+    
+    return $response;
+}
+
+// REST API callback: serve 192x192 PWA icon
+function subsales_serve_pwa_icon_192( $request ) {
+    $icon_file = SUBSALES_PLUGIN_PATH . 'pwa/icons/icon-192x192.png';
+    
+    if ( ! file_exists( $icon_file ) ) {
+        return new WP_Error( 'icon_not_found', 'Icon file not found', array( 'status' => 404 ) );
+    }
+    
+    // Serve the image file
+    header( 'Content-Type: image/png' );
+    header( 'Cache-Control: public, max-age=86400' );
+    header( 'Access-Control-Allow-Origin: *' );
+    readfile( $icon_file );
+    exit;
+}
+
+// REST API callback: serve 512x512 PWA icon
+function subsales_serve_pwa_icon_512( $request ) {
+    $icon_file = SUBSALES_PLUGIN_PATH . 'pwa/icons/icon-512x512.png';
+    
+    if ( ! file_exists( $icon_file ) ) {
+        return new WP_Error( 'icon_not_found', 'Icon file not found', array( 'status' => 404 ) );
+    }
+    
+    // Serve the image file
+    header( 'Content-Type: image/png' );
+    header( 'Cache-Control: public, max-age=86400' );
+    header( 'Access-Control-Allow-Origin: *' );
+    readfile( $icon_file );
+    exit;
 }
 
 // Helper: save generation log to WordPress options (keep last 20 entries)
@@ -5064,6 +5161,17 @@ function order_sync_test_maps_key_ajax() {
 function order_sync_check_permissions( WP_REST_Request $request ) {
     global $wpdb;
     
+    // Enhanced debug logging
+    $all_headers = array();
+    foreach ( $_SERVER as $key => $value ) {
+        if ( strpos( $key, 'HTTP_X_' ) === 0 ) {
+            $header_name = str_replace( 'HTTP_X_', 'X-', $key );
+            $header_name = str_replace( '_', '-', $header_name );
+            $all_headers[ $header_name ] = $value;
+        }
+    }
+    error_log( 'Subsales: perm_check called for route: ' . $request->get_route() . ' | Headers: ' . wp_json_encode( $all_headers ) );
+    
     if ( strpos( $request->get_route(), '/config' ) !== false ) {
         $team_name = $request->get_header( 'X-Team-Name' );
         $access_code = $request->get_header( 'X-Access-Code' );
@@ -5080,19 +5188,37 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
     $team_name = $request->get_header( 'X-Team-Name' );
     $access_code = $request->get_header( 'X-Access-Code' );
     
-    if ( ! empty( $team_name ) || ! empty( $access_code ) ) {
+    // Fallback: check $_SERVER directly in case headers aren't coming through properly
+    if ( empty( $team_name ) && isset( $_SERVER['HTTP_X_TEAM_NAME'] ) ) {
+        $team_name = sanitize_text_field( $_SERVER['HTTP_X_TEAM_NAME'] );
+    }
+    if ( empty( $access_code ) && isset( $_SERVER['HTTP_X_ACCESS_CODE'] ) ) {
+        $access_code = sanitize_text_field( $_SERVER['HTTP_X_ACCESS_CODE'] );
+    }
+    
+    if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
         $team = order_sync_get_team_by_credentials( $team_name, $access_code );
         if ( $team ) {
             error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
             return true;
         }
-        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ')' );
+        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ', code=' . ( $access_code ? 'present' : 'missing' ) . ')' );
         return false;
     }
     
     // User-based auth: X-User-ID + X-Team-ID (Phase 4)
+    // NOTE: This validates user/team relationship WITHOUT requiring an active session
+    // This allows offline orders to sync even after logout, using embedded credentials
     $user_id = $request->get_header( 'X-User-ID' );
     $team_id = $request->get_header( 'X-Team-ID' );
+    
+    // Fallback: check $_SERVER directly in case headers aren't coming through properly
+    if ( empty( $user_id ) && isset( $_SERVER['HTTP_X_USER_ID'] ) ) {
+        $user_id = sanitize_text_field( $_SERVER['HTTP_X_USER_ID'] );
+    }
+    if ( empty( $team_id ) && isset( $_SERVER['HTTP_X_TEAM_ID'] ) ) {
+        $team_id = sanitize_text_field( $_SERVER['HTTP_X_TEAM_ID'] );
+    }
     
     if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
         $members_table = $wpdb->prefix . 'ss_team_members';
@@ -5109,7 +5235,30 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
             return false;
         }
         
-        // Verify user belongs to the team
+        // Special case: team_id = -1 means "individual" user (no team assignment required)
+        // For individual users, we still need to verify they have an active session
+        if ( $team_id === '-1' || intval( $team_id ) === -1 ) {
+            // Check if user has an active PWA session (session-based auth for individual mode)
+            $sessions_table = $wpdb->prefix . 'ss_pwa_sessions';
+            $active_session = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$sessions_table} 
+                 WHERE user_id = %d 
+                 AND status = 'active' 
+                 AND session_expiry > NOW()",
+                intval( $user_id )
+            ));
+            
+            if ( $active_session ) {
+                error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (active session verified)' );
+                return true;
+            }
+            
+            error_log( 'Subsales: perm_check individual user FAILED - no active session for user_id=' . $user_id );
+            return false;
+        }
+        
+        // Verify user belongs to the team (validates relationship, not session)
+        // This allows post-logout sync using order's embedded credentials
         $assignment = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
             intval( $user_id ),
@@ -5117,7 +5266,7 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         ));
         
         if ( $assignment ) {
-            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id );
+            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id . ' (session-independent)' );
             return true;
         }
         
@@ -5137,6 +5286,7 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
     }
     
+    error_log( 'Subsales: perm_check FAILED - no valid auth headers, falling back to WP user check' );
     return current_user_can( 'edit_posts' );
 }
 
@@ -5304,6 +5454,7 @@ function get_app_config( WP_REST_Request $request ) {
         'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
         'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
         'sessionDuration' => intval( get_option( 'order_sync_session_duration', 86400000 ) ),
+        'individualSessionDuration' => intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ),
         'authenticated' => $is_authenticated,
         'products' => $products,
         'loginMode' => $login_mode,
@@ -5756,15 +5907,20 @@ function subsales_serve_portal_assets() {
         }
     }
 
-    if ( $req_path === $portal_base . '/service-worker.js' ) {
+    if ( $req_path === $portal_base . '/service-worker.js' || 
+         $req_path === $portal_base . 'service-worker.js' ||
+         strpos( $req_path, '/service-worker.js' ) !== false ) {
         $file = SUBSALES_PLUGIN_PATH . 'pwa/service-worker.js';
         if ( file_exists( $file ) ) {
             // Serve publicly with permissive caching and CORS so browsers can register the SW without auth issues
             header( 'Content-Type: application/javascript' );
             header( 'Cache-Control: public, max-age=3600' );
             header( 'Access-Control-Allow-Origin: *' );
+            http_response_code(200);
             readfile( $file );
             exit;
+        } else {
+            error_log( 'SUBSALES ERROR: Service worker file not found at: ' . $file );
         }
     }
 
@@ -5863,10 +6019,65 @@ function subsales_serve_portal_assets() {
             exit;
         }
     }
+    
+    // Serve other PWA files (CSS, JS) from portal base
+    // Match: /portal/styles.css, /portal/pwa-logger.js, /portal/app.js, etc.
+    if ( strpos( $req_path, $portal_base . '/' ) === 0 ) {
+        $rel_file = substr( $req_path, strlen( $portal_base ) + 1 );
+        // Only serve safe PWA files (prevent directory traversal)
+        $allowed_files = array(
+            'styles.css',
+            'pwa-logger.js',
+            'app.js',
+            'address-autocomplete.js',
+            'session-tracking.js',
+            'global-suggestions.json',
+            'zip-index.json'
+        );
+        
+        if ( in_array( $rel_file, $allowed_files ) ) {
+            $file = SUBSALES_PLUGIN_PATH . 'pwa/' . $rel_file;
+            if ( file_exists( $file ) ) {
+                $ext = strtolower( pathinfo( $file, PATHINFO_EXTENSION ) );
+                switch ( $ext ) {
+                    case 'css': $ct = 'text/css'; break;
+                    case 'js': $ct = 'application/javascript'; break;
+                    case 'json': $ct = 'application/json'; break;
+                    default: $ct = 'text/plain';
+                }
+                header( 'Content-Type: ' . $ct . '; charset=utf-8' );
+                header( 'Cache-Control: public, max-age=3600' );
+                header( 'Access-Control-Allow-Origin: *' );
+                readfile( $file );
+                exit;
+            }
+        }
+    }
 }
 
 /**
+ * ==============================================================================
+ * SIGNUP FUNCTIONALITY - MOVED TO includes/class-signups.php
+ * ==============================================================================
+ * The following functions have been moved to the Subsales_Signups class:
+ * - subsales_catch_signup_404()
+ * - subsales_serve_signup_page()
+ * - subsales_rest_signup_settings()
+ * - subsales_rest_submit_signup()
+ * - subsales_rest_get_my_signups()
+ * - subsales_rest_get_team_roster()
+ * - subsales_rest_update_team_driver()
+ * - subsales_rest_get_campaigns()
+ * - subsales_rest_create_campaign()
+ * - subsales_rest_delete_campaign()
+ * 
+ * Initialize with: Subsales_Signups::init();
+ * ==============================================================================
+ */
+
+/**
  * Catch signup 404s at wp hook (earlier than template_redirect)
+ * NOTE: Moved to Subsales_Signups::catch_signup_404()
  */
 function subsales_catch_signup_404() {
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
@@ -5886,6 +6097,8 @@ function subsales_catch_signup_404() {
 /**
  * Serve the signup page at /signup/ endpoint
  * Self-registration interface for team members to sign up for selling dates
+ * NOTE: Moved to Subsales_Signups::serve_signup_page()
+ * HTML template located in admin/signup-page.php
  */
 function subsales_serve_signup_page() {
     $header_image_id = intval( get_option( 'subsales_header_image', 0 ) );
@@ -6126,6 +6339,7 @@ function subsales_serve_signup_page() {
                     <div class="form-group">
                         <label for="legacy-new-team">Or Create New Team</label>
                         <input type="text" id="legacy-new-team" placeholder="Enter new team name">
+                        <div id="legacy-new-team-warning" class="help-text" style="color: #d63638; display: none;"></div>
                         <div class="help-text">New teams will be created with a default access code</div>
                     </div>
                     <button class="btn" id="legacy-step1-next">Next</button>
@@ -6191,6 +6405,7 @@ function subsales_serve_signup_page() {
                     <div class="form-group">
                         <label for="user-new-team">Or Create New Team</label>
                         <input type="text" id="user-new-team" placeholder="Enter new team name">
+                        <div id="user-new-team-warning" class="help-text" style="color: #d63638; display: none;"></div>
                         <div class="help-text">New teams will be created with a default access code</div>
                     </div>
                     <button class="btn" id="user-step2-next">Next - Select Dates</button>
@@ -6218,6 +6433,14 @@ function subsales_serve_signup_page() {
                     <h3>Your Current Registrations</h3>
                     <div id="reg-list"></div>
                     <button class="btn" id="add-another-team">Sign Up for Another Team</button>
+                </div>
+                
+                <!-- Signup Details Modal -->
+                <div id="signup-details-modal" class="modal hidden" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000;">
+                    <div class="modal-content" style="background: white; border-radius: 8px; padding: 25px; max-width: 450px; width: 90%; max-height: 85vh; overflow-y: auto; position: relative; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                        <button id="modal-close" style="position: absolute; top: 12px; right: 12px; background: none; border: none; font-size: 28px; cursor: pointer; color: #999; line-height: 1;">&times;</button>
+                        <div id="modal-body"></div>
+                    </div>
                 </div>
             </div>
 
@@ -6287,7 +6510,8 @@ function subsales_serve_signup_page() {
             }
 
             // Setup autocomplete handlers for both modes
-            function setupTeamSearch(searchFieldId, resultsFieldId, newTeamFieldId) {
+            function setupTeamSearch(searchFieldId, resultsFieldId, newTeamFieldId, warningFieldId) {
+                // Search field autocomplete
                 document.getElementById(searchFieldId).addEventListener('input', async function(e) {
                     const query = e.target.value.trim();
                     if (query.length < 2) {
@@ -6313,6 +6537,9 @@ function subsales_serve_signup_page() {
                                     document.getElementById(searchFieldId).value = selectedTeam.name;
                                     document.getElementById(newTeamFieldId).value = '';
                                     document.getElementById(resultsFieldId).innerHTML = '';
+                                    if (warningFieldId) {
+                                        document.getElementById(warningFieldId).style.display = 'none';
+                                    }
                                 });
                             });
                         }
@@ -6320,6 +6547,36 @@ function subsales_serve_signup_page() {
                         console.error('Error searching teams:', error);
                     }
                 });
+                
+                // New team field - check for duplicates
+                if (warningFieldId) {
+                    document.getElementById(newTeamFieldId).addEventListener('input', async function(e) {
+                        const newName = e.target.value.trim();
+                        const warningDiv = document.getElementById(warningFieldId);
+                        
+                        if (newName.length < 2) {
+                            warningDiv.style.display = 'none';
+                            return;
+                        }
+                        
+                        try {
+                            const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(newName));
+                            const data = await response.json();
+                            
+                            // Check for case-insensitive match
+                            const exactMatch = data.find(team => team.name.toLowerCase() === newName.toLowerCase());
+                            
+                            if (exactMatch) {
+                                warningDiv.textContent = `⚠️ Team "${exactMatch.name}" already exists. Use search above to select it.`;
+                                warningDiv.style.display = 'block';
+                            } else {
+                                warningDiv.style.display = 'none';
+                            }
+                        } catch (error) {
+                            console.error('Error checking team name:', error);
+                        }
+                    });
+                }
             }
 
             function setupUserNameSearch(nameFieldId, resultsFieldId) {
@@ -6366,8 +6623,8 @@ function subsales_serve_signup_page() {
             }
 
             // Setup both modes
-            setupTeamSearch('legacy-team-search', 'legacy-team-results', 'legacy-new-team');
-            setupTeamSearch('user-team-search', 'user-team-results', 'user-new-team');
+            setupTeamSearch('legacy-team-search', 'legacy-team-results', 'legacy-new-team', 'legacy-new-team-warning');
+            setupTeamSearch('user-team-search', 'user-team-results', 'user-new-team', 'user-new-team-warning');
             setupUserNameSearch('user-user-name', 'user-name-results');
 
             // ========== LEGACY MODE HANDLERS ==========
@@ -6377,11 +6634,19 @@ function subsales_serve_signup_page() {
                 const teamSearch = document.getElementById('legacy-team-search').value.trim();
                 const newTeamName = document.getElementById('legacy-new-team').value.trim();
                 const errorDiv = document.getElementById('legacy-step1-error');
+                const warningDiv = document.getElementById('legacy-new-team-warning');
                 
                 errorDiv.classList.add('hidden');
                 
                 if (!selectedTeam && !newTeamName) {
                     errorDiv.textContent = 'Please select or create a team';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                
+                // Check if warning is visible (duplicate team name)
+                if (newTeamName && warningDiv.style.display !== 'none') {
+                    errorDiv.textContent = 'Cannot create duplicate team. Please select existing team from search results.';
                     errorDiv.classList.remove('hidden');
                     return;
                 }
@@ -6476,6 +6741,7 @@ function subsales_serve_signup_page() {
                         if (data.valid) {
                             userData = { id: userData.id, name: data.user.name, phone: phoneDigits };
                             errorDiv.classList.add('hidden');
+                            await loadUserSignups(); // Load existing signups for verified user
                             showStep(2);
                         } else {
                             let errorMessage = data.message || 'Phone number does not match this user';
@@ -6504,47 +6770,260 @@ function subsales_serve_signup_page() {
             // Load user's existing signups
             async function loadUserSignups() {
                 if (!userData || !userData.phone) {
+                    console.log('loadUserSignups: No userData or phone');
                     userSignups = [];
                     return;
                 }
                 
+                console.log('loadUserSignups: Fetching signups for phone:', userData.phone);
+                
                 try {
-                    const response = await fetch(apiBase + '/my-signups?phone=' + encodeURIComponent(userData.phone));
+                    const response = await fetch(apiBase + '/my-signups', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ phone: userData.phone })
+                    });
+                    
+                    if (!response.ok) {
+                        console.error('loadUserSignups: Response not OK', response.status, response.statusText);
+                        userSignups = [];
+                        const listDiv = document.getElementById('user-current-signups-list');
+                        if (listDiv) {
+                            listDiv.innerHTML = '<p class="help-text">You have no current registrations.</p>';
+                        }
+                        return;
+                    }
+                    
                     const data = await response.json();
                     userSignups = data || [];
+                    
+                    console.log('loadUserSignups: Received', userSignups.length, 'signups:', userSignups);
                     
                     // Display in Step 2
                     const listDiv = document.getElementById('user-current-signups-list');
                     if (userSignups.length === 0) {
                         listDiv.innerHTML = '<p class="help-text">You have no current registrations.</p>';
                     } else {
+                        // Fetch driver info for all signups
+                        const signupsWithDrivers = await Promise.all(userSignups.map(async reg => {
+                            try {
+                                const rosterResponse = await fetch(apiBase + '/team-roster?team_id=' + reg.team_id + '&campaign_id=' + reg.campaign_id);
+                                const roster = await rosterResponse.json();
+                                return { ...reg, driver_name: roster.driver_name || '' };
+                            } catch (error) {
+                                console.error('Error fetching driver for signup:', error);
+                                return { ...reg, driver_name: '' };
+                            }
+                        }));
+                        
                         listDiv.innerHTML = `
                             <table class="reg-table">
                                 <thead>
                                     <tr>
                                         <th>Team</th>
                                         <th>Date</th>
+                                        <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${userSignups.map(reg => {
+                                    ${signupsWithDrivers.map(reg => {
                                         const date = new Date(reg.campaign_date + 'T00:00:00');
                                         const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                                        const teamDisplay = reg.campaign_name ? `${reg.team_name} - ${reg.campaign_name}` : reg.team_name;
+                                        const displayName = reg.campaign_name ? `${formatted} - ${reg.campaign_name}` : formatted;
+                                        const driverText = reg.driver_name ? `Driver: ${reg.driver_name}` : 'Driver Missing';
                                         return `
                                             <tr>
-                                                <td>${teamDisplay}</td>
-                                                <td>${formatted}</td>
+                                                <td>${reg.team_name} <span style="font-size: 11px; color: #666;">(${driverText})</span></td>
+                                                <td>${displayName}</td>
+                                                <td><button class="btn-details-signup" data-signup='${JSON.stringify(reg).replace(/'/g, "&apos;")}' style="background: #007bff; color: white; border: none; padding: 5px 15px; border-radius: 3px; cursor: pointer; font-size: 12px;">Details</button></td>
                                             </tr>
                                         `;
                                     }).join('')}
                                 </tbody>
                             </table>
                         `;
+                        
+                        // Add click handlers for details buttons
+                        document.querySelectorAll('.btn-details-signup').forEach(btn => {
+                            btn.addEventListener('click', async function() {
+                                const reg = JSON.parse(this.getAttribute('data-signup'));
+                                await showSignupDetails(reg);
+                            });
+                        });
                     }
                 } catch (error) {
                     console.error('Error loading signups:', error);
                     userSignups = [];
+                }
+            }
+
+            // Show signup details modal
+            async function showSignupDetails(signup) {
+                try {
+                    // Fetch team roster and driver info
+                    const response = await fetch(apiBase + '/team-roster?team_id=' + signup.team_id + '&campaign_id=' + signup.campaign_id);
+                    const roster = await response.json();
+                    
+                    const date = new Date(signup.campaign_date + 'T00:00:00');
+                    const formatted = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+                    const displayName = signup.campaign_name ? `${formatted} - ${signup.campaign_name}` : formatted;
+                    
+                    const currentDriver = roster.driver_name || '';
+                    const driverUpdatedBy = roster.driver_updated_by || '';
+                    const driverUpdatedAt = roster.driver_updated_at ? new Date(roster.driver_updated_at).toLocaleString() : '';
+                    
+                    let modalHTML = `
+                        <h3 style="margin-top: 0; margin-bottom: 20px; padding-right: 30px;">${signup.team_name}</h3>
+                        <p style="margin-bottom: 20px; color: #666;"><strong>Date:</strong> ${displayName}</p>
+                        
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                            <h4 style="margin-top: 0; margin-bottom: 12px; font-size: 16px;">Team Members (${roster.members.length})</h4>
+                            <ul style="margin: 0; padding-left: 20px; line-height: 1.8;">
+                                ${roster.members.map(m => `<li>${m.name}${m.user_id == userData.id ? ' <strong>(You)</strong>' : ''}</li>`).join('')}
+                            </ul>
+                        </div>
+                        
+                        <div style="background: #fff3cd; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                            <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 16px;">Driver</h4>
+                            <input type="text" id="driver-name-input" value="${currentDriver}" placeholder="Enter driver name..." 
+                                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; margin-bottom: 8px;">
+                            <button id="update-driver" style="background: #007bff; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%;">Update Driver</button>
+                    `;
+                    
+                    if (driverUpdatedBy) {
+                        modalHTML += `<p style="margin: 10px 0 0 0; color: #856404; font-size: 12px;"><em>Last updated by ${driverUpdatedBy}`;
+                        if (driverUpdatedAt) {
+                            modalHTML += ` on ${driverUpdatedAt}`;
+                        }
+                        modalHTML += `</em></p>`;
+                    }
+                    
+                    modalHTML += `
+                            <div id="driver-status" style="margin-top: 8px; font-size: 14px;"></div>
+                        </div>`;
+                    
+                    modalHTML += `
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px;">
+                            <details>
+                                <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">Advanced Actions</summary>
+                                <div style="padding-top: 10px;">
+                                    <button id="change-team" style="background: #ffc107; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%; margin-bottom: 8px;">Switch to Different Team</button>
+                                    <button id="delete-signup" style="background: #dc3545; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%;">Remove This Registration</button>
+                                    <div id="action-status" style="margin-top: 10px; font-size: 14px;"></div>
+                                </div>
+                            </details>
+                        </div>
+                        
+                        <button id="close-modal-btn" style="background: #6c757d; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-size: 16px; width: 100%; margin-top: 20px;">Close</button>
+                    `;
+                    
+                    document.getElementById('modal-body').innerHTML = modalHTML;
+                    document.getElementById('signup-details-modal').style.display = 'flex';
+                    
+                    // Close button handlers
+                    document.getElementById('modal-close').onclick = () => {
+                        document.getElementById('signup-details-modal').style.display = 'none';
+                    };
+                    document.getElementById('close-modal-btn').onclick = () => {
+                        document.getElementById('signup-details-modal').style.display = 'none';
+                    };
+                    
+                    // Update driver button
+                    document.getElementById('update-driver').addEventListener('click', async function() {
+                        const driverName = document.getElementById('driver-name-input').value.trim();
+                        await updateTeamDriver(signup.team_id, signup.campaign_id, driverName);
+                    });
+                    
+                    // Delete signup button
+                    document.getElementById('delete-signup').addEventListener('click', async function() {
+                        if (confirm('Are you sure you want to remove this registration?')) {
+                            try {
+                                const response = await fetch(apiBase + '/my-signups/' + signup.signup_id, {
+                                    method: 'DELETE'
+                                });
+                                
+                                if (response.ok) {
+                                    document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Registration removed successfully!</span>';
+                                    setTimeout(() => {
+                                        document.getElementById('signup-details-modal').style.display = 'none';
+                                        loadUserSignups();
+                                    }, 1500);
+                                } else {
+                                    const error = await response.json();
+                                    document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to remove') + '</span>';
+                                }
+                            } catch (error) {
+                                document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
+                            }
+                        }
+                    });
+                    
+                    // Change team button
+                    document.getElementById('change-team').addEventListener('click', async function() {
+                        const newTeamName = prompt('Enter the name of the team you want to switch to:');
+                        if (newTeamName && newTeamName.trim()) {
+                            try {
+                                const response = await fetch(apiBase + '/my-signups/' + signup.signup_id, {
+                                    method: 'PUT',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ team_name: newTeamName.trim() })
+                                });
+                                
+                                if (response.ok) {
+                                    document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Team changed successfully!</span>';
+                                    setTimeout(() => {
+                                        document.getElementById('signup-details-modal').style.display = 'none';
+                                        loadUserSignups();
+                                    }, 1500);
+                                } else {
+                                    const error = await response.json();
+                                    document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to change team') + '</span>';
+                                }
+                            } catch (error) {
+                                document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
+                            }
+                        }
+                    });
+                    
+                } catch (error) {
+                    console.error('Error loading signup details:', error);
+                    alert('Failed to load signup details');
+                }
+            }
+
+            // Update team driver
+            async function updateTeamDriver(teamId, campaignId, driverName) {
+                const statusDiv = document.getElementById('driver-status');
+                statusDiv.innerHTML = '<span style="color: #666;">Saving...</span>';
+                
+                try {
+                    const response = await fetch(apiBase + '/team-driver', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            team_id: teamId,
+                            campaign_id: campaignId,
+                            driver_name: driverName,
+                            updated_by: userData.name
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        statusDiv.innerHTML = '<span style="color: #28a745; font-weight: 600;">✓ Driver Updated!</span>';
+                        statusDiv.style.background = '#d4edda';
+                        statusDiv.style.padding = '8px';
+                        statusDiv.style.borderRadius = '4px';
+                        
+                        setTimeout(() => {
+                            statusDiv.style.background = 'transparent';
+                            statusDiv.innerHTML = '';
+                        }, 2000);
+                    } else {
+                        const error = await response.json();
+                        statusDiv.innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to save') + '</span>';
+                    }
+                } catch (error) {
+                    statusDiv.innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
                 }
             }
             
@@ -6553,11 +7032,19 @@ function subsales_serve_signup_page() {
                 const teamSearch = document.getElementById('user-team-search').value.trim();
                 const newTeamName = document.getElementById('user-new-team').value.trim();
                 const errorDiv = document.getElementById('user-step2-error');
+                const warningDiv = document.getElementById('user-new-team-warning');
                 
                 errorDiv.classList.add('hidden');
                 
                 if (!selectedTeam && !newTeamName) {
                     errorDiv.textContent = 'Please select or create a team';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                
+                // Check if warning is visible (duplicate team name)
+                if (newTeamName && warningDiv.style.display !== 'none') {
+                    errorDiv.textContent = 'Cannot create duplicate team. Please select existing team from search results.';
                     errorDiv.classList.remove('hidden');
                     return;
                 }
@@ -6581,10 +7068,8 @@ function subsales_serve_signup_page() {
                     const response = await fetch(apiBase + '/campaigns');
                     const campaigns = await response.json();
                     
-                    // Get list of dates user is already signed up for on this team
-                    const existingDates = userSignups
-                        .filter(signup => signup.team_id == selectedTeam.id)
-                        .map(signup => signup.campaign_date);
+                    // Get list of ALL dates user is already signed up for (any team)
+                    const existingDates = userSignups.map(signup => signup.campaign_date);
                     
                     const checkboxesDiv = document.getElementById('dates-checkboxes');
                     if (!campaigns || campaigns.length === 0) {
@@ -6593,7 +7078,7 @@ function subsales_serve_signup_page() {
                         const availableCampaigns = campaigns.filter(campaign => !existingDates.includes(campaign.date));
                         
                         if (availableCampaigns.length === 0) {
-                            checkboxesDiv.innerHTML = '<p class="help-text">You are already signed up for all available dates on this team!</p>';
+                            checkboxesDiv.innerHTML = '<p class="help-text">You are already signed up for all available dates!</p>';
                         } else {
                             checkboxesDiv.innerHTML = availableCampaigns.map(campaign => {
                                 const date = new Date(campaign.date + 'T00:00:00');
@@ -6606,7 +7091,6 @@ function subsales_serve_signup_page() {
                                     </label>
                                 `;
                             }).join('');
-                        }
                         }
                     }
                 } catch (error) {
@@ -7134,7 +7618,15 @@ function subsales_address_extracts_page() {
     <?php
 }
 
-// Admin Delivery page: single-day delivery exports and preview
+/**
+ * DEPRECATED: Admin Delivery page (inline version)
+ * 
+ * This function is NO LONGER USED as of v2.2.1.153.
+ * Delivery page now rendered by: Subsales_Admin_Pages::render_delivery_page()
+ * Template file: admin/delivery-page.php
+ * 
+ * @deprecated 2.2.1.153 Use Subsales_Admin_Pages::render_delivery_page() instead
+ */
 function order_sync_delivery_page() {
     if ( ! current_user_can( 'manage_options' ) ) return;
     $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
@@ -7572,6 +8064,10 @@ function order_sync_handle_generate_delivery() {
 }
 
 // Campaign Dates Admin Page - visual calendar for managing selling dates
+/**
+ * Legacy campaigns page function
+ * @deprecated 2.2.1.163 Use Subsales_Admin_Pages::render_campaigns_page() instead
+ */
 function subsales_campaigns_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
@@ -8087,12 +8583,45 @@ function subsales_pwa_sessions_page() {
     $page = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
     $offset = ( $page - 1 ) * $per_page;
     
-    $sessions = Subsales_Database::get_pwa_sessions( array(
-        'status' => $status_filter === 'all' ? 'all' : $status_filter,
+    // Get more sessions than needed since we'll filter by real-time status
+    $fetch_limit = $status_filter === 'all' ? $per_page : $per_page * 3;
+    
+    $all_sessions = Subsales_Database::get_pwa_sessions( array(
+        'status' => 'all', // Get all, we'll filter by real-time status below
         'team_id' => $team_filter,
-        'limit' => $per_page,
+        'limit' => $fetch_limit,
         'offset' => $offset
     ) );
+    
+    // Calculate real-time status and filter
+    $sessions = array();
+    $current_time = current_time( 'timestamp' );
+    
+    foreach ( $all_sessions as $session ) {
+        $logout_time = $session['logout_at'] ? strtotime( $session['logout_at'] ) : null;
+        $last_heartbeat = strtotime( $session['last_heartbeat'] );
+        $minutes_since_heartbeat = ( $current_time - $last_heartbeat ) / 60;
+        
+        // Calculate real-time status
+        if ( $session['status'] === 'ended' || $logout_time ) {
+            $display_status = 'ended';
+        } elseif ( $minutes_since_heartbeat <= 5 ) {
+            $display_status = 'active';
+        } else {
+            $display_status = 'idle';
+        }
+        
+        // Apply status filter
+        if ( $status_filter === 'all' || $status_filter === $display_status ) {
+            $session['_display_status'] = $display_status; // Store for display
+            $sessions[] = $session;
+            
+            // Stop when we have enough
+            if ( count( $sessions ) >= $per_page ) {
+                break;
+            }
+        }
+    }
     
     // Get available teams for filter
     global $wpdb;
@@ -8220,17 +8749,8 @@ function subsales_pwa_sessions_page() {
                         $current_time = current_time( 'timestamp' );
                         $duration = $logout_time ? ( $logout_time - $login_time ) : ( $current_time - $login_time );
                         
-                        // Calculate real-time status based on last heartbeat
-                        $last_heartbeat = strtotime( $session['last_heartbeat'] );
-                        $minutes_since_heartbeat = ( $current_time - $last_heartbeat ) / 60;
-                        
-                        if ( $session['status'] === 'ended' || $logout_time ) {
-                            $display_status = 'ended';
-                        } elseif ( $minutes_since_heartbeat <= 5 ) {
-                            $display_status = 'active';
-                        } else {
-                            $display_status = 'idle';
-                        }
+                        // Use pre-calculated display status if available
+                        $display_status = isset( $session['_display_status'] ) ? $session['_display_status'] : 'ended';
                         
                         $status_colors = array(
                             'active' => '#28a745',
@@ -8311,7 +8831,15 @@ function subsales_pwa_sessions_page() {
     <?php
 }
 
-// Main dashboard page
+/**
+ * DEPRECATED: Main dashboard page (inline version)
+ * 
+ * This function is NO LONGER USED as of v2.2.1.153.
+ * Main dashboard now rendered by: Subsales_Admin_Pages::render_main_dashboard()
+ * Template file: admin/main-dashboard.php
+ * 
+ * @deprecated 2.2.1.153 Use Subsales_Admin_Pages::render_main_dashboard() instead
+ */
 function order_sync_main_page() {
     // Check user capabilities
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -8624,8 +9152,10 @@ function order_sync_main_page() {
         $members_table = $wpdb->prefix . 'ss_team_members';
         
         $order_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$orders_table}" );
-        $team_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table}" );
-        $member_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table}" );
+        $team_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'active'" );
+        $team_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'inactive'" );
+        $member_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} WHERE status = 'active'" );
+        $member_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} WHERE status = 'inactive'" );
         ?>
         
         <?php
@@ -8695,13 +9225,23 @@ function order_sync_main_page() {
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-groups" aria-hidden="true"></span> Teams</h2></div>
                         <div class="inside">
-                            <p class="stat-value"><?php echo intval( $team_count ); ?></p>
+                            <div class="stat-container">
+                                <p class="stat-value"><?php echo intval( $team_count ); ?></p>
+                                <?php if ( $team_count_inactive > 0 ): ?>
+                                    <p class="stat-inactive"><?php echo intval( $team_count_inactive ); ?> inactive</p>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                     <div class="postbox subsales-box">
                         <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-admin-users" aria-hidden="true"></span> Members</h2></div>
                         <div class="inside">
-                            <p class="stat-value"><?php echo intval( $member_count ); ?></p>
+                            <div class="stat-container">
+                                <p class="stat-value"><?php echo intval( $member_count ); ?></p>
+                                <?php if ( $member_count_inactive > 0 ): ?>
+                                    <p class="stat-inactive"><?php echo intval( $member_count_inactive ); ?> inactive</p>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                     <div class="postbox subsales-box">
@@ -9083,7 +9623,15 @@ function subsales_enqueue_admin_assets($hook){
     }
 }
 
-// Admin settings page
+/**
+ * DEPRECATED: Admin settings page (inline version)
+ * 
+ * This function is NO LONGER USED as of v2.2.1.153.
+ * Settings page now rendered by: Subsales_Admin_Pages::render_settings_page()
+ * Template file: admin/settings-page.php
+ * 
+ * @deprecated 2.2.1.153 Use Subsales_Admin_Pages::render_settings_page() instead
+ */
 function order_sync_settings_page() {
     // Check user capabilities
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -9097,6 +9645,7 @@ function order_sync_settings_page() {
         $sync_interval = isset( $_POST['sync_interval'] ) ? intval( $_POST['sync_interval'] ) : 300;
         $portal_slug = isset( $_POST['portal_slug'] ) ? sanitize_title( $_POST['portal_slug'] ) : 'subsales-portal';
         $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
+        $individual_session_duration = isset( $_POST['individual_session_duration'] ) ? intval( $_POST['individual_session_duration'] ) : 1209600000;
         $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
@@ -9104,6 +9653,7 @@ function order_sync_settings_page() {
         update_option( 'order_sync_interval', $sync_interval );
         update_option( 'order_sync_portal_slug', $portal_slug );
         update_option( 'order_sync_session_duration', $session_duration );
+        update_option( 'subsales_individual_session_duration', $individual_session_duration );
         update_option( 'order_sync_login_mode', $login_mode );
 
         if ( $portal_slug !== $old_slug ) {
@@ -9178,6 +9728,31 @@ function order_sync_settings_page() {
             }
             update_option( 'subsales_served_zips', array_unique( $valid_zips ) );
             echo '<div class="notice notice-success"><p>ZIP codes saved! (' . count( $valid_zips ) . ' valid ZIP codes)</p></div>';
+        }
+        
+        // Handle Census boundary configuration
+        if ( isset( $_POST['save_census_config'] ) ) {
+            $census_year = isset( $_POST['census_year'] ) ? absint( $_POST['census_year'] ) : date( 'Y' );
+            $census_state = isset( $_POST['census_state'] ) ? sanitize_text_field( $_POST['census_state'] ) : '';
+            $census_zip_filter = isset( $_POST['census_zip_filter'] ) ? sanitize_text_field( $_POST['census_zip_filter'] ) : '';
+            $census_url_pattern = isset( $_POST['census_url_pattern'] ) ? esc_url_raw( $_POST['census_url_pattern'] ) : '';
+            
+            // Validate year
+            if ( $census_year < 2010 || $census_year > date( 'Y' ) + 1 ) {
+                $census_year = date( 'Y' );
+            }
+            
+            // Default URL pattern if empty
+            if ( empty( $census_url_pattern ) ) {
+                $census_url_pattern = 'https://www2.census.gov/geo/tiger/TIGER{year}/ZCTA520/tl_{year}_us_zcta520.zip';
+            }
+            
+            update_option( 'subsales_census_year', $census_year );
+            update_option( 'subsales_census_state', $census_state );
+            update_option( 'subsales_census_zip_filter', $census_zip_filter );
+            update_option( 'subsales_census_url_pattern', $census_url_pattern );
+            
+            echo '<div class="notice notice-success"><p>Census boundary configuration saved!</p></div>';
         }
     }
     
@@ -9389,15 +9964,32 @@ function order_sync_settings_page() {
                             </td>
                         </tr>
                         <tr>
-                            <th scope="row">Default session duration</th>
+                            <th scope="row">Team mode session duration</th>
                             <td>
                                 <select name="session_duration">
                                     <option value="120000" <?php selected( 120000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 minutes (Test)</option>
                                     <option value="7200000" <?php selected( 7200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 hours</option>
                                     <option value="43200000" <?php selected( 43200000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>12 hours</option>
-                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>24 hours (default)</option>
+                                    <option value="172800000" <?php selected( 172800000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>2 days</option>
+                                    <option value="604800000" <?php selected( 604800000, intval( get_option( 'order_sync_session_duration', 86400000 ) ) ); ?>>7 days</option>
                                 </select>
-                                <p class="description">Choose how long a session should be remembered for mobile clients when they login.</p>
+                                <p class="description">Session duration for team-based login (shared devices, typically shorter for security).</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Individual mode session duration</th>
+                            <td>
+                                <select name="individual_session_duration">
+                                    <option value="120000" <?php selected( 120000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>2 minutes (Test)</option>
+                                    <option value="86400000" <?php selected( 86400000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>24 hours</option>
+                                    <option value="259200000" <?php selected( 259200000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>3 days</option>
+                                    <option value="604800000" <?php selected( 604800000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>7 days</option>
+                                    <option value="1209600000" <?php selected( 1209600000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>14 days (default)</option>
+                                    <option value="1814400000" <?php selected( 1814400000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>21 days</option>
+                                    <option value="2592000000" <?php selected( 2592000000, intval( get_option( 'subsales_individual_session_duration', 1209600000 ) ) ); ?>>30 days</option>
+                                </select>
+                                <p class="description">Session duration for individual-user login (personal devices, supports extended 2-week campaigns).</p>
                             </td>
                         </tr>
                         <tr>
@@ -11321,7 +11913,15 @@ function subsales_ajax_remove_user_from_team() {
     wp_send_json_error( array( 'message' => 'Invalid user or team ID' ) );
 }
 
-// Orders admin page
+/**
+ * DEPRECATED: Orders admin page (inline version)
+ * 
+ * This function is NO LONGER USED as of v2.2.1.154.
+ * Orders page now rendered by: Subsales_Admin_Pages::render_orders_page()
+ * Template file: admin/orders-page.php
+ * 
+ * @deprecated 2.2.1.154 Use Subsales_Admin_Pages::render_orders_page() instead
+ */
 function order_sync_orders_page() {
     if ( ! current_user_can( 'manage_options' ) ) return;
     global $wpdb;
@@ -12527,11 +13127,15 @@ function subsales_ajax_get_campaign_signups() {
 
 // ============================================================
 // SIGNUP / CAMPAIGN REST API HANDLERS
+// NOTE: These have been moved to includes/class-signups.php
+// The functions below are kept for backwards compatibility but
+// the actual logic is now in Subsales_Signups class.
 // ============================================================
 
 /**
  * Get signup settings (mode, etc.)
  * GET /wp-json/order-manager/v1/signup/settings
+ * NOTE: Moved to Subsales_Signups::rest_signup_settings()
  */
 function subsales_rest_signup_settings( $request ) {
     // Get login mode from settings (legacy = team-based, user = user-based)
@@ -12632,7 +13236,11 @@ function subsales_rest_search_users( $request ) {
     global $wpdb;
     $table = $wpdb->prefix . 'ss_team_members';
     
-    $search = $request->get_param( 'name' );
+    // Accept both 'q' and 'name' parameters for backwards compatibility
+    $search = $request->get_param( 'q' );
+    if ( empty( $search ) ) {
+        $search = $request->get_param( 'name' );
+    }
     
     if ( empty( $search ) || strlen( $search ) < 2 ) {
         return rest_ensure_response( array() );
@@ -12867,9 +13475,16 @@ function subsales_rest_submit_signup( $request ) {
     // 4. Create signups for each campaign
     $signups_table = $wpdb->prefix . 'ss_signups';
     $created_signups = 0;
+    $skipped_signups = array();
     
     foreach ( $campaign_ids as $campaign_id ) {
         $campaign_id = intval( $campaign_id );
+        
+        subsales_log( 'DEBUG', 'signup', 'Checking for existing signup', array(
+            'user_id' => $user_id,
+            'team_id' => $team_id,
+            'campaign_id' => $campaign_id
+        ) );
         
         // Check if signup already exists
         $exists = $wpdb->get_var( $wpdb->prepare(
@@ -12880,8 +13495,15 @@ function subsales_rest_submit_signup( $request ) {
             $campaign_id
         ) );
         
+        subsales_log( 'DEBUG', 'signup', 'Checking campaign signup', array(
+            'user_id' => $user_id,
+            'team_id' => $team_id,
+            'campaign_id' => $campaign_id,
+            'exists' => $exists ? 'yes' : 'no'
+        ) );
+        
         if ( ! $exists ) {
-            $wpdb->insert( $signups_table, array(
+            $result = $wpdb->insert( $signups_table, array(
                 'user_id' => $user_id,
                 'team_id' => $team_id,
                 'campaign_id' => $campaign_id,
@@ -12890,15 +13512,29 @@ function subsales_rest_submit_signup( $request ) {
                 'created_at' => current_time( 'mysql' )
             ), array( '%d', '%d', '%d', '%d', '%s', '%s' ) );
             
-            $created_signups++;
+            if ( $result ) {
+                $created_signups++;
+                subsales_log( 'DEBUG', 'signup', 'Created signup', array(
+                    'signup_id' => $wpdb->insert_id,
+                    'campaign_id' => $campaign_id
+                ) );
+            } else {
+                subsales_log( 'ERROR', 'signup', 'Failed to insert signup', array(
+                    'campaign_id' => $campaign_id,
+                    'error' => $wpdb->last_error
+                ) );
+            }
+        } else {
+            $skipped_signups[] = $campaign_id;
         }
     }
     
     subsales_log( 'INFO', 'signup', 'Signup completed', array(
         'user_id' => $user_id,
         'team_id' => $team_id,
-        'campaigns' => count( $campaign_ids ),
-        'new_signups' => $created_signups
+        'campaigns_requested' => count( $campaign_ids ),
+        'new_signups' => $created_signups,
+        'skipped' => $skipped_signups
     ) );
     
     return rest_ensure_response( array(
@@ -12916,7 +13552,13 @@ function subsales_rest_submit_signup( $request ) {
 function subsales_rest_get_my_signups( $request ) {
     global $wpdb;
     
-    $phone = preg_replace( '/\D/', '', $request->get_param( 'phone' ) );
+    // Accept phone from either POST body or GET query for backward compatibility
+    $phone = $request->get_param( 'phone' );
+    if ( empty( $phone ) ) {
+        $body = $request->get_json_params();
+        $phone = isset( $body['phone'] ) ? $body['phone'] : '';
+    }
+    $phone = preg_replace( '/\D/', '', $phone );
     
     if ( empty( $phone ) ) {
         return new WP_Error( 'missing_phone', 'Phone number is required', array( 'status' => 400 ) );
@@ -12956,5 +13598,126 @@ function subsales_rest_get_my_signups( $request ) {
     ), ARRAY_A );
     
     return rest_ensure_response( $signups );
+}
+
+/**
+ * Get team roster for a specific campaign
+ * GET /wp-json/order-manager/v1/team-roster?team_id=X&campaign_id=Y
+ */
+function subsales_rest_get_team_roster( $request ) {
+    global $wpdb;
+    
+    $team_id = intval( $request->get_param( 'team_id' ) );
+    $campaign_id = intval( $request->get_param( 'campaign_id' ) );
+    
+    if ( empty( $team_id ) || empty( $campaign_id ) ) {
+        return new WP_Error( 'missing_params', 'Team ID and Campaign ID are required', array( 'status' => 400 ) );
+    }
+    
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    $signups_table = $wpdb->prefix . 'ss_signups';
+    $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
+    
+    // Get all team members signed up for this campaign
+    $members = $wpdb->get_results( $wpdb->prepare(
+        "SELECT 
+            m.id AS user_id,
+            m.name,
+            m.phone
+        FROM {$signups_table} s
+        INNER JOIN {$members_table} m ON s.user_id = m.id
+        WHERE s.team_id = %d AND s.campaign_id = %d AND s.status = 'active'
+        ORDER BY m.name ASC",
+        $team_id,
+        $campaign_id
+    ), ARRAY_A );
+    
+    // Get driver info from team_campaigns table
+    $driver_info = $wpdb->get_row( $wpdb->prepare(
+        "SELECT 
+            tc.driver_name,
+            tc.driver_updated_by,
+            tc.driver_updated_at
+        FROM {$team_campaigns_table} tc
+        WHERE tc.team_id = %d AND tc.campaign_id = %d",
+        $team_id,
+        $campaign_id
+    ), ARRAY_A );
+    
+    $response = array(
+        'members' => $members,
+        'driver_name' => $driver_info ? $driver_info['driver_name'] : '',
+        'driver_updated_by' => $driver_info ? $driver_info['driver_updated_by'] : '',
+        'driver_updated_at' => $driver_info ? $driver_info['driver_updated_at'] : ''
+    );
+    
+    return rest_ensure_response( $response );
+}
+
+/**
+ * Update team driver for a specific campaign
+ * PUT /wp-json/order-manager/v1/team-driver
+ */
+function subsales_rest_update_team_driver( $request ) {
+    global $wpdb;
+    
+    $body = $request->get_json_params();
+    $team_id = isset( $body['team_id'] ) ? intval( $body['team_id'] ) : 0;
+    $campaign_id = isset( $body['campaign_id'] ) ? intval( $body['campaign_id'] ) : 0;
+    $driver_name = isset( $body['driver_name'] ) ? sanitize_text_field( $body['driver_name'] ) : '';
+    $updated_by = isset( $body['updated_by'] ) ? sanitize_text_field( $body['updated_by'] ) : '';
+    
+    if ( empty( $team_id ) || empty( $campaign_id ) ) {
+        return new WP_Error( 'missing_params', 'Team ID and Campaign ID are required', array( 'status' => 400 ) );
+    }
+    
+    $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
+    
+    // Check if record exists
+    $exists = $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$team_campaigns_table} WHERE team_id = %d AND campaign_id = %d",
+        $team_id,
+        $campaign_id
+    ) );
+    
+    if ( $exists ) {
+        // Update existing record
+        $wpdb->update(
+            $team_campaigns_table,
+            array(
+                'driver_name' => $driver_name,
+                'driver_updated_by' => $updated_by,
+                'driver_updated_at' => current_time( 'mysql' )
+            ),
+            array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
+            array( '%s', '%s', '%s' ),
+            array( '%d', '%d' )
+        );
+    } else {
+        // Insert new record
+        $wpdb->insert(
+            $team_campaigns_table,
+            array(
+                'team_id' => $team_id,
+                'campaign_id' => $campaign_id,
+                'driver_name' => $driver_name,
+                'driver_updated_by' => $updated_by,
+                'driver_updated_at' => current_time( 'mysql' )
+            ),
+            array( '%d', '%d', '%s', '%s', '%s' )
+        );
+    }
+    
+    subsales_log( 'INFO', 'signup', 'Driver updated', array(
+        'team_id' => $team_id,
+        'campaign_id' => $campaign_id,
+        'driver_name' => $driver_name,
+        'updated_by' => $updated_by
+    ) );
+    
+    return rest_ensure_response( array(
+        'success' => true,
+        'message' => 'Driver updated successfully'
+    ) );
 }
 

@@ -13,9 +13,8 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-function order_sync_delivery_page() {
-    if ( ! current_user_can( 'manage_options' ) ) return;
-    $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
+if ( ! current_user_can( 'manage_options' ) ) return;
+$start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
     // Preflight summary: compute total product orders and unique addresses
     global $wpdb;
     $orders_table = $wpdb->prefix . 'ss_orders';
@@ -241,7 +240,6 @@ function order_sync_delivery_page() {
         <?php endif; ?>
     </div>
     <?php
-}
 
 // ========================================
 // QR Code & Route Functions

@@ -388,7 +388,11 @@
     if(zip) tail = (cityPart ? cityPart + ' ' + zip : zip);
     else tail = cityPart;
 
-    if(tail) return (streetOut ? streetOut + ', ' + tail : tail);
+    // Add USA suffix to match Google Maps formatted_address format
+    if(tail) {
+      const withUSA = tail + ', USA';
+      return (streetOut ? streetOut + ', ' + withUSA : withUSA);
+    }
     return streetOut || label || '';
   }
   function renderDropdown(inputEl, items){
@@ -748,6 +752,37 @@
     btn.style.cursor = 'pointer';
     btn.setAttribute('aria-label','Use GPS to fill address');
     
+    // Check GPS permission status and update button accordingly
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'geolocation' }).then((result) => {
+        if (result.state === 'denied') {
+          btn.innerHTML = '🚫 Location access not allowed';
+          btn.style.background = '#f8d7da';
+          btn.style.color = '#721c24';
+          btn.style.cursor = 'not-allowed';
+          btn.disabled = true;
+        }
+        // Listen for permission changes
+        result.addEventListener('change', () => {
+          if (result.state === 'denied') {
+            btn.innerHTML = '🚫 Location access not allowed';
+            btn.style.background = '#f8d7da';
+            btn.style.color = '#721c24';
+            btn.style.cursor = 'not-allowed';
+            btn.disabled = true;
+          } else {
+            btn.innerHTML = '📍 Use my location';
+            btn.style.background = '#fff';
+            btn.style.color = '';
+            btn.style.cursor = 'pointer';
+            btn.disabled = false;
+          }
+        });
+      }).catch((err) => {
+        console.warn('Could not query geolocation permission:', err);
+      });
+    }
+    
     btn.addEventListener('click', async ()=>{
       if(!navigator.geolocation){
         alert('Location services not available in your browser');
@@ -798,9 +833,28 @@
         btn.innerHTML = '📍 Use my location';
       }, (error)=>{
         console.warn('subsalesNearby: geolocation error', error);
-        alert('Could not get your location. Please check permissions.');
-        btn.disabled = false;
-        btn.innerHTML = '📍 Use my location';
+        
+        // Provide specific error messages based on error code
+        let errorMsg = 'Could not get your location.';
+        if (error.code === 1) { // PERMISSION_DENIED
+          errorMsg = 'Location access denied. Please enable location in your browser settings.';
+          btn.innerHTML = '🚫 Location access not allowed';
+          btn.style.background = '#f8d7da';
+          btn.style.color = '#721c24';
+          btn.style.cursor = 'not-allowed';
+          btn.disabled = true;
+        } else if (error.code === 2) { // POSITION_UNAVAILABLE
+          errorMsg = 'Location unavailable. Please try again.';
+        } else if (error.code === 3) { // TIMEOUT
+          errorMsg = 'Location request timed out. Please try again.';
+        }
+        
+        alert(errorMsg);
+        
+        if (error.code !== 1) {
+          btn.disabled = false;
+          btn.innerHTML = '📍 Use my location';
+        }
       });
     });
     

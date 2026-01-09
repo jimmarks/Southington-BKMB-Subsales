@@ -25,7 +25,7 @@ class Subsales_AJAX_Handlers {
      */
     public static function init() {
         // Settings & System
-        add_action( 'wp_ajax_subsales_set_deletion_option', array( __CLASS__, 'set_deletion_option' ) );
+        // Note: subsales_set_deletion_option is registered in main plugin file (deactivation flow)
         add_action( 'wp_ajax_subsales_toggle_debug', array( __CLASS__, 'toggle_debug' ) );
         add_action( 'wp_ajax_subsales_get_active_sessions_count', array( __CLASS__, 'get_active_sessions_count' ) );
         add_action( 'wp_ajax_subsales_test_maps_key', array( __CLASS__, 'test_maps_key' ) );
@@ -58,22 +58,6 @@ class Subsales_AJAX_Handlers {
         // Orders
         add_action( 'wp_ajax_subsales_fetch_orders', array( __CLASS__, 'fetch_orders' ) );
         add_action( 'wp_ajax_subsales_get_order_by_db_id', array( __CLASS__, 'get_order_by_db_id' ) );
-    }
-
-    /**
-     * Handle deletion option AJAX request
-     */
-    public static function set_deletion_option() {
-        check_ajax_referer( 'subsales_deactivation_nonce', 'nonce' );
-        
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Unauthorized' );
-        }
-
-        $choice = isset( $_POST['delete_data'] ) ? sanitize_text_field( $_POST['delete_data'] ) : 'no';
-        update_option( 'subsales_delete_on_uninstall', $choice );
-        
-        wp_send_json_success( array( 'message' => 'Setting saved' ) );
     }
 
     /**
