@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.2.1.179
+ * Version: 2.3.6
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -59,6 +59,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-signups.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-census-boundaries.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-delivery.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -77,6 +78,9 @@ Subsales_PWA::init();
 
 // Initialize Orders
 Subsales_Orders::init();
+
+// Initialize Delivery
+Subsales_Delivery::init();
 
 // Initialize Signups (campaigns & registration)
 Subsales_Signups::init();
@@ -1129,6 +1133,15 @@ function order_sync_admin_menu() {
         'subsales-orders',
         array( 'Subsales_Admin_Pages', 'render_orders_page' )
     );
+    
+    add_submenu_page(
+        'subsales-management',
+        'Reports',
+        'Reports',
+        'manage_options',
+        'subsales-reports',
+        array( 'Subsales_Admin_Pages', 'render_reports_page' )
+    );
 
     add_submenu_page(
         'subsales-management',
@@ -1192,6 +1205,12 @@ add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openad
 add_action( 'wp_ajax_subsales_toggle_campaign', 'subsales_ajax_toggle_campaign' );
 add_action( 'wp_ajax_subsales_delete_campaign', 'subsales_ajax_delete_campaign' );
 add_action( 'wp_ajax_subsales_get_campaign_signups', 'subsales_ajax_get_campaign_signups' );
+add_action( 'wp_ajax_subsales_get_campaign_counts', 'subsales_ajax_get_campaign_counts' );
+add_action( 'wp_ajax_subsales_add_signup', 'subsales_ajax_add_signup' );
+add_action( 'wp_ajax_subsales_remove_signup', 'subsales_ajax_remove_signup' );
+add_action( 'wp_ajax_subsales_update_team_driver', 'subsales_ajax_update_team_driver' );
+add_action( 'wp_ajax_subsales_search_members', 'subsales_ajax_search_members' );
+add_action( 'wp_ajax_subsales_create_user_quick', 'subsales_ajax_create_user_quick' );
 
 // NOTE: The following AJAX hooks are now registered in Subsales_AJAX_Handlers::init():
 // - subsales_toggle_debug
@@ -3587,10 +3606,11 @@ function order_sync_fetch_orders_ajax() {
                 }
             }
         }
+        
+        $donation = 0.0;
         if ( isset( $od['donationAmount'] ) ) {
             $donation = floatval( $od['donationAmount'] );
             $order_total += $donation;
-            $totals['donations'] += $donation;
         }
 
         $payment = '';;
@@ -3598,9 +3618,13 @@ function order_sync_fetch_orders_ajax() {
         else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
         else if ( ! empty( $od['payCash'] ) || ! empty( $od['pay_cash'] ) ) $payment = 'cash';
 
-        if ( strtolower( $payment ) === 'check' ) $totals['check'] += $order_total;
-        elseif ( strtolower( $payment ) === 'cash' ) $totals['cash'] += $order_total;
-        $totals['grand'] += $order_total;
+        // Only include non-deleted orders in page totals
+        $is_deleted = isset( $r['deleted'] ) && intval( $r['deleted'] ) === 1;
+        if ( ! $is_deleted ) {
+            if ( strtolower( $payment ) === 'check' ) $totals['check'] += $order_total;
+            elseif ( strtolower( $payment ) === 'cash' ) $totals['cash'] += $order_total;
+            $totals['grand'] += $order_total;
+            $totals['donations'] += $donation;
 
             // add to page product totals
             foreach ( $products_map as $pid => $qty ) {
@@ -3610,6 +3634,7 @@ function order_sync_fetch_orders_ajax() {
                     $totals['product_totals'][ $pid ] = intval( $qty );
                 }
             }
+        }
 
         $team_name = '';
         if ( ! empty( $r['team_id'] ) ) {
@@ -3669,10 +3694,11 @@ function order_sync_fetch_orders_ajax() {
             'team_name' => $team_name,
             'items' => implode( ', ', $items_arr ),
             'order_total' => round( $order_total, 2 ),
-            'donation_amount' => isset( $od['donationAmount'] ) ? floatval( $od['donationAmount'] ) : 0.0,
+            'donation_amount' => $donation,
             'payment' => $payment,
             'payment_display' => $payment ? ucfirst($payment) : '',
             'edited' => $edited,
+            'deleted' => isset( $r['deleted'] ) && intval( $r['deleted'] ) === 1,
             'tallied' => $tallied,
             'tallied_at' => $tallied_at,
             'tallied_by' => $tallied_by,
@@ -4201,240 +4227,54 @@ function order_sync_handle_generate_delivery_xlsx() {
     exit;
 }
 
-// PDF Individual Manifest Generation - group by entered_by and optimize routes
-add_action( 'admin_post_subsales_generate_delivery_pdf', 'order_sync_handle_generate_delivery_pdf' );
+// ============================================================================
+// BACKWARD COMPATIBILITY: Legacy delivery functions
+// New code should use Subsales_Delivery class methods directly
+// ============================================================================
+
+/**
+ * @deprecated 2.2.1.230 Use Subsales_Delivery::handle_generate_manifest()
+ */
 function order_sync_handle_generate_delivery_pdf() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
-    if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( $_POST['_wpnonce'], 'subsales_generate_delivery' ) ) wp_die( 'Invalid nonce' );
-
-    global $wpdb;
-    $table = $wpdb->prefix . 'ss_orders';
-
-    $delivery_date = isset( $_POST['delivery_date'] ) ? sanitize_text_field( $_POST['delivery_date'] ) : '';
-    $start_address = isset( $_POST['start_address'] ) ? sanitize_text_field( $_POST['start_address'] ) : '';
-    
-    if ( empty( $start_address ) ) {
-        wp_die( 'Starting address (depot) is required' );
-    }
-    
-    update_option( 'order_sync_delivery_start_address', $start_address );
-    
-    // Geocode starting address
-    $start_coords = order_sync_geocode_address( $start_address );
-    if ( ! $start_coords ) {
-        wp_die( 'Could not geocode starting address. Please check your Google Maps API key and address.' );
-    }
-
-    // Fetch orders
-    if ( ! empty( $delivery_date ) ) {
-        $start_dt = $delivery_date . ' 00:00:00';
-        $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
-    } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
-    }
-
-    if ( empty( $rows ) ) {
-        $msg = rawurlencode( 'No orders found for ' . ( $delivery_date ?: 'all dates' ) );
-        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
-        exit;
-    }
-
-    $configured_products = order_sync_get_products_config();
-
-    // Group orders by individual (entered_by_id or entered_by_name)
-    $by_individual = array();
-    
-    foreach ( $rows as $r ) {
-        $od = json_decode( $r['order_data'], true );
-        if ( ! is_array( $od ) ) continue;
-
-        // Determine individual identifier
-        $individual_id = '';
-        $individual_name = '';
-        
-        if ( ! empty( $od['entered_by_id'] ) ) {
-            $individual_id = $od['entered_by_id'];
-            $individual_name = ! empty( $od['entered_by_name'] ) ? $od['entered_by_name'] : $individual_id;
-        } elseif ( ! empty( $od['entered_by_name'] ) ) {
-            $individual_name = $od['entered_by_name'];
-            $individual_id = $individual_name;
-        } elseif ( ! empty( $r['user_id'] ) ) {
-            $individual_id = $r['user_id'];
-            $individual_name = $r['user_id'];
-        } else {
-            $individual_id = 'unknown';
-            $individual_name = 'Unknown';
-        }
-
-        // Extract product quantities
-        $products_map = array();
-        foreach ( $configured_products as $pconf ) {
-            $products_map[ $pconf['id'] ] = 0;
-        }
-
-        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
-            foreach ( $od['products'] as $pr ) {
-                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
-                $pid = isset( $pr['id'] ) ? $pr['id'] : null;
-                if ( $qty > 0 && $pid && isset( $products_map[ $pid ] ) ) {
-                    $products_map[ $pid ] += $qty;
-                }
-            }
-        }
-
-        $total_qty = array_sum( array_values( $products_map ) );
-        if ( $total_qty <= 0 ) continue;
-
-        $address = isset( $od['address'] ) ? $od['address'] : '';
-        $unitFloorApt = isset( $od['unitFloorApt'] ) ? $od['unitFloorApt'] : '';
-        if ( ! empty( $unitFloorApt ) ) {
-            $address .= ', ' . $unitFloorApt;
-        }
-        
-        if ( empty( $address ) ) continue;
-
-        $customer = isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['customerName'] ) ? $od['customerName'] : '' );
-        $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['phone'] ) ? $od['phone'] : '' );
-        $notes = isset( $od['notes'] ) ? $od['notes'] : '';
-
-        // Geocode address
-        $coords = order_sync_geocode_address( $address );
-
-        $order_entry = array(
-            'order_id' => $r['order_id'],
-            'address' => $address,
-            'customer' => $customer,
-            'phone' => $phone,
-            'notes' => $notes,
-            'products_map' => $products_map,
-            'lat' => $coords ? $coords['lat'] : null,
-            'lng' => $coords ? $coords['lng'] : null,
-        );
-
-        if ( ! isset( $by_individual[ $individual_id ] ) ) {
-            $by_individual[ $individual_id ] = array(
-                'name' => $individual_name,
-                'orders' => array(),
-            );
-        }
-
-        $by_individual[ $individual_id ]['orders'][] = $order_entry;
-    }
-
-    if ( empty( $by_individual ) ) {
-        $msg = rawurlencode( 'No valid orders with products found' );
-        wp_safe_redirect( admin_url( 'admin.php?page=subsales-delivery&subsales_delivery_result=' . $msg ) );
-        exit;
-    }
-
-    // Generate HTML manifests for each individual
-    $html_files = array();
-    
-    foreach ( $by_individual as $individual_id => $data ) {
-        $individual_name = $data['name'];
-        $orders = $data['orders'];
-
-        // Optimize route using nearest-neighbor algorithm
-        $optimized_orders = order_sync_optimize_route( $orders, $start_coords );
-
-        // Generate HTML for printing
-        $html_content = order_sync_generate_manifest_html( $individual_name, $optimized_orders, $start_address, $configured_products, $delivery_date );
-        
-        $filename = 'manifest-' . sanitize_file_name( $individual_name ) . '-' . date('Ymd') . '.html';
-        $html_files[ $filename ] = $html_content;
-    }
-
-    // If single individual, show HTML page directly
-    if ( count( $html_files ) === 1 ) {
-        $content = array_values( $html_files )[0];
-        
-        header( 'Content-Type: text/html; charset=UTF-8' );
-        echo $content;
-        exit;
-    }
-
-    // Multiple individuals - create ZIP
-    $zipname = sys_get_temp_dir() . '/manifests-' . time() . '.zip';
-    $za = new ZipArchive();
-    if ( $za->open( $zipname, ZipArchive::CREATE | ZipArchive::OVERWRITE ) !== true ) {
-        wp_die( 'Could not create zip' );
-    }
-
-    foreach ( $html_files as $filename => $content ) {
-        $za->addFromString( $filename, $content );
-    }
-    $za->close();
-
-    // Send ZIP
-    header( 'Content-Type: application/zip' );
-    header( 'Content-Disposition: attachment; filename="delivery-manifests-' . date('Ymd_His') . '.zip"' );
-    header( 'Content-Length: ' . filesize( $zipname ) );
-    readfile( $zipname );
-    @unlink( $zipname );
-    exit;
+    // Delegate to new class-based implementation
+    Subsales_Delivery::handle_generate_manifest();
 }
 
-// Helper: Optimize delivery route using nearest-neighbor algorithm
+/**
+ * @deprecated 2.2.1.230 Use Subsales_Delivery::optimize_route()
+ */
 function order_sync_optimize_route( $orders, $start_coords ) {
-    if ( empty( $orders ) ) return array();
-
-    $optimized = array();
-    $remaining = $orders;
-    $current_lat = $start_coords['lat'];
-    $current_lng = $start_coords['lng'];
-
-    while ( ! empty( $remaining ) ) {
-        $nearest_idx = null;
-        $nearest_dist = PHP_FLOAT_MAX;
-
-        foreach ( $remaining as $idx => $order ) {
-            if ( $order['lat'] === null || $order['lng'] === null ) {
-                // Handle orders without coordinates - add them at the end
-                continue;
-            }
-
-            $dist = order_sync_haversine_distance( $current_lat, $current_lng, $order['lat'], $order['lng'] );
-            
-            if ( $dist < $nearest_dist ) {
-                $nearest_dist = $dist;
-                $nearest_idx = $idx;
-            }
-        }
-
-        if ( $nearest_idx !== null ) {
-            $optimized[] = $remaining[ $nearest_idx ];
-            $current_lat = $remaining[ $nearest_idx ]['lat'];
-            $current_lng = $remaining[ $nearest_idx ]['lng'];
-            unset( $remaining[ $nearest_idx ] );
-            $remaining = array_values( $remaining ); // Re-index
-        } else {
-            // All remaining orders have no coordinates - add them to the end
-            foreach ( $remaining as $order ) {
-                $optimized[] = $order;
-            }
-            break;
-        }
-    }
-
-    return $optimized;
+    return Subsales_Delivery::optimize_route( $orders, $start_coords );
 }
 
-// Helper: Calculate distance between two lat/lng points (Haversine formula)
+/**
+ * @deprecated 2.2.1.230 Use Subsales_Delivery::haversine_distance()
+ */
 function order_sync_haversine_distance( $lat1, $lon1, $lat2, $lon2 ) {
-    $earth_radius = 6371; // km
-
-    $dLat = deg2rad( $lat2 - $lat1 );
-    $dLon = deg2rad( $lon2 - $lon1 );
-
-    $a = sin( $dLat / 2 ) * sin( $dLat / 2 ) +
-         cos( deg2rad( $lat1 ) ) * cos( deg2rad( $lat2 ) ) *
-         sin( $dLon / 2 ) * sin( $dLon / 2 );
-
-    $c = 2 * atan2( sqrt( $a ), sqrt( 1 - $a ) );
-
-    return $earth_radius * $c;
+    return Subsales_Delivery::haversine_distance( $lat1, $lon1, $lat2, $lon2 );
 }
+
+/**
+ * @deprecated 2.2.1.230 Use Subsales_Delivery::generate_qr_code()
+ */
+if ( ! function_exists( 'subsales_generate_qr_code' ) ) {
+    function subsales_generate_qr_code( $url, $size = 800 ) {
+        return Subsales_Delivery::generate_qr_code( $url, $size );
+    }
+}
+
+/**
+ * @deprecated 2.2.1.230 Use Subsales_Delivery::generate_route_qr_page()
+ */
+if ( ! function_exists( 'subsales_generate_route_qr_page' ) ) {
+    function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
+        return Subsales_Delivery::generate_route_qr_page( $all_routes, $delivery_date );
+    }
+}
+
+// ============================================================================
+// END BACKWARD COMPATIBILITY
+// ============================================================================
 
 // Helper: Generate HTML manifest for printing
 function order_sync_generate_manifest_html( $individual_name, $orders, $start_address, $configured_products, $delivery_date = '' ) {
@@ -4613,6 +4453,180 @@ function order_sync_generate_manifest_html( $individual_name, $orders, $start_ad
     
     $html .= '</body></html>';
     
+    return $html;
+}
+
+// Helper: Generate combined HTML manifest with QR codes for all individuals
+function order_sync_generate_combined_manifest_html( $all_manifests, $start_address, $configured_products, $delivery_date = '', $all_routes = array() ) {
+    $display_date = ! empty( $delivery_date ) ? date('F j, Y', strtotime( $delivery_date ) ) : date('F j, Y');
+    
+    $html = '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Manifests - ' . $display_date . '</title>
+    <style>
+        @media print {
+            @page { margin: 0.5in 0.5in 0.75in 0.5in; }
+            .page-break { page-break-after: always; }
+            .manifest-section { page-break-before: always; }
+            .manifest-section:first-child { page-break-before: auto; }
+            .delivery-stop { page-break-inside: avoid; }
+        }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 20px; padding: 0 0 60px 0; font-size: 12pt; }
+        h1 { font-size: 24pt; margin: 0 0 10px 0; }
+        h2 { font-size: 18pt; margin: 20px 0 10px 0; }
+        .depot { font-size: 11pt; margin-bottom: 20px; color: #666; }
+        .delivery-stop { margin-bottom: 15px; padding: 12px; border: 2px solid #ddd; background: #f9f9f9; }
+        .stop-number { font-size: 16pt; font-weight: bold; color: #0073aa; margin-bottom: 5px; }
+        .address { font-size: 13pt; font-weight: bold; margin: 5px 0; }
+        .customer { font-size: 11pt; margin: 3px 0; }
+        .products { margin: 8px 0; }
+        .products-table { width: 100%; border-collapse: collapse; margin: 5px 0; }
+        .products-table th, .products-table td { border: 1px solid #999; padding: 6px; text-align: left; font-size: 10pt; }
+        .products-table th { background: #e0e0e0; font-weight: bold; }
+        .notes { font-size: 9pt; font-style: italic; color: #666; margin-top: 5px; padding: 5px; background: #fff3cd; border-left: 3px solid #ffc107; }
+        .packing-page { margin-bottom: 40px; }
+        .packing-table { width: 100%; border-collapse: collapse; font-size: 22pt; margin-top: 20px; }
+        .packing-table th, .packing-table td { border: 2px solid #000; padding: 12px; text-align: left; }
+        .packing-table th { background: #e0e0e0; font-weight: bold; }
+        .footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 10px 20px; border-top: 1px solid #333; font-size: 10pt; background: white; }
+        .footer-line { margin: 2px 0; }
+        @media print {
+            .footer { position: fixed; bottom: 0.25in; }
+        }
+    </style>
+</head>
+<body>';
+
+    $manifest_index = 0;
+    foreach ( $all_manifests as $manifest ) {
+        $individual_name = $manifest['name'];
+        $orders = $manifest['orders'];
+        
+        // Calculate product totals
+        $product_totals = array();
+        foreach ( $configured_products as $p ) {
+            $product_totals[ $p['id'] ] = array( 'name' => $p['name'], 'qty' => 0 );
+        }
+        foreach ( $orders as $order ) {
+            foreach ( $order['products_map'] as $pid => $qty ) {
+                if ( isset( $product_totals[ $pid ] ) ) {
+                    $product_totals[ $pid ]['qty'] += $qty;
+                }
+            }
+        }
+
+        $total_pages = 2 + count( $orders );
+        $current_page = 1;
+
+        if ( $manifest_index > 0 ) {
+            $html .= '<div class="manifest-section"></div>';
+        }
+        
+        // FIRST PACKING LIST
+        $html .= '<div class="packing-page">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
+        foreach ( $product_totals as $pt ) {
+            if ( $pt['qty'] > 0 ) {
+                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
+            }
+        }
+        $html .= '</tbody></table>';
+        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '</div>';
+        $html .= '<div class="page-break"></div>';
+        $current_page++;
+        
+        // SECOND PACKING LIST
+        $html .= '<div class="packing-page">';
+        $html .= '<h1>Packing List: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Date:</strong> ' . $display_date . '</div>';
+        $html .= '<table class="packing-table"><thead><tr><th>Product</th><th style="width:150px;text-align:center;">Quantity</th></tr></thead><tbody>';
+        foreach ( $product_totals as $pt ) {
+            if ( $pt['qty'] > 0 ) {
+                $html .= '<tr><td>' . htmlspecialchars( $pt['name'], ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $pt['qty'] ) . '</td></tr>';
+            }
+        }
+        $html .= '</tbody></table>';
+        $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+        $html .= '</div>';
+        $html .= '<div class="page-break"></div>';
+        $current_page++;
+        
+        // QR CODES PAGE
+        $seller_routes = array_filter( $all_routes, function( $route ) use ( $individual_name ) {
+            return isset( $route['seller'] ) && $route['seller'] === $individual_name;
+        } );
+        
+        if ( ! empty( $seller_routes ) ) {
+            $qr_page_html = subsales_generate_route_qr_page( array_values( $seller_routes ), $delivery_date );
+            // Extract body content
+            if ( preg_match( '/<body[^>]*>(.*?)<\/body>/is', $qr_page_html, $matches ) ) {
+                $html .= $matches[1];
+            }
+            $html .= '<div class="page-break"></div>';
+        }
+
+        // DELIVERY MANIFEST
+        $html .= '<div>';
+        $html .= '<h1>Delivery Manifest: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '</h1>';
+        $html .= '<div class="depot"><strong>Starting Point:</strong> ' . htmlspecialchars( (string) $start_address, ENT_QUOTES, 'UTF-8' ) . '</div>';
+        $html .= '<div class="depot"><strong>Total Stops:</strong> ' . count( $orders ) . ' | <strong>Date:</strong> ' . $display_date . '</div>';
+
+        $stop_num = 1;
+        foreach ( $orders as $order ) {
+            $html .= '<div class="delivery-stop">';
+            $html .= '<div class="stop-number">Stop #' . $stop_num . '</div>';
+            $html .= '<div class="address">' . htmlspecialchars( (string) $order['address'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            
+            if ( ! empty( $order['customer'] ) ) {
+                $html .= '<div class="customer"><strong>Customer:</strong> ' . htmlspecialchars( (string) $order['customer'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+            
+            if ( ! empty( $order['phone'] ) ) {
+                $html .= '<div class="customer"><strong>Phone:</strong> ' . htmlspecialchars( (string) $order['phone'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+
+            $html .= '<div class="products"><strong>Products:</strong>';
+            $html .= '<table class="products-table">';
+            $html .= '<thead><tr><th>Product</th><th style="width:80px;text-align:center;">Qty</th></tr></thead><tbody>';
+            $has_products = false;
+            foreach ( $order['products_map'] as $pid => $qty ) {
+                if ( $qty > 0 ) {
+                    $product_name = '';
+                    foreach ( $configured_products as $p ) {
+                        if ( $p['id'] === $pid ) {
+                            $product_name = $p['name'];
+                            break;
+                        }
+                    }
+                    $html .= '<tr><td>' . htmlspecialchars( (string) $product_name, ENT_QUOTES, 'UTF-8' ) . '</td><td style="text-align:center;">' . intval( $qty ) . '</td></tr>';
+                    $has_products = true;
+                }
+            }
+            if ( ! $has_products ) {
+                $html .= '<tr><td colspan="2">No products</td></tr>';
+            }
+            $html .= '</tbody></table></div>';
+
+            if ( ! empty( $order['notes'] ) ) {
+                $html .= '<div class="notes"><strong>Delivery Notes:</strong> ' . htmlspecialchars( (string) $order['notes'], ENT_QUOTES, 'UTF-8' ) . '</div>';
+            }
+
+            $html .= '<div class="footer"><div class="footer-line">Seller: ' . htmlspecialchars( $individual_name, ENT_QUOTES, 'UTF-8' ) . '&nbsp;&nbsp;&nbsp;Page ' . $current_page . ' of ' . $total_pages . '</div><div class="footer-line">Date: ' . $display_date . '</div></div>';
+            $html .= '</div>';
+            $stop_num++;
+            $current_page++;
+        }
+        $html .= '</div>';
+        $manifest_index++;
+    }
+    
+    $html .= '</body></html>';
     return $html;
 }
 
@@ -9124,7 +9138,7 @@ function order_sync_main_page() {
                     method: 'POST',
                     data: {
                         action: 'subsales_get_active_sessions_count',
-                        nonce: '<?php echo wp_create_nonce( 'subsales_active_sessions' ); ?>'
+                        nonce: '<?php echo wp_create_nonce( 'subsales_sessions_nonce' ); ?>'
                     },
                     success: function(response) {
                         if (response.success && typeof response.data.count !== 'undefined') {
@@ -13053,76 +13067,501 @@ function subsales_ajax_get_campaign_signups() {
         wp_send_json_error( array( 'message' => 'Campaign not found' ) );
     }
     
+    global $wpdb;
+    
+    // Get signups with member and team info
     $signups = Subsales_Database::get_signups( array(
         'campaign_id' => $campaign_id,
         'status' => 'active'
     ) );
     
-    // Group by team
-    $teams = array();
+    // Get all teams for the add signup dropdown
+    $teams = Subsales_Database::get_teams( 'active' );
+    
+    // Get driver info for each team
+    $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
+    $driver_info = array();
     foreach ( $signups as $signup ) {
         $team_id = $signup['team_id'];
-        if ( ! isset( $teams[ $team_id ] ) ) {
-            $teams[ $team_id ] = array(
+        if ( ! isset( $driver_info[ $team_id ] ) ) {
+            $result = $wpdb->get_row( $wpdb->prepare(
+                "SELECT driver_name, driver_updated_by, driver_updated_at 
+                 FROM $team_campaigns_table 
+                 WHERE team_id = %d AND campaign_id = %d",
+                $team_id,
+                $campaign_id
+            ), ARRAY_A );
+            $driver_info[ $team_id ] = $result ?: array( 'driver_name' => '', 'driver_updated_by' => '', 'driver_updated_at' => '' );
+        }
+    }
+    
+    // Group by team
+    $team_signups = array();
+    foreach ( $signups as $signup ) {
+        $team_id = $signup['team_id'];
+        if ( ! isset( $team_signups[ $team_id ] ) ) {
+            $team_signups[ $team_id ] = array(
+                'team_id' => $team_id,
                 'team_name' => $signup['team_name'],
                 'members' => array(),
-                'driver' => null
+                'driver_name' => isset( $driver_info[ $team_id ] ) ? $driver_info[ $team_id ]['driver_name'] : '',
+                'driver_updated_by' => isset( $driver_info[ $team_id ] ) ? $driver_info[ $team_id ]['driver_updated_by'] : '',
+                'driver_updated_at' => isset( $driver_info[ $team_id ] ) ? $driver_info[ $team_id ]['driver_updated_at'] : ''
             );
         }
         
-        $member = array(
+        $team_signups[ $team_id ]['members'][] = array(
+            'signup_id' => $signup['id'],
+            'user_id' => $signup['user_id'],
             'name' => $signup['user_name'],
             'phone' => $signup['user_phone'],
             'email' => $signup['user_email']
         );
-        
-        if ( $signup['is_driver'] ) {
-            $teams[ $team_id ]['driver'] = $member;
-        } else {
-            $teams[ $team_id ]['members'][] = $member;
-        }
     }
     
-    // Build HTML
+    // Build HTML - Compact team list view
     $date_formatted = date( 'F j, Y', strtotime( $campaign['campaign_date'] ) );
-    $html = '<h2>Signups for ' . esc_html( $date_formatted ) . '</h2>';
+    $html = '<div class="subsales-signups-modal-header">';
+    $html .= '<h2>Signups for ' . esc_html( $date_formatted ) . '</h2>';
+    $html .= '<button type="button" class="button button-primary" id="add-signup-btn">+ Add Signup</button>';
+    $html .= '</div>';
     
-    if ( empty( $teams ) ) {
-        $html .= '<p>No signups yet for this date.</p>';
+    // Add signup form (hidden by default) - NOW WITH IMMEDIATE MEMBER ADDITION
+    $html .= '<div id="add-signup-form" style="display: none; background: #f0f0f1; padding: 15px; border-radius: 4px; margin: 15px 0;">';
+    $html .= '<h3 style="margin-top: 0;">Add New Signup</h3>';
+    $html .= '<div style="margin-bottom: 10px;">';
+    $html .= '<label style="display: block; font-weight: 600; margin-bottom: 5px;">Team:</label>';
+    $html .= '<select id="new-signup-team" style="width: 100%; padding: 6px;">';
+    $html .= '<option value="">Select a team...</option>';
+    foreach ( $teams as $team ) {
+        $html .= '<option value="' . esc_attr( $team['id'] ) . '">' . esc_html( $team['name'] ) . '</option>';
+    }
+    $html .= '</select>';
+    $html .= '</div>';
+    
+    // Member selection - search with immediate add (like Edit flow)
+    $html .= '<div id="member-selection-area">';
+    $html .= '<div style="margin-bottom: 10px;">';
+    $html .= '<label style="display: block; font-weight: 600; margin-bottom: 5px;">Add Member:</label>';
+    $html .= '<input type="text" id="new-signup-search" placeholder="Search member by name or phone..." style="width: 100%; padding: 6px;">';
+    $html .= '<div id="member-search-results" style="border: 1px solid #ddd; display: none; max-height: 200px; overflow-y: auto; background: white; margin-top: 2px;"></div>';
+    $html .= '</div>';
+    $html .= '</div>';
+    
+    // Added members list (initially hidden)
+    $html .= '<div id="new-signup-members-list" style="display: none; margin-bottom: 15px;">';
+    $html .= '<p style="font-weight: 600; margin-bottom: 8px;">Members:</p>';
+    $html .= '<ul id="new-signup-members-ul" style="margin: 0; padding: 0; list-style: none;"></ul>';
+    $html .= '</div>';
+    
+    $html .= '<div style="display: flex; gap: 10px;">';
+    $html .= '<button type="button" class="button" id="cancel-signup-btn">Close</button>';
+    $html .= '</div>';
+    $html .= '</div>';
+    
+    if ( empty( $team_signups ) ) {
+        $html .= '<p style="padding: 20px; text-align: center; color: #666;">No signups yet for this date. Click "Add Signup" to add one.</p>';
     } else {
-        $html .= '<div class="subsales-signups-list">';
+        // Compact team list
+        $html .= '<div class="subsales-signups-compact-list">';
+        $html .= '<table class="wp-list-table widefat fixed striped">';
+        $html .= '<thead><tr>';
+        $html .= '<th style="width: 40%;">Team</th>';
+        $html .= '<th style="width: 20%;">Members</th>';
+        $html .= '<th style="width: 25%;">Driver</th>';
+        $html .= '<th style="width: 15%;">Actions</th>';
+        $html .= '</tr></thead><tbody>';
         
-        foreach ( $teams as $team ) {
-            $html .= '<div class="subsales-signup-team">';
-            $html .= '<h3>' . esc_html( $team['team_name'] ) . '</h3>';
-            
-            if ( $team['driver'] ) {
-                $html .= '<p><strong>Driver:</strong> ' . esc_html( $team['driver']['name'] );
-                if ( $team['driver']['phone'] ) {
-                    $html .= ' (' . esc_html( $team['driver']['phone'] ) . ')';
-                }
-                $html .= '</p>';
+        foreach ( $team_signups as $team ) {
+            $html .= '<tr class="team-compact-row" data-team-id="' . esc_attr( $team['team_id'] ) . '">';
+            $html .= '<td><strong>' . esc_html( $team['team_name'] ) . '</strong></td>';
+            $html .= '<td>' . count( $team['members'] ) . ' members</td>';
+            $html .= '<td>';
+            if ( $team['driver_name'] ) {
+                $html .= '<span class="dashicons dashicons-yes" style="color: #46b450;"></span> ' . esc_html( $team['driver_name'] );
+            } else {
+                $html .= '<span style="color: #999;">—</span>';
             }
+            $html .= '</td>';
+            $html .= '<td><button type="button" class="button button-small edit-team-btn" data-team-id="' . esc_attr( $team['team_id'] ) . '">Edit</button></td>';
+            $html .= '</tr>';
             
-            if ( ! empty( $team['members'] ) ) {
-                $html .= '<p><strong>Members:</strong></p><ul>';
-                foreach ( $team['members'] as $member ) {
-                    $html .= '<li>' . esc_html( $member['name'] );
-                    if ( $member['phone'] ) {
-                        $html .= ' (' . esc_html( $member['phone'] ) . ')';
-                    }
-                    $html .= '</li>';
-                }
-                $html .= '</ul>';
-            }
+            // Hidden expandable detail row
+            $html .= '<tr class="team-detail-row" data-team-id="' . esc_attr( $team['team_id'] ) . '" style="display: none;">';
+            $html .= '<td colspan="4">';
+            $html .= '<div class="team-detail-content">';
             
+            // Driver section
+            $html .= '<div class="driver-section" style="background: #fff3cd; padding: 12px; border-radius: 4px; margin-bottom: 12px;">';
+            $html .= '<label style="display: block; font-weight: 600; margin-bottom: 5px;">Driver:</label>';
+            $html .= '<div style="display: flex; gap: 10px; align-items: center;">';
+            $html .= '<input type="text" class="driver-name-input" data-team-id="' . esc_attr( $team['team_id'] ) . '" value="' . esc_attr( $team['driver_name'] ) . '" placeholder="Enter driver name..." style="flex: 1; padding: 6px;">';
+            $html .= '<button type="button" class="button button-small update-driver-btn" data-team-id="' . esc_attr( $team['team_id'] ) . '">Update</button>';
             $html .= '</div>';
+            if ( $team['driver_updated_by'] ) {
+                $updated_at = $team['driver_updated_at'] ? date( 'M j, Y g:i A', strtotime( $team['driver_updated_at'] ) ) : '';
+                $html .= '<div style="font-size: 11px; color: #856404; margin-top: 5px;">';
+                $html .= 'Last updated by ' . esc_html( $team['driver_updated_by'] );
+                if ( $updated_at ) {
+                    $html .= ' on ' . esc_html( $updated_at );
+                }
+                $html .= '</div>';
+            }
+            $html .= '</div>';
+            
+            // Members list
+            $html .= '<div class="members-list">';
+            $html .= '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">';
+            $html .= '<p style="font-weight: 600; margin: 0;">Members:</p>';
+            $html .= '<button type="button" class="button button-small add-member-to-team-btn" data-team-id="' . esc_attr( $team['team_id'] ) . '" data-team-name="' . esc_attr( $team['team_name'] ) . '">+ Add Member</button>';
+            $html .= '</div>';
+            
+            // Add member mini-form (hidden)
+            $html .= '<div class="add-member-form" data-team-id="' . esc_attr( $team['team_id'] ) . '" style="display: none; background: #f0f6ff; padding: 10px; border-radius: 4px; margin-bottom: 10px;">';
+            $html .= '<input type="text" class="team-member-search" placeholder="Search member by name or phone..." style="width: 100%; padding: 6px; margin-bottom: 5px;">';
+            $html .= '<div class="team-member-search-results" style="border: 1px solid #ddd; display: none; max-height: 150px; overflow-y: auto; background: white; margin-bottom: 5px;"></div>';
+            $html .= '<button type="button" class="button button-small cancel-add-member-btn" data-team-id="' . esc_attr( $team['team_id'] ) . '">Cancel</button>';
+            $html .= '</div>';
+            
+            $html .= '<ul style="margin: 0; padding: 0; list-style: none;">';
+            foreach ( $team['members'] as $member ) {
+                $html .= '<li style="padding: 8px; background: white; border-radius: 3px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center;">';
+                $html .= '<span>' . esc_html( $member['name'] );
+                if ( $member['phone'] ) {
+                    $html .= ' <span style="color: #666;">(' . esc_html( $member['phone'] ) . ')</span>';
+                }
+                $html .= '</span>';
+                $html .= '<button type="button" class="button button-small button-link-delete remove-signup-btn" data-signup-id="' . esc_attr( $member['signup_id'] ) . '" data-member-name="' . esc_attr( $member['name'] ) . '">Remove</button>';
+                $html .= '</li>';
+            }
+            $html .= '</ul>';
+            $html .= '</div>';
+            
+            $html .= '<div style="margin-top: 10px; text-align: right;">';
+            $html .= '<button type="button" class="button close-team-detail-btn" data-team-id="' . esc_attr( $team['team_id'] ) . '">Close</button>';
+            $html .= '</div>';
+            
+            $html .= '</div></td></tr>';
         }
         
+        $html .= '</tbody></table>';
         $html .= '</div>';
     }
     
-    wp_send_json_success( array( 'html' => $html ) );
+    wp_send_json_success( array( 
+        'html' => $html,
+        'campaign_id' => $campaign_id
+    ) );
+}
+
+/**
+ * AJAX handler to add a new signup
+ */
+function subsales_ajax_add_signup() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $campaign_id = isset( $_POST['campaign_id'] ) ? intval( $_POST['campaign_id'] ) : 0;
+    $team_id = isset( $_POST['team_id'] ) ? intval( $_POST['team_id'] ) : 0;
+    $user_id = isset( $_POST['user_id'] ) ? intval( $_POST['user_id'] ) : 0;
+    
+    if ( ! $campaign_id || ! $team_id || ! $user_id ) {
+        wp_send_json_error( array( 'message' => 'Missing required fields' ) );
+    }
+    
+    global $wpdb;
+    $signups_table = $wpdb->prefix . 'ss_signups';
+    
+    // Check if user is already signed up for this campaign (on ANY team)
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT s.id, t.name as team_name 
+         FROM $signups_table s
+         LEFT JOIN {$wpdb->prefix}ss_teams t ON s.team_id = t.id
+         WHERE s.user_id = %d AND s.campaign_id = %d AND s.status = 'active'",
+        $user_id,
+        $campaign_id
+    ) );
+    
+    if ( $existing ) {
+        wp_send_json_error( array( 
+            'message' => 'This member is already signed up for this campaign date with team: ' . $existing->team_name 
+        ) );
+    }
+    
+    // Insert signup
+    $result = $wpdb->insert(
+        $signups_table,
+        array(
+            'user_id' => $user_id,
+            'team_id' => $team_id,
+            'campaign_id' => $campaign_id,
+            'status' => 'active',
+            'created_at' => current_time( 'mysql' )
+        ),
+        array( '%d', '%d', '%d', '%s', '%s' )
+    );
+    
+    if ( $result === false ) {
+        wp_send_json_error( array( 'message' => 'Failed to add signup' ) );
+    }
+    
+    wp_send_json_success( array( 'message' => 'Signup added successfully' ) );
+}
+
+/**
+ * AJAX handler to remove a signup
+ */
+function subsales_ajax_remove_signup() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $signup_id = isset( $_POST['signup_id'] ) ? intval( $_POST['signup_id'] ) : 0;
+    
+    if ( ! $signup_id ) {
+        wp_send_json_error( array( 'message' => 'Missing signup ID' ) );
+    }
+    
+    global $wpdb;
+    $signups_table = $wpdb->prefix . 'ss_signups';
+    
+    // Soft delete (set status to cancelled)
+    $result = $wpdb->update(
+        $signups_table,
+        array( 'status' => 'cancelled' ),
+        array( 'id' => $signup_id ),
+        array( '%s' ),
+        array( '%d' )
+    );
+    
+    if ( $result === false ) {
+        wp_send_json_error( array( 'message' => 'Failed to remove signup' ) );
+    }
+    
+    wp_send_json_success( array( 'message' => 'Signup removed successfully' ) );
+}
+
+/**
+ * AJAX handler to update team driver
+ */
+function subsales_ajax_update_team_driver() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $campaign_id = isset( $_POST['campaign_id'] ) ? intval( $_POST['campaign_id'] ) : 0;
+    $team_id = isset( $_POST['team_id'] ) ? intval( $_POST['team_id'] ) : 0;
+    $driver_name = isset( $_POST['driver_name'] ) ? sanitize_text_field( $_POST['driver_name'] ) : '';
+    
+    if ( ! $campaign_id || ! $team_id ) {
+        wp_send_json_error( array( 'message' => 'Missing required fields' ) );
+    }
+    
+    global $wpdb;
+    $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
+    
+    // Get current user info for tracking
+    $current_user = wp_get_current_user();
+    $updated_by = $current_user->display_name ?: $current_user->user_login;
+    
+    // Check if record exists
+    $existing = $wpdb->get_var( $wpdb->prepare(
+        "SELECT id FROM $team_campaigns_table WHERE team_id = %d AND campaign_id = %d",
+        $team_id,
+        $campaign_id
+    ) );
+    
+    if ( $existing ) {
+        // Update existing record
+        $result = $wpdb->update(
+            $team_campaigns_table,
+            array(
+                'driver_name' => $driver_name,
+                'driver_updated_by' => $updated_by,
+                'driver_updated_at' => current_time( 'mysql' )
+            ),
+            array( 'id' => $existing ),
+            array( '%s', '%s', '%s' ),
+            array( '%d' )
+        );
+    } else {
+        // Insert new record
+        $result = $wpdb->insert(
+            $team_campaigns_table,
+            array(
+                'team_id' => $team_id,
+                'campaign_id' => $campaign_id,
+                'driver_name' => $driver_name,
+                'driver_updated_by' => $updated_by,
+                'driver_updated_at' => current_time( 'mysql' )
+            ),
+            array( '%d', '%d', '%s', '%s', '%s' )
+        );
+    }
+    
+    if ( $result === false ) {
+        wp_send_json_error( array( 'message' => 'Failed to update driver' ) );
+    }
+    
+    wp_send_json_success( array( 'message' => 'Driver updated successfully' ) );
+}
+
+/**
+ * AJAX handler to search for members
+ */
+function subsales_ajax_search_members() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $search = isset( $_POST['search'] ) ? sanitize_text_field( $_POST['search'] ) : '';
+    
+    subsales_log( 'DEBUG', 'signups', 'Member search called', array( 'search' => $search ) );
+    
+    if ( strlen( $search ) < 2 ) {
+        wp_send_json_success( array( 'members' => array() ) );
+    }
+    
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    
+    // Search by name or phone
+    $search_like = '%' . $wpdb->esc_like( $search ) . '%';
+    $members = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, name, phone, email 
+         FROM $members_table 
+         WHERE (name LIKE %s OR phone LIKE %s)
+         ORDER BY name
+         LIMIT 20",
+        $search_like,
+        $search_like
+    ), ARRAY_A );
+    
+    subsales_log( 'DEBUG', 'signups', 'Member search results', array( 'count' => count( $members ), 'search' => $search ) );
+    
+    wp_send_json_success( array( 'members' => $members ) );
+}
+
+/**
+ * AJAX handler to quickly create a new user
+ */
+function subsales_ajax_create_user_quick() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $name = isset( $_POST['name'] ) ? sanitize_text_field( $_POST['name'] ) : '';
+    $phone = isset( $_POST['phone'] ) ? sanitize_text_field( $_POST['phone'] ) : '';
+    $email = isset( $_POST['email'] ) ? sanitize_email( $_POST['email'] ) : '';
+    
+    if ( empty( $name ) ) {
+        wp_send_json_error( array( 'message' => 'Name is required' ) );
+    }
+    
+    if ( empty( $phone ) ) {
+        wp_send_json_error( array( 'message' => 'Phone is required' ) );
+    }
+    
+    // Clean phone - remove everything except digits
+    $phone = preg_replace( '/[^0-9]/', '', $phone );
+    
+    if ( strlen( $phone ) != 10 ) {
+        wp_send_json_error( array( 'message' => 'Phone must be 10 digits' ) );
+    }
+    
+    global $wpdb;
+    $members_table = $wpdb->prefix . 'ss_team_members';
+    
+    // Check if phone already exists
+    $existing = $wpdb->get_var( $wpdb->prepare(
+        "SELECT id FROM $members_table WHERE phone = %s AND deleted = 0",
+        $phone
+    ) );
+    
+    if ( $existing ) {
+        wp_send_json_error( array( 'message' => 'A member with this phone number already exists' ) );
+    }
+    
+    // Insert new member
+    $result = $wpdb->insert(
+        $members_table,
+        array(
+            'name' => $name,
+            'phone' => $phone,
+            'email' => $email,
+            'created_at' => current_time( 'mysql' )
+        ),
+        array( '%s', '%s', '%s', '%s' )
+    );
+    
+    if ( $result === false ) {
+        wp_send_json_error( array( 'message' => 'Failed to create member' ) );
+    }
+    
+    $new_user_id = $wpdb->insert_id;
+    
+    wp_send_json_success( array(
+        'message' => 'Member created successfully',
+        'user' => array(
+            'id' => $new_user_id,
+            'name' => $name,
+            'phone' => $phone,
+            'email' => $email
+        )
+    ) );
+}
+
+/**
+ * AJAX handler to get campaign counts (team/member)
+ */
+function subsales_ajax_get_campaign_counts() {
+    check_ajax_referer( 'subsales_campaign_nonce', 'nonce' );
+    
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+    }
+    
+    $campaign_id = isset( $_POST['campaign_id'] ) ? intval( $_POST['campaign_id'] ) : 0;
+    
+    if ( ! $campaign_id ) {
+        wp_send_json_error( array( 'message' => 'Missing campaign ID' ) );
+    }
+    
+    $campaign = Subsales_Database::get_campaign( $campaign_id );
+    
+    if ( ! $campaign ) {
+        wp_send_json_error( array( 'message' => 'Campaign not found' ) );
+    }
+    
+    // Get signups
+    $signups = Subsales_Database::get_signups( array(
+        'campaign_id' => $campaign_id,
+        'status' => 'active'
+    ) );
+    
+    $member_count = count( $signups );
+    $teams = array();
+    foreach ( $signups as $signup ) {
+        $teams[ $signup['team_id'] ] = true;
+    }
+    $team_count = count( $teams );
+    
+    wp_send_json_success( array(
+        'team_count' => $team_count,
+        'member_count' => $member_count,
+        'campaign_date' => $campaign['campaign_date']
+    ) );
 }
 
 // ============================================================

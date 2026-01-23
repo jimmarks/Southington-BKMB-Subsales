@@ -31,80 +31,218 @@ $team_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHER
 $member_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} WHERE status = 'active'" );
 $member_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} WHERE status = 'inactive'" );
 
-// Compute financial summary
-$product_sales_total = 0.0;
-$donations_total = 0.0;
-$cash_total = 0.0;
-$check_total = 0.0;
-$rows_fin = $wpdb->get_results( "SELECT order_data FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
-if ( $rows_fin ) {
-    $conf_prods_for_fin = order_sync_get_products_config();
-    foreach ( $rows_fin as $rf ) {
-        $od = json_decode( $rf['order_data'], true );
-        if ( ! is_array( $od ) ) continue;
-        $order_product_total = 0.0;
-        $order_donation = 0.0;
-        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
-            foreach ( $od['products'] as $pr ) {
-                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
-                $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
-                if ( $qty > 0 ) $order_product_total += $qty * $price;
-            }
-        } else {
-            if ( is_array( $conf_prods_for_fin ) ) {
-                foreach ( $conf_prods_for_fin as $p ) {
-                    $pid = $p['id'];
-                    $price = isset( $p['price'] ) ? floatval( $p['price'] ) : 0.0;
-                    $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
-                    foreach ( $labels as $k ) {
-                        if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_product_total += $q * $price; break; }
+// Helper function to compute financials with optional date filter
+function subsales_compute_financials( $where_clause = "deleted = 0" ) {
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'ss_orders';
+    
+    $product_sales_total = 0.0;
+    $donations_total = 0.0;
+    $cash_total = 0.0;
+    $check_total = 0.0;
+    $order_count = 0;
+    
+    $rows_fin = $wpdb->get_results( "SELECT order_data, created_at FROM {$orders_table} WHERE {$where_clause}", ARRAY_A );
+    if ( $rows_fin ) {
+        $conf_prods_for_fin = order_sync_get_products_config();
+        foreach ( $rows_fin as $rf ) {
+            $od = json_decode( $rf['order_data'], true );
+            if ( ! is_array( $od ) ) continue;
+            $order_count++;
+            $order_product_total = 0.0;
+            $order_donation = 0.0;
+            if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                foreach ( $od['products'] as $pr ) {
+                    $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                    $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
+                    if ( $qty > 0 ) $order_product_total += $qty * $price;
+                }
+            } else {
+                if ( is_array( $conf_prods_for_fin ) ) {
+                    foreach ( $conf_prods_for_fin as $p ) {
+                        $pid = $p['id'];
+                        $price = isset( $p['price'] ) ? floatval( $p['price'] ) : 0.0;
+                        $labels = array( $pid . 'Qty', $pid . '_qty', $pid );
+                        foreach ( $labels as $k ) {
+                            if ( isset( $od[ $k ] ) ) { $q = intval( $od[ $k ] ); if ( $q > 0 ) $order_product_total += $q * $price; break; }
+                        }
                     }
                 }
             }
+            if ( isset( $od['donationAmount'] ) ) $order_donation = floatval( $od['donationAmount'] );
+            $product_sales_total += $order_product_total;
+            $donations_total += $order_donation;
+            $order_total = $order_product_total + $order_donation;
+            $payment = '';
+            if ( isset( $od['paymentMethod'] ) && ! empty( $od['paymentMethod'] ) ) $payment = strtolower( $od['paymentMethod'] );
+            else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
+            else if ( ! empty( $od['payCash'] ) || ! empty( $od['pay_cash'] ) ) $payment = 'cash';
+            if ( $payment === 'check' ) $check_total += $order_total;
+            elseif ( $payment === 'cash' ) $cash_total += $order_total;
         }
-        if ( isset( $od['donationAmount'] ) ) $order_donation = floatval( $od['donationAmount'] );
-        $product_sales_total += $order_product_total;
-        $donations_total += $order_donation;
-        $order_total = $order_product_total + $order_donation;
-        $payment = '';
-        if ( isset( $od['paymentMethod'] ) && ! empty( $od['paymentMethod'] ) ) $payment = strtolower( $od['paymentMethod'] );
-        else if ( ! empty( $od['checkNumber'] ) ) $payment = 'check';
-        else if ( ! empty( $od['payCash'] ) || ! empty( $od['pay_cash'] ) ) $payment = 'cash';
-        if ( $payment === 'check' ) $check_total += $order_total;
-        elseif ( $payment === 'cash' ) $cash_total += $order_total;
     }
+    
+    return array(
+        'product_sales' => $product_sales_total,
+        'donations' => $donations_total,
+        'cash' => $cash_total,
+        'checks' => $check_total,
+        'total_revenue' => $product_sales_total + $donations_total,
+        'order_count' => $order_count
+    );
 }
 
-// Compute product totals
+// Compute overall financials
+$overall = subsales_compute_financials( "deleted = 0" );
+
+// Compute today's financials (midnight to midnight in WordPress timezone)
+$today_start = current_time( 'Y-m-d 00:00:00' );
+$today = subsales_compute_financials( $wpdb->prepare( "deleted = 0 AND created_at >= %s", $today_start ) );
+
+// Compute product totals (overall and today)
 $products_conf = order_sync_get_products_config();
-$product_totals = array();
+$product_totals_overall = array();
+$product_totals_today = array();
 foreach ( $products_conf as $p ) {
-    $product_totals[ $p['id'] ] = 0;
+    $product_totals_overall[ $p['id'] ] = 0;
+    $product_totals_today[ $p['id'] ] = 0;
 }
-$rows = $wpdb->get_results( "SELECT order_data FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
+$rows = $wpdb->get_results( "SELECT order_data, created_at FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
 if ( $rows ) {
     foreach ( $rows as $r ) {
         $od = json_decode( $r['order_data'], true );
+        $is_today = ( strtotime( $r['created_at'] ) >= strtotime( $today_start ) );
         if ( is_array( $od ) ) {
             if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
                 foreach ( $od['products'] as $op ) {
                     if ( isset( $op['id'] ) && isset( $op['qty'] ) ) {
                         $pid = $op['id'];
                         $qty = intval( $op['qty'] );
-                        if ( isset( $product_totals[ $pid ] ) ) $product_totals[ $pid ] += $qty;
+                        if ( isset( $product_totals_overall[ $pid ] ) ) {
+                            $product_totals_overall[ $pid ] += $qty;
+                            if ( $is_today ) $product_totals_today[ $pid ] += $qty;
+                        }
                     }
                 }
             } else {
                 foreach ( $products_conf as $p ) {
                     $pid = $p['id'];
                     $k1 = $pid . 'Qty'; $k2 = $pid . '_qty';
-                    if ( isset( $od[ $k1 ] ) ) $product_totals[ $pid ] += intval( $od[ $k1 ] );
-                    elseif ( isset( $od[ $k2 ] ) ) $product_totals[ $pid ] += intval( $od[ $k2 ] );
+                    $qty = 0;
+                    if ( isset( $od[ $k1 ] ) ) $qty = intval( $od[ $k1 ] );
+                    elseif ( isset( $od[ $k2 ] ) ) $qty = intval( $od[ $k2 ] );
+                    if ( $qty > 0 ) {
+                        $product_totals_overall[ $pid ] += $qty;
+                        if ( $is_today ) $product_totals_today[ $pid ] += $qty;
+                    }
                 }
             }
         }
     }
 }
+
+// Compute leaderboards (Top 3 Teams and Top 3 Users)
+$team_earnings = array();
+$user_earnings = array();
+
+// Get orders with user_id and team_id from database columns
+$leaderboard_rows = $wpdb->get_results( "SELECT order_data, created_at, user_id, team_id FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
+if ( $leaderboard_rows ) {
+    foreach ( $leaderboard_rows as $lr ) {
+        $od = json_decode( $lr['order_data'], true );
+        if ( ! is_array( $od ) ) continue;
+        
+        // Calculate order revenue
+        $order_revenue = 0.0;
+        if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+            foreach ( $od['products'] as $pr ) {
+                $qty = isset( $pr['qty'] ) ? intval( $pr['qty'] ) : 0;
+                $price = isset( $pr['price'] ) ? floatval( $pr['price'] ) : 0.0;
+                if ( $qty > 0 ) $order_revenue += $qty * $price;
+            }
+        }
+        if ( isset( $od['donationAmount'] ) ) $order_revenue += floatval( $od['donationAmount'] );
+        
+        // Get team name from database or order_data
+        $team_name = null;
+        if ( ! empty( $lr['team_id'] ) ) {
+            // Look up team name from database
+            $team_row = $wpdb->get_row( $wpdb->prepare( 
+                "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", 
+                intval( $lr['team_id'] ) 
+            ) );
+            if ( $team_row ) {
+                $team_name = $team_row->name;
+            }
+        }
+        
+        // Fallback to order_data if not in database
+        if ( ! $team_name ) {
+            $team_name = isset( $od['teamName'] ) ? $od['teamName'] : ( isset( $od['team_name'] ) ? $od['team_name'] : null );
+        }
+        
+        // Default to "Individual Orders" if still no team
+        if ( ! $team_name || $team_name === 'Individual' ) {
+            $team_name = 'Individual Orders';
+        }
+        
+        if ( ! isset( $team_earnings[ $team_name ] ) ) {
+            $team_earnings[ $team_name ] = array( 'overall' => 0.0, 'today' => 0.0 );
+        }
+        $team_earnings[ $team_name ]['overall'] += $order_revenue;
+        if ( strtotime( $lr['created_at'] ) >= strtotime( $today_start ) ) {
+            $team_earnings[ $team_name ]['today'] += $order_revenue;
+        }
+        
+        // Get user name from database or order_data
+        $user_name = null;
+        if ( ! empty( $lr['user_id'] ) ) {
+            // Look up user name from database
+            $user_row = $wpdb->get_row( $wpdb->prepare( 
+                "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", 
+                intval( $lr['user_id'] ) 
+            ) );
+            if ( $user_row ) {
+                $user_name = $user_row->name;
+            }
+        }
+        
+        // Fallback to order_data if not in database
+        if ( ! $user_name ) {
+            if ( isset( $od['entered_by_name'] ) && ! empty( $od['entered_by_name'] ) ) {
+                $user_name = $od['entered_by_name'];
+            } elseif ( isset( $od['soldBy'] ) && ! empty( $od['soldBy'] ) ) {
+                $user_name = $od['soldBy'];
+            } elseif ( isset( $od['sold_by'] ) && ! empty( $od['sold_by'] ) ) {
+                $user_name = $od['sold_by'];
+            }
+        }
+        
+        // Skip if no user name
+        if ( ! $user_name ) continue;
+        
+        $user_key = $user_name . '|' . $team_name;
+        if ( ! isset( $user_earnings[ $user_key ] ) ) {
+            $user_earnings[ $user_key ] = array(
+                'name' => $user_name,
+                'team' => $team_name,
+                'overall' => 0.0,
+                'today' => 0.0
+            );
+        }
+        $user_earnings[ $user_key ]['overall'] += $order_revenue;
+        if ( strtotime( $lr['created_at'] ) >= strtotime( $today_start ) ) {
+            $user_earnings[ $user_key ]['today'] += $order_revenue;
+        }
+    }
+}
+
+// Sort and get top 3
+uasort( $team_earnings, function( $a, $b ) { return $b['overall'] - $a['overall']; } );
+$top_teams = array_slice( $team_earnings, 0, 3, true );
+
+uasort( $user_earnings, function( $a, $b ) { return $b['overall'] - $a['overall']; } );
+$top_users = array_slice( $user_earnings, 0, 3 );
 
 // ZIP data status
 $upload = wp_upload_dir();
@@ -140,7 +278,7 @@ $zip_array = $served_zips;
 <div class="wrap">
     <h1>Subsales Management</h1>
     
-    <!-- Sales Mode Toggle and Active Users -->
+    <!-- Sales Mode Toggle, Today/Overall Toggle, and Active Users -->
     <div class="subsales-mode-controls subsales-option-1" style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 30px; flex-wrap: wrap;">
         <div style="display: flex; align-items: center; gap: 10px;">
             <strong style="font-size: 14px;">Sales Mode:</strong>
@@ -149,6 +287,16 @@ $zip_array = $served_zips;
                 <span class="subsales-toggle-slider"></span>
                 <span class="subsales-toggle-label-left">Team</span>
                 <span class="subsales-toggle-label-right">Individual</span>
+            </label>
+        </div>
+        
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <strong style="font-size: 14px;">View:</strong>
+            <label class="subsales-toggle-switch">
+                <input type="checkbox" id="timeRangeToggle" />
+                <span class="subsales-toggle-slider subsales-time-slider"></span>
+                <span class="subsales-toggle-label-left">Today</span>
+                <span class="subsales-toggle-label-right">Overall</span>
             </label>
         </div>
         
@@ -161,7 +309,164 @@ $zip_array = $served_zips;
     
     <script>
     (function($) {
-        // Toggle switch handler
+        // Data embedded from PHP
+        const dashboardData = {
+            overall: {
+                orders: <?php echo intval( $overall['order_count'] ); ?>,
+                total_revenue: <?php echo number_format( $overall['total_revenue'], 2, '.', '' ); ?>,
+                product_sales: <?php echo number_format( $overall['product_sales'], 2, '.', '' ); ?>,
+                donations: <?php echo number_format( $overall['donations'], 2, '.', '' ); ?>,
+                cash: <?php echo number_format( $overall['cash'], 2, '.', '' ); ?>,
+                checks: <?php echo number_format( $overall['checks'], 2, '.', '' ); ?>,
+                products: <?php echo json_encode( $product_totals_overall ); ?>,
+                top_teams: <?php 
+                    $teams_array = array();
+                    foreach ( $top_teams as $name => $data ) {
+                        $teams_array[] = array( 'name' => $name, 'revenue' => $data['overall'] );
+                    }
+                    echo json_encode( $teams_array ); 
+                ?>,
+                top_users: <?php echo json_encode( array_values( array_map( function( $data ) {
+                    return array( 'name' => $data['name'], 'team' => $data['team'], 'revenue' => $data['overall'] );
+                }, $top_users ) ) ); ?>
+            },
+            today: {
+                orders: <?php echo intval( $today['order_count'] ); ?>,
+                total_revenue: <?php echo number_format( $today['total_revenue'], 2, '.', '' ); ?>,
+                product_sales: <?php echo number_format( $today['product_sales'], 2, '.', '' ); ?>,
+                donations: <?php echo number_format( $today['donations'], 2, '.', '' ); ?>,
+                cash: <?php echo number_format( $today['cash'], 2, '.', '' ); ?>,
+                checks: <?php echo number_format( $today['checks'], 2, '.', '' ); ?>,
+                products: <?php echo json_encode( $product_totals_today ); ?>,
+                top_teams: <?php 
+                    $teams_array = array();
+                    foreach ( $top_teams as $name => $data ) {
+                        $teams_array[] = array( 'name' => $name, 'revenue' => $data['today'] );
+                    }
+                    echo json_encode( $teams_array ); 
+                ?>,
+                top_users: <?php echo json_encode( array_values( array_map( function( $data ) {
+                    return array( 'name' => $data['name'], 'team' => $data['team'], 'revenue' => $data['today'] );
+                }, $top_users ) ) ); ?>
+            }
+        };
+        
+        // Sort leaderboards by revenue
+        ['overall', 'today'].forEach(function(period) {
+            dashboardData[period].top_teams.sort(function(a, b) { return b.revenue - a.revenue; });
+            dashboardData[period].top_users.sort(function(a, b) { return b.revenue - a.revenue; });
+        });
+        
+        // Time range toggle handler
+        $('#timeRangeToggle').on('change', function() {
+            const showOverall = this.checked;
+            try {
+                localStorage.setItem('subsales_time_range', showOverall ? 'overall' : 'today');
+            } catch(e) {}
+            updateDashboardView(showOverall);
+        });
+        
+        // Initialize dashboard on page load
+        $(document).ready(function() {
+            console.log('Initializing dashboard...');
+            console.log('Top teams data:', dashboardData.overall.top_teams);
+            console.log('Top users data:', dashboardData.overall.top_users);
+            
+            // Initialize from localStorage
+            try {
+                const stored = localStorage.getItem('subsales_time_range');
+                if (stored === 'overall') {
+                    $('#timeRangeToggle').prop('checked', true);
+                    updateDashboardView(true);
+                } else {
+                    $('#timeRangeToggle').prop('checked', false);
+                    updateDashboardView(false);
+                }
+            } catch(e) {
+                console.error('Error initializing dashboard:', e);
+                updateDashboardView(false);
+            }
+        });
+        
+        // Update dashboard view
+        function updateDashboardView(showOverall) {
+            const period = showOverall ? 'overall' : 'today';
+            const data = dashboardData[period];
+            
+            // Update orders count
+            $('#orders-value').text(data.orders);
+            
+            // Update hero widget (Total Revenue)
+            $('#total-revenue-value').text('$' + numberFormat(data.total_revenue));
+            $('#product-sales-value').text(numberFormat(data.product_sales));
+            $('#donations-value').text(numberFormat(data.donations));
+            
+            // Update financial widgets
+            $('#cash-value').text('$' + numberFormat(data.cash));
+            $('#checks-value').text('$' + numberFormat(data.checks));
+            
+            // Update product quantities
+            $.each(data.products, function(productId, qty) {
+                $('#product-' + productId + '-value').text(qty);
+            });
+            
+            // Update leaderboards
+            updateLeaderboard('#leaderboard-teams', data.top_teams, 'teams');
+            updateLeaderboard('#leaderboard-users', data.top_users, 'users');
+        }
+        
+        // Update leaderboard HTML
+        function updateLeaderboard(selector, data, type) {
+            console.log('Updating leaderboard:', selector, 'with data:', data);
+            const $container = $(selector);
+            
+            if (!$container.length) {
+                console.error('Leaderboard container not found:', selector);
+                return;
+            }
+            
+            if (!data || !data.length || data.length === 0) {
+                console.log('No leaderboard data available for', selector);
+                $container.html('<div class="leaderboard-empty">No data available</div>');
+                return;
+            }
+            
+            const medals = ['🏆', '🥈', '🥉'];
+            const colors = ['#FFD700', '#C0C0C0', '#CD7F32'];
+            
+            let html = '';
+            data.slice(0, 3).forEach(function(item, index) {
+                const revenue = parseFloat(item.revenue || 0);
+                const name = item.name || 'Unknown';
+                
+                html += '<div class="leaderboard-item rank-' + (index + 1) + '" style="border-left-color: ' + colors[index] + ';">';
+                html += '<span class="leaderboard-rank">' + medals[index] + '</span>';
+                html += '<span class="leaderboard-name">' + escapeHtml(name) + '</span>';
+                html += '<span class="leaderboard-revenue">$' + numberFormat(revenue) + '</span>';
+                html += '</div>';
+            });
+            
+            console.log('Setting leaderboard HTML for', selector);
+            $container.html(html);
+        }
+        
+        // Helper functions
+        function numberFormat(num) {
+            return parseFloat(num).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+        
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+        
+        // Toggle switch handler (existing code)
         $('#salesModeToggle').on('change', function() {
             const mode = this.checked ? 'user' : 'legacy';
             updateSalesMode(mode);
@@ -200,7 +505,7 @@ $zip_array = $served_zips;
                 method: 'POST',
                 data: {
                     action: 'subsales_get_active_sessions_count',
-                    nonce: '<?php echo wp_create_nonce( 'subsales_active_sessions' ); ?>'
+                    nonce: '<?php echo wp_create_nonce( 'subsales_sessions_nonce' ); ?>'
                 },
                 success: function(response) {
                     if (response.success && typeof response.data.count !== 'undefined') {
@@ -256,10 +561,10 @@ $zip_array = $served_zips;
                         </div>
                     </div>
                 </div>
-                <div class="postbox subsales-box">
+                <div class="postbox subsales-box" data-stat="orders">
                     <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Orders</h2></div>
                     <div class="inside">
-                        <p class="stat-value"><?php echo intval( $order_count ); ?></p>
+                        <p class="stat-value" id="orders-value"><?php echo intval( $order_count ); ?></p>
                     </div>
                 </div>
                 <div class="postbox subsales-box">
@@ -316,48 +621,74 @@ $zip_array = $served_zips;
                 </div>
             </div>
             
-            <!-- Row 2: Product Sales, Donations, Cash, Checks -->
+            <!-- Row 2: Hero Total Revenue -->
+            <div class="subsales-hero-row">
+                <div class="postbox subsales-box subsales-hero-box" data-stat="total-revenue">
+                    <div class="inside">
+                        <div class="stat-hero">
+                            <span class="stat-value" id="total-revenue-value">$<?php echo number_format( $overall['total_revenue'], 2 ); ?></span>
+                        </div>
+                        <div class="stat-label-hero">Total Revenue</div>
+                        <div class="stat-breakdown">
+                            <span>Product Sales: $<span id="product-sales-value"><?php echo number_format( $overall['product_sales'], 2 ); ?></span></span>
+                            <span class="breakdown-separator">|</span>
+                            <span>Donations: $<span id="donations-value"><?php echo number_format( $overall['donations'], 2 ); ?></span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 3: Cash and Checks -->
             <div class="subsales-financial-row">
-                <div class="postbox subsales-box">
-                    <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-cart" aria-hidden="true"></span> Product Sales</h2></div>
+                <div class="postbox subsales-box" data-stat="cash">
+                    <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-money" aria-hidden="true"></span> Cash Collected</h2></div>
                     <div class="inside">
-                        <p class="stat-value"><?php echo '$' . number_format( (float) $product_sales_total, 2 ); ?></p>
+                        <p class="stat-value" id="cash-value">$<?php echo number_format( $overall['cash'], 2 ); ?></p>
                     </div>
                 </div>
-                <div class="postbox subsales-box">
-                    <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-heart" aria-hidden="true"></span> Donations</h2></div>
-                    <div class="inside">
-                        <p class="stat-value"><?php echo '$' . number_format( (float) $donations_total, 2 ); ?></p>
-                    </div>
-                </div>
-                <div class="postbox subsales-box">
-                    <div class="postbox-header"><h2><span class="ss-icon dashicons dashicons-money" aria-hidden="true"></span> Cash</h2></div>
-                    <div class="inside">
-                        <p class="stat-value"><?php echo '$' . number_format( (float) $cash_total, 2 ); ?></p>
-                    </div>
-                </div>
-                <div class="postbox subsales-box">
+                <div class="postbox subsales-box" data-stat="checks">
                     <div class="postbox-header"><h2><span class="ss-icon subsales-checkbook-icon" aria-hidden="true">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false" aria-hidden="true">
                             <rect x="1" y="4" width="22" height="14" rx="2" />
                             <path d="M4 8h16" />
                             <path d="M6 14l3 3 8-8" />
                         </svg>
-                    </span> Checks</h2></div>
+                    </span> Checks Collected</h2></div>
                     <div class="inside">
-                        <p class="stat-value"><?php echo '$' . number_format( (float) $check_total, 2 ); ?></p>
+                        <p class="stat-value" id="checks-value">$<?php echo number_format( $overall['checks'], 2 ); ?></p>
                     </div>
                 </div>
             </div>
 
+            <!-- Row 4: Leaderboards -->
+            <div class="subsales-leaderboards-row">
+                <div class="postbox subsales-box subsales-leaderboard-box">
+                    <div class="postbox-header"><h2><span class="ss-icon">🏆</span> Top Teams</h2></div>
+                    <div class="inside">
+                        <div class="leaderboard-container" id="leaderboard-teams">
+                            <!-- JavaScript will populate this -->
+                        </div>
+                    </div>
+                </div>
+                <div class="postbox subsales-box subsales-leaderboard-box">
+                    <div class="postbox-header"><h2><span class="ss-icon">🏆</span> Top Sellers</h2></div>
+                    <div class="inside">
+                        <div class="leaderboard-container" id="leaderboard-users">
+                            <!-- JavaScript will populate this -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Row 5: Product Quantities -->
             <?php if ( ! empty( $products_conf ) ) : ?>
             <div class="subsales-second-row">
                 <?php foreach ( $products_conf as $p ) : ?>
-                    <div class="postbox">
+                    <div class="postbox" data-stat="product-<?php echo esc_attr( $p['id'] ); ?>">
                         <div class="postbox-header"><h2><?php echo esc_html( $p['name'] ); ?></h2></div>
                         <div class="inside">
-                            <p style="font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center;">
-                                <?php echo intval( $product_totals[ $p['id'] ] ?? 0 ); ?>
+                            <p class="stat-value product-quantity-value" id="product-<?php echo esc_attr( $p['id'] ); ?>-value">
+                                <?php echo intval( $product_totals_overall[ $p['id'] ] ?? 0 ); ?>
                             </p>
                         </div>
                     </div>
@@ -377,69 +708,4 @@ $zip_array = $served_zips;
     </div>
 </div>
 
-<style>
-/* Toggle Switch Styles */
-.subsales-option-1 .subsales-toggle-switch {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    width: 140px;
-    height: 24px;
-}
-.subsales-option-1 .subsales-toggle-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
-.subsales-option-1 .subsales-toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 38px;
-    right: 60px;
-    bottom: 0;
-    background-color: #ddd;
-    transition: .3s;
-    border-radius: 12px;
-}
-.subsales-option-1 .subsales-toggle-slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: .3s;
-    border-radius: 50%;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-.subsales-option-1 input:checked + .subsales-toggle-slider {
-    background-color: #2271b1;
-}
-.subsales-option-1 input:checked + .subsales-toggle-slider:before {
-    transform: translateX(17px);
-}
-.subsales-option-1 .subsales-toggle-label-left,
-.subsales-option-1 .subsales-toggle-label-right {
-    position: absolute;
-    font-size: 12px;
-    font-weight: 500;
-    z-index: 1;
-    user-select: none;
-}
-.subsales-option-1 .subsales-toggle-label-left {
-    left: 0;
-    color: #2c3338;
-}
-.subsales-option-1 .subsales-toggle-label-right {
-    right: 0;
-    color: #787c82;
-}
-.subsales-option-1 input:checked ~ .subsales-toggle-label-left {
-    color: #787c82;
-}
-.subsales-option-1 input:checked ~ .subsales-toggle-label-right {
-    color: #2c3338;
-}
-</style>
+<!-- Toggle switch styles now in admin-dashboard.css -->

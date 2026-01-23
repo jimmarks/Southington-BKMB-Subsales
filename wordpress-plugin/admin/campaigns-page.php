@@ -286,9 +286,12 @@ jQuery(document).ready(function($) {
     $('.view-signups').on('click', function(e) {
         e.preventDefault();
         var campaignId = $(this).data('campaign-id');
+        var $row = $(this).closest('tr');
         
         $('#subsales-campaign-modal-body').html('<p>Loading...</p>');
         $('#subsales-campaign-modal').fadeIn();
+        $('#subsales-campaign-modal').data('campaign-id', campaignId);
+        $('#subsales-campaign-modal').data('campaign-row', $row);
         
         $.ajax({
             url: ajaxurl,
@@ -301,12 +304,387 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 if (response.success) {
                     $('#subsales-campaign-modal-body').html(response.data.html);
+                    $('#subsales-campaign-modal-body').data('campaign-id', response.data.campaign_id);
+                    bindSignupModalHandlers();
                 } else {
                     $('#subsales-campaign-modal-body').html('<p>Error loading signups.</p>');
                 }
             }
         });
     });
+    
+    // Bind handlers for signup modal interactions
+    function bindSignupModalHandlers() {
+        var campaignId = $('#subsales-campaign-modal-body').data('campaign-id');
+        
+        // Show add signup form
+        $('#add-signup-btn').on('click', function() {
+            $('#add-signup-form').slideDown();
+            $('#new-signup-search').focus();
+        });
+        
+        // Cancel add signup
+        $('#cancel-signup-btn').on('click', function() {
+            $('#add-signup-form').slideUp();
+            resetAddSignupForm();
+        });
+        
+        function resetAddSignupForm() {
+            $('#new-signup-team').val('');
+            $('#new-signup-search').val('');
+            $('#member-search-results').hide();
+            $('#new-signup-members-ul').empty();
+            $('#new-signup-members-list').hide();
+        }
+        
+        // Edit team - expand detail row
+        $('.edit-team-btn').on('click', function() {
+            var teamId = $(this).data('team-id');
+            // Hide all other detail rows
+            $('.team-detail-row').not('[data-team-id="' + teamId + '"]').slideUp();
+            $('.add-member-form').hide(); // Hide any open add member forms
+            // Show this team's detail row
+            $('.team-detail-row[data-team-id="' + teamId + '"]').slideDown();
+        });
+        
+        // Close team detail row
+        $('.close-team-detail-btn').on('click', function() {
+            var teamId = $(this).data('team-id');
+            $('.team-detail-row[data-team-id="' + teamId + '"]').slideUp();
+        });
+        
+        // Add member to team button
+        $('.add-member-to-team-btn').on('click', function() {
+            var teamId = $(this).data('team-id');
+            $('.add-member-form').not('[data-team-id="' + teamId + '"]').hide();
+            $('.add-member-form[data-team-id="' + teamId + '"]').slideDown();
+            $('.add-member-form[data-team-id="' + teamId + '"] .team-member-search').focus();
+        });
+        
+        // Cancel add member to team
+        $('.cancel-add-member-btn').on('click', function() {
+            var teamId = $(this).data('team-id');
+            $('.add-member-form[data-team-id="' + teamId + '"]').slideUp();
+            $('.add-member-form[data-team-id="' + teamId + '"] .team-member-search').val('');
+            $('.add-member-form[data-team-id="' + teamId + '"] .team-member-search-results').hide();
+        });
+        
+        // Team member search
+        var teamSearchTimer;
+        $('.team-member-search').on('input', function() {
+            var $input = $(this);
+            var teamId = $input.closest('.add-member-form').data('team-id');
+            var $results = $input.siblings('.team-member-search-results');
+            var search = $input.val().trim();
+            
+            clearTimeout(teamSearchTimer);
+            
+            if (search.length < 2) {
+                $results.hide();
+                return;
+            }
+            
+            console.log('Team member search:', search);
+            
+            teamSearchTimer = setTimeout(function() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'subsales_search_members',
+                        search: search,
+                        nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                    },
+                    success: function(response) {
+                        console.log('Team search response:', response);
+                        if (response.success && response.data.members && response.data.members.length > 0) {
+                            var html = '';
+                            response.data.members.forEach(function(member) {
+                                html += '<div class="team-member-result" data-member-id="' + member.id + '" data-team-id="' + teamId + '" style="padding: 6px; cursor: pointer; border-bottom: 1px solid #eee;">';
+                                html += '<strong>' + member.name + '</strong>';
+                                if (member.phone) {
+                                    html += ' <span style="color: #666; font-size: 12px;">(' + member.phone + ')</span>';
+                                }
+                                html += '</div>';
+                            });
+                            $results.html(html).show();
+                            bindTeamMemberResultClick();
+                        } else {
+                            console.log('No team members found');
+                            $results.html('<div style="padding: 6px; color: #666; font-size: 12px;">No members found</div>').show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('Team search error:', error, xhr.responseText);
+                        $results.html('<div style="padding: 6px; color: #d63638; font-size: 12px;">Error searching</div>').show();
+                    }
+                });
+            }, 300);
+        });
+        
+        function bindTeamMemberResultClick() {
+            $('.team-member-result').on('click', function() {
+                var memberId = $(this).data('member-id');
+                var memberName = $(this).text().trim().split('(')[0].trim(); // Extract just the name
+                var teamId = $(this).data('team-id');
+                var $form = $('.add-member-form[data-team-id="' + teamId + '"]');
+                var $teamDetailRow = $('.team-detail-row[data-team-id="' + teamId + '"]');
+                
+                // Add this member to the team
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'subsales_add_signup',
+                        campaign_id: campaignId,
+                        team_id: teamId,
+                        user_id: memberId,
+                        nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            // Show success message
+                            var $existingMessage = $form.find('.success-message');
+                            if ($existingMessage.length) {
+                                $existingMessage.remove();
+                            }
+                            var $message = $('<div class="success-message" style="background: #d4edda; color: #155724; padding: 8px; border-radius: 4px; margin-bottom: 8px;">✓ ' + memberName + ' added!</div>');
+                            $form.prepend($message);
+                            setTimeout(function() {
+                                $message.fadeOut(function() { $(this).remove(); });
+                            }, 2000);
+                            
+                            // Fetch the member's phone for display
+                            $.ajax({
+                                url: ajaxurl,
+                                type: 'POST',
+                                data: {
+                                    action: 'subsales_search_members',
+                                    search: memberName,
+                                    nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                                },
+                                success: function(memberResponse) {
+                                    var memberData = null;
+                                    if (memberResponse.success && memberResponse.data.members) {
+                                        memberData = memberResponse.data.members.find(m => m.id == memberId);
+                                    }
+                                    
+                                    // Add member to the visible list
+                                    var $membersList = $teamDetailRow.find('.members-list ul');
+                                    var phoneDisplay = memberData && memberData.phone ? ' <span style="color: #666;">(' + memberData.phone + ')</span>' : '';
+                                    var newMemberHtml = '<li style="padding: 8px; background: white; border-radius: 3px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid #46b450;">' +
+                                        '<span>' + memberName + phoneDisplay + '</span>' +
+                                        '<span style="color: #46b450; font-size: 11px; font-weight: 600;">JUST ADDED</span>' +
+                                        '</li>';
+                                    $membersList.prepend(newMemberHtml);
+                                    
+                                    // Update team count in compact list
+                                    var $teamRow = $('.subsales-signups-compact-list tbody tr[data-team-id="' + teamId + '"]');
+                                    if ($teamRow.length) {
+                                        var currentCount = parseInt($teamRow.find('td:eq(1)').text()) || 0;
+                                        $teamRow.find('td:eq(1)').text(currentCount + 1);
+                                    }
+                                }
+                            });
+                            
+                            // Clear the search but keep form open
+                            $form.find('.team-member-search').val('');
+                            $form.find('.team-member-search-results').hide();
+                            
+                            // Focus back on search to add another member
+                            $form.find('.team-member-search').focus();
+                        } else {
+                            alert('Error: ' + response.data.message);
+                        }
+                    }
+                });
+            });
+        }
+        
+        // Member search (for main add signup form)
+        var searchTimer;
+        $('#new-signup-search').on('input', function() {
+            var search = $(this).val().trim();
+            clearTimeout(searchTimer);
+            
+            if (search.length < 2) {
+                $('#member-search-results').hide();
+                return;
+            }
+            
+            console.log('Searching for:', search);
+            
+            searchTimer = setTimeout(function() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'subsales_search_members',
+                        search: search,
+                        nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                    },
+                    success: function(response) {
+                        console.log('Search response:', response);
+                        if (response.success && response.data.members && response.data.members.length > 0) {
+                            var html = '';
+                            response.data.members.forEach(function(member) {
+                                html += '<div class="member-search-result" data-member-id="' + member.id + '" data-member-name="' + member.name + '" data-member-phone="' + member.phone + '" style="padding: 8px; cursor: pointer; border-bottom: 1px solid #eee;">';
+                                html += '<strong>' + member.name + '</strong>';
+                                if (member.phone) {
+                                    html += ' <span style="color: #666;">(' + member.phone + ')</span>';
+                                }
+                                html += '</div>';
+                            });
+                            $('#member-search-results').html(html).show();
+                            
+                            // Handle result click - ADD IMMEDIATELY like Edit flow
+                            $('.member-search-result').on('click', function() {
+                                var teamId = $('#new-signup-team').val();
+                                if (!teamId) {
+                                    alert('Please select a team first');
+                                    return;
+                                }
+                                
+                                var memberId = $(this).data('member-id');
+                                var memberName = $(this).data('member-name');
+                                var memberPhone = $(this).data('member-phone');
+                                
+                                // Add member immediately via AJAX
+                                $.ajax({
+                                    url: ajaxurl,
+                                    type: 'POST',
+                                    data: {
+                                        action: 'subsales_add_signup',
+                                        campaign_id: campaignId,
+                                        team_id: teamId,
+                                        user_id: memberId,
+                                        nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                                    },
+                                    success: function(response) {
+                                        if (response.success) {
+                                            // Show success and add to visible list
+                                            var phoneDisplay = memberPhone ? ' <span style="color: #666;">(' + memberPhone + ')</span>' : '';
+                                            var newMemberHtml = '<li style="padding: 8px; background: white; border-radius: 3px; margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; border-left: 3px solid #46b450;">' +
+                                                '<span>' + memberName + phoneDisplay + '</span>' +
+                                                '<span style="color: #46b450; font-size: 11px; font-weight: 600;">JUST ADDED</span>' +
+                                                '</li>';
+                                            $('#new-signup-members-ul').append(newMemberHtml);
+                                            $('#new-signup-members-list').show();
+                                            
+                                            // Update member count in compact list for this team
+                                            var $teamRow = $('.subsales-signups-compact-list tbody tr[data-team-id="' + teamId + '"]');
+                                            if ($teamRow.length) {
+                                                var currentCount = parseInt($teamRow.find('td:eq(1)').text()) || 0;
+                                                $teamRow.find('td:eq(1)').text(currentCount + 1);
+                                            }
+                                            
+                                            // Clear search and focus back to add more
+                                            $('#new-signup-search').val('');
+                                            $('#member-search-results').hide();
+                                            $('#new-signup-search').focus();
+                                        } else {
+                                            alert('Error: ' + response.data.message);
+                                        }
+                                    },
+                                    error: function() {
+                                        alert('An error occurred adding the member.');
+                                    }
+                                });
+                            });
+                        } else {
+                            console.log('No results found');
+                            $('#member-search-results').html('<div style="padding: 8px; color: #666;">No members found.</div>').show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        console.error('Search error:', error, xhr.responseText);
+                        $('#member-search-results').html('<div style="padding: 8px; color: #d63638;">Error searching. Check console.</div>').show();
+                    }
+                });
+            }, 300);
+        });
+        
+        // Remove signup
+        $('.remove-signup-btn').on('click', function() {
+            var signupId = $(this).data('signup-id');
+            var memberName = $(this).data('member-name');
+            
+            if (!confirm('Remove ' + memberName + ' from this campaign?')) {
+                return;
+            }
+            
+            var $btn = $(this);
+            $btn.prop('disabled', true).text('Removing...');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'subsales_remove_signup',
+                    signup_id: signupId,
+                    nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Reload the modal
+                        $('.view-signups[data-campaign-id="' + campaignId + '"]').trigger('click');
+                    } else {
+                        alert('Error: ' + response.data.message);
+                        $btn.prop('disabled', false).text('Remove');
+                    }
+                },
+                error: function() {
+                    alert('An error occurred. Please try again.');
+                    $btn.prop('disabled', false).text('Remove');
+                }
+            });
+        });
+        
+        // Update driver
+        $('.update-driver-btn').on('click', function() {
+            var teamId = $(this).data('team-id');
+            var driverName = $('.driver-name-input[data-team-id="' + teamId + '"]').val().trim();
+            var $btn = $(this);
+            
+            $btn.prop('disabled', true).text('Updating...');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'subsales_update_team_driver',
+                    campaign_id: campaignId,
+                    team_id: teamId,
+                    driver_name: driverName,
+                    nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $btn.text('✓ Updated');
+                        setTimeout(function() {
+                            $btn.prop('disabled', false).text('Update');
+                        }, 2000);
+                        
+                        // Update the compact list driver display
+                        var $compactRow = $('.team-compact-row[data-team-id="' + teamId + '"]');
+                        var $driverCell = $compactRow.find('td:eq(2)');
+                        if (driverName) {
+                            $driverCell.html('<span class="dashicons dashicons-yes" style="color: #46b450;"></span> ' + driverName);
+                        } else {
+                            $driverCell.html('<span style="color: #999;">—</span>');
+                        }
+                    } else {
+                        alert('Error: ' + response.data.message);
+                        $btn.prop('disabled', false).text('Update');
+                    }
+                },
+                error: function() {
+                    alert('An error occurred. Please try again.');
+                    $btn.prop('disabled', false).text('Update');
+                }
+            });
+        });
+    }
     
     // Delete campaign
     $('.delete-campaign').on('click', function(e) {
@@ -342,6 +720,48 @@ jQuery(document).ready(function($) {
     // Close modal
     $('.subsales-modal-close, .subsales-modal').on('click', function(e) {
         if (e.target === this) {
+            var campaignId = $('#subsales-campaign-modal').data('campaign-id');
+            var $row = $('#subsales-campaign-modal').data('campaign-row');
+            
+            // Refresh counts for the campaign
+            if (campaignId && $row) {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'subsales_get_campaign_counts',
+                        campaign_id: campaignId,
+                        nonce: '<?php echo wp_create_nonce( 'subsales_campaign_nonce' ); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            // Update table row
+                            $row.find('td:eq(2)').text(response.data.team_count);
+                            $row.find('td:eq(3)').text(response.data.member_count);
+                            
+                            // Update calendar cell if visible
+                            var campaignDate = response.data.campaign_date;
+                            var $calendarCell = $('.calendar-day[data-date="' + campaignDate + '"]');
+                            if ($calendarCell.length) {
+                                var $stats = $calendarCell.find('.campaign-stats');
+                                if (response.data.member_count > 0) {
+                                    if ($stats.length === 0) {
+                                        $calendarCell.find('.day-content').append('<div class="campaign-stats"></div>');
+                                        $stats = $calendarCell.find('.campaign-stats');
+                                    }
+                                    $stats.html(
+                                        '<span class="stat-teams" title="' + response.data.team_count + ' teams">' + response.data.team_count + ' teams</span>' +
+                                        '<span class="stat-members" title="' + response.data.member_count + ' members">' + response.data.member_count + ' members</span>'
+                                    );
+                                } else {
+                                    $stats.remove();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
             $('#subsales-campaign-modal').fadeOut();
         }
     });

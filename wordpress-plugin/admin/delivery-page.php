@@ -108,7 +108,7 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
         <!-- Driver manifests workflow: individual-based routing and HTML generation -->
         <h2 style="margin-top:18px">Generate Individual Delivery Manifests</h2>
         <p class="description">Generate optimized delivery routes for each team member based on their orders. Creates individual PDF manifests with packing lists.</p>
-        <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+        <form id="subsales-driver-manifests" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" target="_blank">
             <?php wp_nonce_field( 'subsales_generate_delivery' ); ?>
             <input type="hidden" name="action" value="subsales_generate_delivery_pdf" />
             <table class="form-table">
@@ -123,6 +123,9 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
                     <p class="description">This date will appear on the printed manifests (does not filter orders)</p></td>
                 </tr>
             </table>
+            <div class="notice notice-info inline" style="margin: 15px 0;">
+                <p><strong>⏱️ Note:</strong> Generation may take 30 seconds to several minutes depending on the number of orders and team members. Addresses will be geocoded for route optimization. Please be patient and do not close the tab.</p>
+            </div>
             <p class="submit">
                 <button type="submit" class="button button-primary">Generate Individual Manifests (HTML)</button>
             </p>
@@ -253,6 +256,7 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
  * @param int $size QR code size in pixels
  * @return string Data URI for embedding in HTML, or empty string on failure
  */
+if ( ! function_exists( 'subsales_generate_qr_code' ) ) {
 function subsales_generate_qr_code( $url, $size = 800 ) {
     // Check if endroid QR code library is available
     if ( ! class_exists( 'Endroid\QrCode\QrCode' ) ) {
@@ -291,6 +295,7 @@ function subsales_generate_qr_code( $url, $size = 800 ) {
         return '';
     }
 }
+}
 
 /**
  * Generate QR code page HTML for delivery routes
@@ -300,6 +305,7 @@ function subsales_generate_qr_code( $url, $size = 800 ) {
  * @param string $delivery_date Display date for the routes
  * @return string Complete HTML page content
  */
+if ( ! function_exists( 'subsales_generate_route_qr_page' ) ) {
 function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     $display_date = ! empty( $delivery_date ) ? date( 'F j, Y', strtotime( $delivery_date ) ) : date( 'F j, Y' );
     $total_addresses = 0;
@@ -371,4 +377,5 @@ function subsales_generate_route_qr_page( $all_routes, $delivery_date = '' ) {
     $html .= '</body></html>';
     
     return $html;
+}
 }

@@ -234,7 +234,6 @@ $params = array();
 
             <div id="subsales-pagination" style="margin-top:12px"></div>
         </div>
-    </div>
 
     <!-- Edit Order Modal -->
     <div id="subsales-edit-modal" class="subsales-modal" style="display:none">
@@ -250,6 +249,25 @@ $params = array();
                     <input type="hidden" name="order_id" />
                     
                     <table class="form-table">
+                        <tr>
+                            <th><label>Selling Mode</label></th>
+                            <td>
+                                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                    <label class="subsales-toggle-switch">
+                                        <input type="checkbox" id="edit-selling-mode-toggle" />
+                                        <span class="subsales-toggle-slider"></span>
+                                        <span class="subsales-toggle-label-left">Individual</span>
+                                        <span class="subsales-toggle-label-right">Team</span>
+                                    </label>
+                                    <select name="team_id" id="edit-team-select" class="regular-text" style="display: none;">
+                                        <option value="">Select Team</option>
+                                        <?php foreach ( $teams as $t ) : ?>
+                                            <option value="<?php echo intval( $t['id'] ); ?>"><?php echo esc_html( $t['name'] ); ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </td>
+                        </tr>
                         <tr>
                             <th><label>Customer Name</label></th>
                             <td><input type="text" name="customer" class="regular-text" required /></td>
@@ -520,6 +538,10 @@ $params = array();
             }
             for (const o of orders){
                 const tr = document.createElement('tr');
+                // Add class for deleted orders
+                if (o.deleted) {
+                    tr.className = 'subsales-deleted-order';
+                }
                 let html = '';
                 
                 // Checkbox column
@@ -796,8 +818,57 @@ $params = array();
                     productsContainer.appendChild(tr);
                 }
                 
+                // Set up team selector
+                const teamId = order.team_id ? parseInt(order.team_id) : -1;
+                const sellingModeToggle = document.getElementById('edit-selling-mode-toggle');
+                const teamSelect = document.getElementById('edit-team-select');
+                
+                if (teamId === -1) {
+                    // Individual mode
+                    sellingModeToggle.checked = false;
+                    teamSelect.style.display = 'none';
+                    teamSelect.value = '';
+                } else {
+                    // Team mode
+                    sellingModeToggle.checked = true;
+                    teamSelect.style.display = 'inline-block';
+                    teamSelect.value = teamId;
+                }
+                
+                // Check if someone else is currently editing
+                const editWarning = this.checkEditingStatus(data);
+                if (editWarning) {
+                    const proceed = confirm(editWarning);
+                    if (!proceed) {
+                        return; // User cancelled, don't open modal
+                    }
+                }
+                
+                // Claim edit lock before showing modal
+                await this.claimEditLock(orderDbId);
+                
                 // Show modal
                 document.getElementById('subsales-edit-modal').style.display = 'block';
+                
+                // Setup toggle switch listener (after modal is visible)
+                const toggleListener = function() {
+                    const teamSelect = document.getElementById('edit-team-select');
+                    if (this.checked) {
+                        // Team mode
+                        teamSelect.style.display = 'inline-block';
+                        if (!teamSelect.value) {
+                            teamSelect.focus();
+                        }
+                    } else {
+                        // Individual mode
+                        teamSelect.style.display = 'none';
+                        teamSelect.value = '';
+                    }
+                };
+                
+                // Remove old listener if exists, add new one
+                sellingModeToggle.removeEventListener('change', toggleListener);
+                sellingModeToggle.addEventListener('change', toggleListener);
             } catch (error) {
                 console.error('Edit order error:', error);
                 alert('Failed to load order: ' + error.message);
@@ -805,6 +876,10 @@ $params = array();
         },
         
         closeEditModal() {
+            // Release edit lock if we have a current order
+            if (this.currentOrder && this.currentOrder.id) {
+                this.releaseEditLock(this.currentOrder.id);
+            }
             document.getElementById('subsales-edit-modal').style.display = 'none';
             this.currentOrder = null;
         },
@@ -819,12 +894,17 @@ $params = array();
             const orderDbId = form.elements['order_db_id'].value;
             const orderId = form.elements['order_id'].value;
             
+            // Get team_id from form
+            const sellingModeToggle = document.getElementById('edit-selling-mode-toggle');
+            const teamSelect = document.getElementById('edit-team-select');
+            const teamId = sellingModeToggle.checked && teamSelect.value ? parseInt(teamSelect.value) : -1;
+            
             // Build updated order data - preserve existing metadata from original order
             const originalData = this.currentOrder.order_data || {};
             const data = {
                 order_id: orderId,
                 user_id: this.currentOrder.user_id,
-                team_id: this.currentOrder.team_id,
+                team_id: teamId,
                 customer: form.elements['customer'].value,
                 address: form.elements['address'].value,
                 unitFloorApt: form.elements['unitFloorApt'].value,
@@ -1029,7 +1109,79 @@ $params = array();
         renderProducts(products) {
             if (!products || products.length === 0) return '(none)';
             return products.map(p => p.name + ' ×' + p.qty).join(', ');
+        },
+        
+        /**
+         * Check if someone else is currently editing this order
+         * Returns warning message or null if safe to edit
+         */
+        checkEditingStatus(orderData) {
+            const editingBy = orderData.editing_by;
+            const editingSince = orderData.editing_since;
+            
+            if (!editingBy || !editingSince) {
+                return null; // No one is editing
+            }
+            
+            // Calculate how long ago the edit started
+            const editStart = new Date(editingSince);
+            const now = new Date();
+            const minutesAgo = Math.floor((now - editStart) / 60000);
+            
+            // If older than 5 minutes, consider it stale
+            if (minutesAgo > 5) {
+                return null;
+            }
+            
+            return `⚠️ ${editingBy} opened this order ${minutesAgo} minute(s) ago.\n\nDo you want to continue editing anyway?\n\n(Changes may conflict if you both edit simultaneously)`;
+        },
+        
+        /**
+         * Claim edit lock on an order
+         */
+        async claimEditLock(orderDbId) {
+            try {
+                const resp = await fetch('<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        action: 'subsales_claim_edit_lock',
+                        order_id: orderDbId,
+                        user: '<?php echo esc_js( wp_get_current_user()->display_name ); ?>',
+                        nonce: '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
+                    })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    console.error('Failed to claim edit lock:', result.data);
+                }
+            } catch (error) {
+                console.error('Error claiming edit lock:', error);
+            }
+        },
+        
+        /**
+         * Release edit lock on an order
+         */
+        async releaseEditLock(orderDbId) {
+            try {
+                const resp = await fetch('<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        action: 'subsales_release_edit_lock',
+                        order_id: orderDbId,
+                        nonce: '<?php echo wp_create_nonce( 'wp_rest' ); ?>'
+                    })
+                });
+                const result = await resp.json();
+                if (!result.success) {
+                    console.error('Failed to release edit lock:', result.data);
+                }
+            } catch (error) {
+                console.error('Error releasing edit lock:', error);
+            }
         }
     };
     </script>
-</div>
+</div><!-- .wrap -->

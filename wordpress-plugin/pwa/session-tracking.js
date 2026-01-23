@@ -130,6 +130,31 @@
       });
       
       if (!resp.ok) {
+        // If session not found (likely 500 error), try to recreate it
+        if (resp.status === 500 || resp.status === 404) {
+          console.warn('[Session] Heartbeat failed - attempting to recreate session');
+          
+          // Get current user data from localStorage
+          const userData = {
+            userId: localStorage.getItem('userId'),
+            userName: localStorage.getItem('userName') || localStorage.getItem('teamMemberName'),
+            teamId: localStorage.getItem('selectedTeamId') || localStorage.getItem('teamId'),
+            teamName: localStorage.getItem('selectedTeamName') || localStorage.getItem('teamName')
+          };
+          
+          // Try to recreate session
+          const sessionCreated = await startSession(userData);
+          if (sessionCreated) {
+            console.warn('[Session] Session recreated successfully');
+            if (window.PWALogger) {
+              window.PWALogger.log('session', 'Session recreated after heartbeat failure', {
+                session_id: sessionId
+              });
+            }
+            return; // Don't log error if we successfully recreated
+          }
+        }
+        
         console.warn('[Session] Heartbeat failed - Status:', resp.status, 'Session:', sessionId);
         if (window.PWALogger) {
           window.PWALogger.log('session', 'Heartbeat failed', {

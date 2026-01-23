@@ -6,7 +6,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title id="pageTitle">Loading...</title>
-    <link rel="manifest" href="../wp-json/order-manager/v1/pwa/manifest" crossorigin="use-credentials" />
+    <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
     <meta name="theme-color" content="#2d6cdf" />
     <style>/* Hide auth-only controls in the PWA shell until client reveals them */
@@ -104,6 +104,10 @@
         <div class="row">
           <div class="col-2">
             <h2>Create Order</h2>
+            <label class="donation-checkbox-label">
+              <input type="checkbox" id="donationOnly" />
+              <span>Anonymous Donation (no customer details needed)</span>
+            </label>
             <input id="customerName" placeholder="Customer name" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" class="sm-auth-hidden" />
             <input id="address" placeholder="Address" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <input id="unitFloorApt" placeholder="Unit / Floor / Apt (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />

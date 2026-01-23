@@ -1,16 +1,29 @@
 /* Admin dashboard styles for Subsales plugin */
 .subsales-dashboard-grid{ margin-top:10px; display:flex; flex-direction:column; gap:12px }
-.subsales-top-row, .subsales-financial-row{ display:grid; gap:12px }
+.subsales-top-row, .subsales-financial-row, .subsales-hero-row, .subsales-leaderboards-row{ display:grid; gap:12px }
+
+/* Deleted orders styling */
+tr.subsales-deleted-order td:not(:last-child) {
+    text-decoration: line-through;
+    opacity: 0.6;
+    color: #999;
+}
 
 /* Top row: 4 columns (Teams, Members, Orders, Address Data) */
 .subsales-top-row{ grid-template-columns: repeat(4, 1fr); }
 @media (max-width:1400px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
 @media (max-width:700px){ .subsales-top-row{ grid-template-columns: 1fr; } }
 
-/* Financial row: 4 columns (Product Sales, Donations, Cash, Checks) */
-.subsales-financial-row{ grid-template-columns: repeat(4, 1fr); }
-@media (max-width:1400px){ .subsales-financial-row{ grid-template-columns: repeat(2, 1fr); } }
+/* Hero row: Full width Total Revenue widget */
+.subsales-hero-row{ grid-template-columns: 1fr; }
+
+/* Financial row: 2 columns (Cash, Checks) */
+.subsales-financial-row{ grid-template-columns: repeat(2, 1fr); }
 @media (max-width:700px){ .subsales-financial-row{ grid-template-columns: 1fr; } }
+
+/* Leaderboards row: 2 columns side-by-side */
+.subsales-leaderboards-row{ grid-template-columns: 1fr 1fr; }
+@media (max-width:900px){ .subsales-leaderboards-row{ grid-template-columns: 1fr; } }
 
 /* Second row (Products): dynamic responsive grid, try to keep items on one line for very wide displays */
 .subsales-second-row{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
@@ -31,6 +44,45 @@
 .subsales-box .stat-container{ display:flex; flex-direction:column; align-items:center; gap:4px; width:100% }
 .subsales-box .stat-value{ font-size:28px; font-weight:700; color:#0073aa; margin:0 }
 .subsales-box .stat-inactive{ font-size:12px; font-weight:500; color:#666; margin:0; padding:2px 8px; background:#f0f0f0; border-radius:10px }
+
+/* Hero Total Revenue Widget */
+.subsales-hero-box{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; }
+.subsales-hero-box .inside{ padding: 30px 20px; flex-direction: column; text-align: center; }
+.subsales-hero-box .stat-hero{ margin-bottom: 8px; }
+.subsales-hero-box .stat-value{ font-size: 48px; color: white; text-shadow: 2px 2px 4px rgba(0,0,0,0.2); }
+.subsales-hero-box .stat-label-hero{ font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.95); margin-bottom: 12px; letter-spacing: 0.5px; text-transform: uppercase; }
+.subsales-hero-box .stat-breakdown{ font-size: 14px; color: rgba(255,255,255,0.9); display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.subsales-hero-box .stat-breakdown span{ font-weight: 500; }
+.subsales-hero-box .breakdown-separator{ opacity: 0.6; margin: 0 4px; }
+@media (max-width:700px){
+  .subsales-hero-box .stat-value{ font-size: 36px; }
+  .subsales-hero-box .stat-label-hero{ font-size: 16px; }
+  .subsales-hero-box .stat-breakdown{ font-size: 12px; flex-direction: column; gap: 6px; }
+  .subsales-hero-box .breakdown-separator{ display: none; }
+}
+
+/* Leaderboard Widgets */
+.subsales-leaderboard-box .inside{ padding: 16px; display: block; }
+.leaderboard-container{ display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
+.leaderboard-item{ display: flex; align-items: center; justify-content: space-between; padding: 12px; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #ddd; transition: all 0.2s ease; }
+.leaderboard-item:hover{ transform: translateX(3px); background: #f0f2f5; }
+.leaderboard-rank{ font-size: 24px; margin-right: 12px; min-width: 30px; text-align: center; }
+.leaderboard-name{ flex: 1; font-weight: 500; color: #333; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leaderboard-revenue{ font-weight: bold; color: #667eea; font-size: 15px; white-space: nowrap; margin-left: 8px; }
+.leaderboard-empty{ text-align: center; color: #999; padding: 20px 10px; font-style: italic; font-size: 13px; }
+/* Rank colors applied by JavaScript */
+.rank-1{ border-left-color: #FFD700 !important; }
+.rank-2{ border-left-color: #C0C0C0 !important; }
+.rank-3{ border-left-color: #CD7F32 !important; }
+@media (max-width:700px){
+  .leaderboard-item{ padding: 10px; }
+  .leaderboard-rank{ font-size: 20px; margin-right: 8px; min-width: 25px; }
+  .leaderboard-name{ font-size: 13px; }
+  .leaderboard-revenue{ font-size: 14px; }
+}
+
+/* Product quantity values styling */
+.product-quantity-value{ font-size: 36px; font-weight: bold; margin: 0; color: #0073aa; text-align: center; }
 
 /* Compact variant: tighter spacing for admins who prefer denser dashboards */
 .subsales-dashboard-grid.subsales-compact{ gap:6px }
@@ -1158,6 +1210,47 @@ body.subsales-manifest-viewer .page-footer {
     margin-top: 20px;
 }
 
+.subsales-signups-compact-list {
+    margin-top: 20px;
+}
+
+.subsales-signups-compact-list table {
+    border: 1px solid #c3c4c7;
+}
+
+.team-compact-row {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.team-compact-row:hover {
+    background-color: #f6f7f7 !important;
+}
+
+.team-detail-row td {
+    padding: 0 !important;
+    background: #f9f9f9 !important;
+}
+
+.team-detail-content {
+    padding: 20px;
+    border-top: 2px solid #0073aa;
+}
+
+.subsales-signups-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #0073aa;
+}
+
+.subsales-signups-modal-header h2 {
+    margin: 0;
+    color: #0073aa;
+}
+
 .subsales-signup-team {
     background: #f9f9f9;
     padding: 15px;
@@ -1167,7 +1260,7 @@ body.subsales-manifest-viewer .page-footer {
 }
 
 .subsales-signup-team h3 {
-    margin: 0 0 10px 0;
+    margin: 0 0 12px 0;
     color: #0073aa;
     font-size: 16px;
 }
@@ -1177,12 +1270,181 @@ body.subsales-manifest-viewer .page-footer {
 }
 
 .subsales-signup-team ul {
-    margin: 5px 0 0 20px;
-    list-style: disc;
+    margin: 5px 0 0 0;
+    list-style: none;
+    padding: 0;
 }
 
 .subsales-signup-team li {
     margin: 4px 0;
+    padding: 8px;
+    background: white;
+    border-radius: 3px;
+}
+
+.subsales-signup-team .driver-section {
+    margin-bottom: 15px;
+}
+
+.subsales-signup-team .members-list {
+    margin-top: 12px;
+}
+
+#add-signup-form {
+    background: #f0f0f1;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 15px 0;
+}
+
+#add-signup-form h3 {
+    margin-top: 0;
+    color: #2271b1;
+}
+
+#add-signup-form label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #1d2327;
+}
+
+#add-signup-form select,
+#add-signup-form input[type="text"] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#member-search-results {
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    background: white;
+    margin-top: 4px;
+}
+
+#member-search-results .member-search-result:hover {
+    background: #f0f0f1;
+}
+
+#selected-member-info {
+    padding: 10px;
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 4px;
+    color: #155724;
+}
+
+.driver-section label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #856404;
+}
+
+.driver-section input[type="text"] {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+}
+
+.button-link-delete {
+    color: #b32d2e !important;
+    border-color: transparent !important;
+    background: transparent !important;
+}
+
+.button-link-delete:hover {
+    color: #fff !important;
+    background: #b32d2e !important;
+}
+
+/* Toggle Switch Styles (used in dashboard and edit order form) */
+.subsales-toggle-switch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 140px;
+    height: 24px;
+}
+
+.subsales-toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.subsales-toggle-switch .subsales-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 60px;
+    right: 35px;
+    bottom: 0;
+    background-color: #ddd;
+    transition: .3s;
+    border-radius: 12px;
+}
+
+.subsales-toggle-switch .subsales-toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.subsales-toggle-switch input:checked + .subsales-toggle-slider {
+    background-color: #2271b1;
+}
+
+.subsales-toggle-switch input:checked + .subsales-toggle-slider:before {
+    transform: translateX(17px);
+}
+
+.subsales-toggle-switch .subsales-toggle-label-left,
+.subsales-toggle-switch .subsales-toggle-label-right {
+    position: absolute;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 1;
+    user-select: none;
+}
+
+.subsales-toggle-switch .subsales-toggle-label-left {
+    left: 0;
+    color: #2c3338;
+}
+
+.subsales-toggle-switch .subsales-toggle-label-right {
+    right: 0;
+    color: #787c82;
+}
+
+.subsales-toggle-switch input:checked ~ .subsales-toggle-label-left {
+    color: #787c82;
+}
+
+.subsales-toggle-switch input:checked ~ .subsales-toggle-label-right {
+    color: #2c3338;
+}
+
+/* Time range slider variant (blue when checked for "Overall") */
+.subsales-time-slider {
+    background-color: #2271b1;
+}
+
+input:checked + .subsales-time-slider {
+    background-color: #ddd;
 }
 
 /* Responsive adjustments */
@@ -1203,6 +1465,22 @@ body.subsales-manifest-viewer .page-footer {
     .subsales-calendar-header {
         flex-direction: column;
         gap: 10px;
+    }
+    
+    .subsales-signups-modal-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+    
+    .subsales-signup-team li {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .subsales-signups-compact-list table th:nth-child(3),
+    .subsales-signups-compact-list table td:nth-child(3) {
+        display: none;
     }
 }
 

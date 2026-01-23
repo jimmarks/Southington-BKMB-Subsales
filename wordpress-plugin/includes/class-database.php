@@ -1338,6 +1338,30 @@ class Subsales_Database {
     }
     
     /**
+     * Get count of active PWA sessions
+     * 
+     * @return int Number of active sessions
+     */
+    public static function get_active_pwa_sessions_count() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'ss_pwa_sessions';
+        
+        // Consider sessions active if:
+        // 1. Not logged out (logout_at IS NULL)
+        // 2. Heartbeat within last 5 minutes
+        $five_min_ago = date( 'Y-m-d H:i:s', strtotime( current_time( 'mysql' ) ) - 300 );
+        
+        $count = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table_name} 
+             WHERE logout_at IS NULL
+             AND last_heartbeat >= %s",
+            $five_min_ago
+        ) );
+        
+        return intval( $count );
+    }
+    
+    /**
      * Get all PWA sessions (with pagination)
      * 
      * @param array $args Query arguments

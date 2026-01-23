@@ -443,10 +443,41 @@ class Subsales_Orders {
         $order_id = $request->get_param( 'id' );
         $data = $request->get_json_params();
         
-        // Get current user info (must be WordPress admin)
+        // Support both WordPress admin auth AND PWA user auth
         $current_user = wp_get_current_user();
-        if ( ! $current_user || ! $current_user->ID ) {
-            return new WP_REST_Response( 'Unauthorized', 401 );
+        $user_id = null;
+        $user_name = 'Unknown User';
+        $auth_type = 'admin';
+        
+        // Check WordPress admin authentication
+        if ( $current_user && $current_user->ID ) {
+            $user_id = $current_user->ID;
+            $user_name = $current_user->display_name;
+            $auth_type = 'admin';
+        } else {
+            // Check PWA user authentication via headers
+            $pwa_user_id = $request->get_header( 'X-User-ID' );
+            $pwa_team_id = $request->get_header( 'X-Team-ID' );
+            
+            if ( ! empty( $pwa_user_id ) && ! empty( $pwa_team_id ) ) {
+                // Verify user exists in team_members table
+                $members_table = $wpdb->prefix . 'ss_team_members';
+                $user = $wpdb->get_row( $wpdb->prepare(
+                    "SELECT id, name, phone FROM {$members_table} WHERE id = %d",
+                    intval( $pwa_user_id )
+                ), ARRAY_A );
+                
+                if ( $user ) {
+                    $user_id = $user['id'];
+                    $user_name = $user['name'] . ' (' . $user['phone'] . ')';
+                    $auth_type = 'pwa';
+                }
+            }
+        }
+        
+        // If neither auth method worked, reject
+        if ( ! $user_id ) {
+            return new WP_REST_Response( 'Unauthorized - no valid authentication', 401 );
         }
         
         // Require delete reason
@@ -472,7 +503,7 @@ class Subsales_Orders {
             array(
                 'deleted' => 1,
                 'deleted_at' => current_time( 'mysql' ),
-                'deleted_by_user_id' => $current_user->ID,
+                'deleted_by_user_id' => $user_id,
                 'delete_reason' => $delete_reason
             ),
             array( 'order_id' => $order_id ),
@@ -484,7 +515,7 @@ class Subsales_Orders {
             Subsales_Database::log( 'ERROR', 'orders', 'Failed to delete order', array(
                 'order_id' => $order_id,
                 'db_error' => $wpdb->last_error
-            ), 'admin', $current_user->ID, $current_user->display_name );
+            ), $auth_type, $user_id, $user_name );
             return new WP_REST_Response( 'Failed to delete order', 500 );
         }
         
@@ -498,10 +529,10 @@ class Subsales_Orders {
             $order_data, // before
             $order_data, // after (same, just marked deleted)
             'delete',
-            $current_user->ID,
-            $current_user->display_name,
+            $user_id,
+            $user_name,
             $delete_reason,
-            'admin'
+            $auth_type
         );
         
         return new WP_REST_Response( array(

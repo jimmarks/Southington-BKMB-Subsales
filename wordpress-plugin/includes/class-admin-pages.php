@@ -54,6 +54,19 @@ class Subsales_Admin_Pages {
     }
 
     /**
+     * Render the reports page
+     *
+     * @return void
+     */
+    public static function render_reports_page() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( 'Unauthorized' );
+        }
+        
+        include SUBSALES_PLUGIN_PATH . 'admin/reports-page.php';
+    }
+
+    /**
      * Render the settings page
      *
      * @return void

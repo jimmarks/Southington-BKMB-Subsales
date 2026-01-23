@@ -33,6 +33,12 @@ if ( ! current_user_can( 'manage_options' ) ) {
         $session_duration = isset( $_POST['session_duration'] ) ? intval( $_POST['session_duration'] ) : 86400000;
         $individual_session_duration = isset( $_POST['individual_session_duration'] ) ? intval( $_POST['individual_session_duration'] ) : 1209600000; // 14 days
         $login_mode = isset( $_POST['login_mode'] ) ? sanitize_text_field( $_POST['login_mode'] ) : 'legacy';
+        $points_mode = isset( $_POST['points_mode'] ) ? sanitize_text_field( $_POST['points_mode'] ) : 'dollar';
+        $points_denomination = isset( $_POST['points_denomination'] ) ? floatval( $_POST['points_denomination'] ) : 1.0;
+        $points_distribution = isset( $_POST['points_distribution'] ) ? sanitize_text_field( $_POST['points_distribution'] ) : 'individual';
+        $donation_bonus_enabled = isset( $_POST['donation_bonus_enabled'] ) ? 1 : 0;
+        $donation_percentage = isset( $_POST['donation_percentage'] ) ? floatval( $_POST['donation_percentage'] ) : 50.0;
+        $donation_distribution = isset( $_POST['donation_distribution'] ) ? sanitize_text_field( $_POST['donation_distribution'] ) : 'team';
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
@@ -41,6 +47,12 @@ if ( ! current_user_can( 'manage_options' ) ) {
         update_option( 'order_sync_session_duration', $session_duration );
         update_option( 'subsales_individual_session_duration', $individual_session_duration );
         update_option( 'order_sync_login_mode', $login_mode );
+        update_option( 'subsales_points_mode', $points_mode );
+        update_option( 'subsales_points_denomination', $points_denomination );
+        update_option( 'subsales_points_distribution', $points_distribution );
+        update_option( 'subsales_donation_bonus_enabled', $donation_bonus_enabled );
+        update_option( 'subsales_donation_percentage', $donation_percentage );
+        update_option( 'subsales_donation_distribution', $donation_distribution );
 
         if ( $portal_slug !== $old_slug ) {
             order_sync_ensure_pwa_page( $portal_slug );
@@ -396,6 +408,55 @@ if ( ! current_user_can( 'manage_options' ) ) {
                                     <strong>⚠️ Important:</strong> Changing the login mode will affect how users authenticate in the PWA.
                                     Make sure your users know which method to use after switching.
                                 </div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Points Calculation</th>
+                            <td>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Points per Product:</label>
+                                    <input type="number" step="0.01" min="0" name="points_denomination" value="<?php echo esc_attr( get_option( 'subsales_points_denomination', 1.0 ) ); ?>" style="width: 100px;" />
+                                    <input type="hidden" name="points_mode" value="product" />
+                                </div>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Points Distribution:</label>
+                                    <select name="points_distribution" style="width: 200px;">
+                                        <option value="individual" <?php selected( get_option( 'subsales_points_distribution', 'individual' ), 'individual' ); ?>>Individual</option>
+                                        <option value="team" <?php selected( get_option( 'subsales_points_distribution', 'individual' ), 'team' ); ?>>Team (divided by members)</option>
+                                    </select>
+                                </div>
+                                <p class="description" style="margin-top: 10px;">
+                                    <strong>Points Per Product:</strong> Each product sold earns this many points (e.g., 3.5 points per sub)<br>
+                                    <strong>Individual:</strong> Each person earns points based on their own products sold<br>
+                                    <strong>Team:</strong> Team's total product points are divided equally among all team members who worked that day
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Donation Bonus</th>
+                            <td>
+                                <div style="margin-bottom: 15px;">
+                                    <label>
+                                        <input type="checkbox" name="donation_bonus_enabled" value="1" <?php checked( get_option( 'subsales_donation_bonus_enabled', 0 ), 1 ); ?> />
+                                        <strong>Enable Donation Bonus Points</strong>
+                                    </label>
+                                </div>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Donation Percentage:</label>
+                                    <input type="number" step="0.1" min="0" max="100" name="donation_percentage" value="<?php echo esc_attr( get_option( 'subsales_donation_percentage', 50.0 ) ); ?>" style="width: 100px;" />
+                                    <span>%</span>
+                                </div>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Donation Distribution:</label>
+                                    <select name="donation_distribution" style="width: 200px;">
+                                        <option value="individual" <?php selected( get_option( 'subsales_donation_distribution', 'team' ), 'individual' ); ?>>Individual</option>
+                                        <option value="team" <?php selected( get_option( 'subsales_donation_distribution', 'team' ), 'team' ); ?>>Team (divided by members)</option>
+                                    </select>
+                                </div>
+                                <p class="description" style="margin-top: 10px;">
+                                    Donation amount is converted to points at the specified percentage. The dollar value becomes point value.<br>
+                                    <strong>Example:</strong> $735 donations × 50% = $367.50 → 367.50 points (split by team or individual)
+                                </p>
                             </td>
                         </tr>
                     </table>

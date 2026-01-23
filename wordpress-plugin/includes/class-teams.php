@@ -170,8 +170,10 @@ class Subsales_Teams {
                 $user['id']
             ));
             
-            if ( empty( $team_ids ) ) {
-                // Log failed user login - no teams
+            // In individual mode (team_id = -1 or 0 requested), user doesn't need team assignment
+            // Only enforce team requirement in team mode
+            if ( empty( $team_ids ) && $team_id != -1 && $team_id != 0 ) {
+                // Log failed user login - no teams (only in team mode)
                 Subsales_Database::log_auth( 'failed', $user['id'], $user['name'], array(
                     'mode' => 'user',
                     'reason' => 'no_teams_assigned'
@@ -181,6 +183,34 @@ class Subsales_Teams {
                     'success' => false,
                     'message' => 'User is not assigned to any teams'
                 ), 403 );
+            }
+            
+            // For individual mode, allow login even without team assignments
+            if ( empty( $team_ids ) ) {
+                // Individual mode login - no teams needed
+                Subsales_Database::log_auth( 'login', $user['id'], $user['name'], array(
+                    'mode' => 'user',
+                    'team_id' => -1,
+                    'individual_mode' => true
+                ), 'pwa' );
+                
+                return new WP_REST_Response( array(
+                    'success' => true,
+                    'mode' => 'user',
+                    'user' => array(
+                        'id' => $user['id'],
+                        'name' => $user['name'],
+                        'phone' => $user['phone'],
+                        'email' => $user['email'] ?? ''
+                    ),
+                    'teams' => array(), // Empty teams array for individual mode
+                    'selected_team' => array(
+                        'id' => -1,
+                        'name' => 'Individual',
+                        'access_code' => ''
+                    ),
+                    'message' => 'Individual login successful'
+                ), 200 );
             }
             
             $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );

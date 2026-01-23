@@ -242,6 +242,10 @@
             <div class="sm-row">
               <div class="sm-leftcol">
                 <h2>Create Order</h2>
+                <label style="display: flex; align-items: center; gap: 8px; background: #fff3cd; padding: 10px; border-radius: 4px; margin-bottom: 10px; cursor: pointer;">
+                  <input type="checkbox" id="donationOnly" />
+                  <span style="font-weight: 600;">📌 Anonymous Donation (no customer details needed)</span>
+                </label>
                 <label>Customer name</label>
                 <input id="customerName" placeholder="Customer name" />
                 <label>Address</label>
@@ -520,17 +524,22 @@
     
     // Get current user ID (supports both user mode and legacy mode)
     const loginMode = localStorage.getItem('loginMode') || 'legacy';
-    let currentUserId, currentUserName;
+    let currentUserId, currentUserName, currentTeamId;
     
     if (loginMode === 'user') {
       // User mode: use userId from localStorage
       currentUserId = localStorage.getItem('userId') || '';
       currentUserName = localStorage.getItem('userName') || '';
+      currentTeamId = localStorage.getItem('selectedTeamId') || '';
     } else {
       // Legacy mode: use teamMemberId
       currentUserId = localStorage.getItem('teamMemberId') || '';
       currentUserName = localStorage.getItem('teamMemberName') || '';
+      currentTeamId = localStorage.getItem('teamId') || '';
     }
+    
+    // Check if we're in individual mode (team_id = -1)
+    const isIndividualMode = (currentTeamId === '-1' || currentTeamId === -1);
     
     // Gather local and remote orders
     let local = [];
@@ -610,9 +619,21 @@
       
       if (!isMyOrder) return; // skip orders not from current user
       
-      // Determine created timestamp from several possible locations
-      const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;
-      if (!isSameDayForServer(o, created)) return; // skip orders not from today (per server)
+      // Date/tally filtering depends on mode:
+      // Individual mode (team -1): Show all untallied orders regardless of date
+      // Team mode: Show only today's orders
+      if (isIndividualMode) {
+        // For individual mode, only show orders that haven't been tallied yet
+        const orderTeamId = String(od.team_id || o.team_id || '');
+        const isTallied = (o.tallied === 1 || o.tallied === '1' || od.tallied === 1 || od.tallied === '1');
+        
+        // Only include team -1 orders that are not tallied
+        if (orderTeamId !== '-1' || isTallied) return;
+      } else {
+        // Team mode: only include today's orders
+        const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;
+        if (!isSameDayForServer(o, created)) return; // skip orders not from today (per server)
+      }
       const productsList = od.products || [];
       const donation = parseFloat( od.donationAmount || od.donation || od.donation_amount || 0 ) || 0;
       const payment = od.paymentMethod || od.payment_method || od.payment || '';
@@ -642,7 +663,8 @@
     // Update header to show user filter
     const headerEl = qs('#eodInlay .inlay-header strong');
     if (headerEl) {
-      headerEl.textContent = `EOD Tally - Today Only (${currentUserName || currentUserId || 'You'})`;
+      const filterText = isIndividualMode ? 'Untallied Orders' : 'Today Only';
+      headerEl.textContent = `EOD Tally - ${filterText} (${currentUserName || currentUserId || 'You'})`;
     }
     
     // Render table
@@ -2174,6 +2196,83 @@
     });
   }
 
+  // Form input references
+  const customerInput = qs('#customerName');
+  const addressInput = qs('#address');
+  const cellInput = qs('#cellNumber');
+  const notesInput = qs('#notes');
+  const checkNumberInput = qs('#checkNumber');
+  const donationOnlyCheckbox = qs('#donationOnly');
+  
+  // Donation-only mode toggle handler
+  donationOnlyCheckbox && donationOnlyCheckbox.addEventListener('change', function() {
+    const isDonationMode = this.checked;
+    
+    if (isDonationMode) {
+      // Pre-fill and lock customer fields
+      if (customerInput) {
+        customerInput.value = 'Anonymous Donation';
+        customerInput.readOnly = true;
+        customerInput.style.backgroundColor = '#f5f5f5';
+      }
+      if (addressInput) {
+        addressInput.value = 'Donation';
+        addressInput.readOnly = true;
+        addressInput.style.backgroundColor = '#f5f5f5';
+      }
+      if (cellInput) {
+        cellInput.value = '0000000000';
+        cellInput.readOnly = true;
+        cellInput.style.backgroundColor = '#f5f5f5';
+      }
+      
+      // Disable and clear all product inputs
+      document.querySelectorAll('input[data-product-id]').forEach(input => {
+        input.value = '0';
+        input.disabled = true;
+        input.style.backgroundColor = '#f5f5f5';
+        input.style.cursor = 'not-allowed';
+      });
+      
+      // Update order total
+      if (typeof computeTotal === 'function') {
+        computeTotal();
+      }
+      
+      if (window.PWALogger) {
+        window.PWALogger.log('ui', 'Donation-only mode enabled');
+      }
+    } else {
+      // Re-enable fields
+      if (customerInput) {
+        customerInput.value = '';
+        customerInput.readOnly = false;
+        customerInput.style.backgroundColor = '';
+      }
+      if (addressInput) {
+        addressInput.value = '';
+        addressInput.readOnly = false;
+        addressInput.style.backgroundColor = '';
+      }
+      if (cellInput) {
+        cellInput.value = '';
+        cellInput.readOnly = false;
+        cellInput.style.backgroundColor = '';
+      }
+      
+      // Re-enable product inputs
+      document.querySelectorAll('input[data-product-id]').forEach(input => {
+        input.disabled = false;
+        input.style.backgroundColor = '';
+        input.style.cursor = '';
+      });
+      
+      if (window.PWALogger) {
+        window.PWALogger.log('ui', 'Donation-only mode disabled');
+      }
+    }
+  });
+
   // Clear form button handler
   clearFormBtn && clearFormBtn.addEventListener('click', ()=>{
     if (confirm('Are you sure you want to clear all form fields? This cannot be undone.')) {
@@ -2212,6 +2311,11 @@
   });
 
   saveOrderBtn && saveOrderBtn.addEventListener('click', async ()=>{
+    // Prevent duplicate submissions - disable button immediately
+    if (saveOrderBtn.disabled) return;
+    saveOrderBtn.disabled = true;
+    saveOrderBtn.textContent = 'Saving...';
+    
     // Track activity
     if (window.PWASessionTracking) {
       window.PWASessionTracking.track('save_order_click');
@@ -2235,7 +2339,12 @@
     if (sessionExpired && sessionValid) {
       // Inform user that order will be saved locally only
       const proceed = confirm('Your session has expired. The order will be saved locally and synced when you log in again. Continue?');
-      if (!proceed) return;
+      if (!proceed) {
+        // Re-enable button if user cancels
+        saveOrderBtn.disabled = false;
+        saveOrderBtn.textContent = 'Save Order';
+        return;
+      }
     }
     
     // canonical customer/address values. Use a defensive getter for address because
@@ -2250,8 +2359,40 @@
     address = address + (address ? ' ' : '') + unitFloorApt;
   }
   const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
-  if (!customer || !address) return alert('Customer and address required');
-  if (!cell) return alert('Phone number is required');
+  
+  // Re-enable button before showing validation errors
+  const reEnableButton = () => {
+    saveOrderBtn.disabled = false;
+    saveOrderBtn.textContent = 'Save Order';
+  };
+  
+  if (!customer || !address) {
+    reEnableButton();
+    return alert('Customer and address required');
+  }
+  if (!cell) {
+    reEnableButton();
+    return alert('Phone number is required');
+  }
+  
+  // Validate payment method
+  const payCheckChecked = payCheck && payCheck.checked;
+  const payCashChecked = payCash && payCash.checked;
+  const chkNumber = (checkNumber && checkNumber.value) ? checkNumber.value.trim() : '';
+  
+  if (!payCheckChecked && !payCashChecked) {
+    reEnableButton();
+    return alert('Please select a payment method (Cash or Check)');
+  }
+  if (payCheckChecked && payCashChecked) {
+    reEnableButton();
+    return alert('Please select either Cash OR Check, not both');
+  }
+  if (payCheckChecked && !chkNumber) {
+    reEnableButton();
+    return alert('Check number is required when paying by check');
+  }
+  
     const notes = qs('#notes') && qs('#notes').value || '';
     // gather product quantities from rendered inputs
     const prodInputs = document.querySelectorAll('input[data-product-id]');
@@ -2265,8 +2406,7 @@
       }catch(e){}
     });
     const donation = parseFloat(qs('#donationAmount') && qs('#donationAmount').value) || 0;
-    const paymentMethod = (payCheck && payCheck.checked) ? 'check' : ((payCash && payCash.checked) ? 'cash' : '');
-    const chkNumber = (checkNumber && checkNumber.value) ? checkNumber.value.trim() : '';
+    const paymentMethod = payCheckChecked ? 'check' : 'cash';
     
     // Create price snapshot of ALL products at order creation time (for historical accuracy)
     const priceSnapshot = {};
@@ -2372,7 +2512,7 @@
       };
     }
     
-    // Handle save based on edit state
+    // Handle save based on edit state - LOCAL FIRST approach
     try{
       if (isEditing) {
         // update existing
@@ -2382,9 +2522,20 @@
           await Storage.update(order);
           renderOrders();
           syncStatus && (syncStatus.textContent='Local order updated');
-          // Show confirmation popup (don't clear form yet - OK button will do it)
+          
+          // Show confirmation popup IMMEDIATELY (don't clear form yet - OK button will do it)
           showOrderConfirmation(order, true);
-          if (navigator.onLine) trySync();
+          
+          // Re-enable button after short delay
+          setTimeout(() => {
+            saveOrderBtn.disabled = false;
+            saveOrderBtn.textContent = 'Save Order';
+          }, 2000);
+          
+          // Background sync (non-blocking)
+          if (navigator.onLine) {
+            setTimeout(() => trySync(), 100);
+          }
           return;
         } else {
           // Queue update for synced order (will be sent via PUT to server)
@@ -2393,19 +2544,31 @@
           await Storage.update(order);
           renderOrders();
           syncStatus && (syncStatus.textContent='Update queued for sync');
+          
+          // Show confirmation popup IMMEDIATELY
           showOrderConfirmation(order, true);
-          if (navigator.onLine) trySync();
+          
+          // Re-enable button after short delay
+          setTimeout(() => {
+            saveOrderBtn.disabled = false;
+            saveOrderBtn.textContent = 'Save Order';
+          }, 2000);
+          
+          // Background sync (non-blocking)
+          if (navigator.onLine) {
+            setTimeout(() => trySync(), 100);
+          }
           return;
         }
       } else {
-        // default: create new queued order
+        // LOCAL-FIRST: Save locally IMMEDIATELY, sync in background
         await Storage.add(order);
         renderOrders();
-        syncStatus && (syncStatus.textContent='Queued for sync');
+        syncStatus && (syncStatus.textContent='Saved locally, syncing...');
         
         // Log successful order save
         if (window.PWALogger) {
-          window.PWALogger.log('order', 'Order saved successfully', {
+          window.PWALogger.log('order', 'Order saved locally (local-first)', {
             order_id: order.id,
             customer: order.customer ? 'present' : 'missing',
             products_count: order.products ? order.products.length : 0,
@@ -2413,11 +2576,35 @@
           });
         }
         
-        // Show confirmation popup (don't clear form yet - OK button will do it)
+        // Show confirmation popup IMMEDIATELY (local-first UX)
         showOrderConfirmation(order, false);
-        if (navigator.onLine) trySync();
+        
+        // Re-enable button after 2 seconds to prevent rapid duplicates
+        setTimeout(() => {
+          saveOrderBtn.disabled = false;
+          saveOrderBtn.textContent = 'Save Order';
+        }, 2000);
+        
+        // Attempt background sync without blocking (truly async)
+        if (navigator.onLine) {
+          setTimeout(() => {
+            trySync().then(() => {
+              syncStatus && (syncStatus.textContent='Synced to server');
+            }).catch(() => {
+              syncStatus && (syncStatus.textContent='Saved locally, will sync later');
+            });
+          }, 100);
+        } else {
+          syncStatus && (syncStatus.textContent='Saved locally (offline)');
+        }
       }
-    }catch(e){ console.warn('order save flow error', e); }
+    }catch(e){ 
+      console.warn('order save flow error', e);
+      // Re-enable button on error
+      saveOrderBtn.disabled = false;
+      saveOrderBtn.textContent = 'Save Order';
+      alert('Error saving order: ' + (e.message || e));
+    }
   });
 
   async function trySync(){
@@ -2533,7 +2720,12 @@
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,
             createdAt: order.createdAt,
-            geo: order.geo || null
+            geo: order.geo || null,
+            // Include user/team info for leaderboards
+            entered_by_name: order.entered_by_name || '',
+            entered_by_id: order.entered_by_id || '',
+            teamName: order.teamName || '',
+            teamCode: order.teamCode || ''
           };
 
           const resp = await fetch(url, {
@@ -2969,43 +3161,119 @@
         return;
       }
       
+      // Prompt for delete reason (required by backend)
+      const deleteReason = prompt('Please enter a reason for deleting this order:');
+      if (!deleteReason || deleteReason.trim() === '') {
+        alert('Delete reason is required');
+        await logWithContext('order', 'Delete cancelled - no reason provided', { order_id: id });
+        return;
+      }
+      
       // Build headers based on login mode
       const loginMode = localStorage.getItem('loginMode') || 'legacy';
       const headers = {};
       if (loginMode === 'user') {
-        headers['X-User-ID'] = localStorage.getItem('userId') || '';
-        headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+        const userId = localStorage.getItem('userId') || '';
+        const teamId = localStorage.getItem('selectedTeamId') || '';
+        headers['X-User-ID'] = userId;
+        headers['X-Team-ID'] = teamId;
+        
+        // Log for debugging 401 errors
+        if (window.PWALogger) {
+          window.PWALogger.log('order', 'Delete request headers (user mode)', {
+            has_user_id: !!userId,
+            has_team_id: !!teamId,
+            user_id: userId,
+            team_id: teamId
+          });
+        }
       } else {
-        headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
-        headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+        const teamName = localStorage.getItem('teamName') || '';
+        const accessCode = localStorage.getItem('teamCode') || '';
+        headers['X-Team-Name'] = teamName;
+        headers['X-Access-Code'] = accessCode;
+        
+        // Log for debugging 401 errors
+        if (window.PWALogger) {
+          window.PWALogger.log('order', 'Delete request headers (legacy mode)', {
+            has_team_name: !!teamName,
+            has_access_code: !!accessCode,
+            team_name: teamName
+          });
+        }
+      }
+      
+      // Validate we have auth headers before proceeding
+      const hasAuth = (loginMode === 'user' && headers['X-User-ID'] && headers['X-Team-ID']) ||
+                      (loginMode !== 'user' && headers['X-Team-Name'] && headers['X-Access-Code']);
+      
+      if (!hasAuth) {
+        alert('Authentication error: Please log out and log back in.');
+        await logWithContext('order', 'Delete failed - no auth headers', { login_mode: loginMode });
+        return;
       }
       
       if (navigator.onLine) {
         try{ 
           const url = apiBase ? (apiBase + '/orders/' + encodeURIComponent(id)) : '/wp-json/order-manager/v1/orders/' + encodeURIComponent(id); 
-          const resp = await fetch(url, { method: 'DELETE', headers: headers }); 
+          
+          // Add timeout to prevent hanging
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+          
+          const resp = await fetch(url, { 
+            method: 'DELETE', 
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ delete_reason: deleteReason }),
+            signal: controller.signal 
+          }); 
+          
+          clearTimeout(timeoutId);
           
           if (resp.ok) { 
             await logWithContext('order', 'Remote order deleted successfully', { 
               order_id: id,
               status: resp.status 
             });
-            alert('Order deleted'); 
+            alert('Order deleted successfully'); 
+            // Refresh the orders list
+            await renderInlay();
           } else { 
+            const errorText = await resp.text().catch(() => 'Unknown error');
             await logWithContext('order', 'Remote order delete failed', { 
               order_id: id,
-              status: resp.status 
+              status: resp.status,
+              error: errorText 
             });
-            alert('Delete failed: ' + resp.status); 
+            
+            if (resp.status === 401) {
+              alert('Delete failed: Authentication error. Please log out and log back in.');
+            } else if (resp.status === 404) {
+              alert('Delete failed: Order not found on server. It may have already been deleted.');
+            } else {
+              alert('Delete failed: Server returned error ' + resp.status);
+            }
           } 
         }catch(e){ 
           if (window.PWALogger) {
             window.PWALogger.logError('order', 'Remote order delete error', { 
               order_id: id,
-              error: e.message 
+              error: e.message,
+              error_name: e.name 
             });
           }
-          alert('Delete failed: ' + e); 
+          
+          // Better error messages based on error type
+          if (e.name === 'AbortError') {
+            alert('Delete failed: Request timed out. Please check your connection and try again.');
+          } else if (e.message && e.message.includes('Failed to fetch')) {
+            alert('Delete failed: Network error. Please check your internet connection.');
+          } else {
+            alert('Delete failed: ' + (e.message || 'Unknown error'));
+          }
         }
       } else {
         const opId = await Storage.queueOperation({ type:'delete', order_id: id });

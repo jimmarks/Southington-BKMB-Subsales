@@ -58,6 +58,8 @@ class Subsales_AJAX_Handlers {
         // Orders
         add_action( 'wp_ajax_subsales_fetch_orders', array( __CLASS__, 'fetch_orders' ) );
         add_action( 'wp_ajax_subsales_get_order_by_db_id', array( __CLASS__, 'get_order_by_db_id' ) );
+        add_action( 'wp_ajax_subsales_claim_edit_lock', array( __CLASS__, 'claim_edit_lock' ) );
+        add_action( 'wp_ajax_subsales_release_edit_lock', array( __CLASS__, 'release_edit_lock' ) );
     }
 
     /**
@@ -382,6 +384,122 @@ class Subsales_AJAX_Handlers {
      */
     public static function get_order_by_db_id() {
         subsales_get_order_by_db_id_ajax();
+    }
+
+    /**
+     * Claim edit lock on an order
+     * Updates order_data with editing_by and editing_since metadata
+     */
+    public static function claim_edit_lock() {
+        check_ajax_referer( 'wp_rest', 'nonce' );
+        
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( 'Unauthorized' );
+        }
+        
+        $order_id = isset( $_POST['order_id'] ) ? intval( $_POST['order_id'] ) : 0;
+        $user_name = isset( $_POST['user'] ) ? sanitize_text_field( $_POST['user'] ) : '';
+        
+        if ( ! $order_id || ! $user_name ) {
+            wp_send_json_error( 'Missing order_id or user' );
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        // Get current order data
+        $row = $wpdb->get_row( $wpdb->prepare( "SELECT order_data FROM {$table} WHERE id = %d", $order_id ) );
+        if ( ! $row ) {
+            wp_send_json_error( 'Order not found' );
+        }
+        
+        $order_data = json_decode( $row->order_data, true );
+        if ( ! is_array( $order_data ) ) {
+            $order_data = array();
+        }
+        
+        // Update editing metadata
+        $order_data['editing_by'] = $user_name;
+        $order_data['editing_since'] = current_time( 'mysql' );
+        
+        // Save back to database
+        $updated = $wpdb->update(
+            $table,
+            array( 'order_data' => wp_json_encode( $order_data ) ),
+            array( 'id' => $order_id ),
+            array( '%s' ),
+            array( '%d' )
+        );
+        
+        if ( $updated === false ) {
+            wp_send_json_error( 'Failed to claim lock' );
+        }
+        
+        subsales_log( 'INFO', 'orders', 'Edit lock claimed', array(
+            'order_id' => $order_id,
+            'user' => $user_name
+        ) );
+        
+        wp_send_json_success( array(
+            'message' => 'Lock claimed',
+            'editing_by' => $user_name,
+            'editing_since' => $order_data['editing_since']
+        ) );
+    }
+
+    /**
+     * Release edit lock on an order
+     * Removes editing_by and editing_since metadata
+     */
+    public static function release_edit_lock() {
+        check_ajax_referer( 'wp_rest', 'nonce' );
+        
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( 'Unauthorized' );
+        }
+        
+        $order_id = isset( $_POST['order_id'] ) ? intval( $_POST['order_id'] ) : 0;
+        
+        if ( ! $order_id ) {
+            wp_send_json_error( 'Missing order_id' );
+        }
+        
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        // Get current order data
+        $row = $wpdb->get_row( $wpdb->prepare( "SELECT order_data FROM {$table} WHERE id = %d", $order_id ) );
+        if ( ! $row ) {
+            wp_send_json_error( 'Order not found' );
+        }
+        
+        $order_data = json_decode( $row->order_data, true );
+        if ( ! is_array( $order_data ) ) {
+            $order_data = array();
+        }
+        
+        // Remove editing metadata
+        unset( $order_data['editing_by'] );
+        unset( $order_data['editing_since'] );
+        
+        // Save back to database
+        $updated = $wpdb->update(
+            $table,
+            array( 'order_data' => wp_json_encode( $order_data ) ),
+            array( 'id' => $order_id ),
+            array( '%s' ),
+            array( '%d' )
+        );
+        
+        if ( $updated === false ) {
+            wp_send_json_error( 'Failed to release lock' );
+        }
+        
+        subsales_log( 'INFO', 'orders', 'Edit lock released', array(
+            'order_id' => $order_id
+        ) );
+        
+        wp_send_json_success( array( 'message' => 'Lock released' ) );
     }
 
     // NOTE: The following complex handlers delegate to standalone functions in the main file
