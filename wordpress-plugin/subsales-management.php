@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.3.6
+ * Version: 2.3.7
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -3510,7 +3510,8 @@ function order_sync_fetch_orders_ajax() {
                 $where[] = "JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.paymentMethod')) = %s";
                 $params[] = 'cash';
             } elseif ( $payment_method === 'check' ) {
-                $where[] = "(JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.paymentMethod')) = %s OR JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.checkNumber')) IS NOT NULL)";
+                // Check must have paymentMethod='check' OR a non-empty checkNumber
+                $where[] = "(JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.paymentMethod')) = %s OR (JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.checkNumber')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.checkNumber')) != ''))";
                 $params[] = 'check';
             }
         } else {
@@ -3518,9 +3519,12 @@ function order_sync_fetch_orders_ajax() {
                 $where[] = "order_data LIKE %s";
                 $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"cash"%';
             } elseif ( $payment_method === 'check' ) {
-                $where[] = "(order_data LIKE %s OR order_data LIKE %s)";
+                // For LIKE fallback, we need to ensure checkNumber has a value after the colon
+                // Match either paymentMethod:check or checkNumber with non-empty value
+                $where[] = "(order_data LIKE %s OR (order_data LIKE %s AND order_data NOT LIKE %s))";
                 $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"check"%';
                 $params[] = '%' . $wpdb->esc_like( '"checkNumber"' ) . '%';
+                $params[] = '%' . $wpdb->esc_like( '"checkNumber":""' ) . '%';
             }
         }
     }
@@ -4729,6 +4733,339 @@ function subsales_export_addresses_csv() {
         ) );
     }
     fclose( $out );
+    exit;
+}
+
+/**
+ * Build team sales report data
+ * Used by both the admin reports page and the CSV export handler.
+ * 
+ * @param string $points_mode 'dollar' or 'order'
+ * @param float $points_denomination Multiplier for points calculation
+ * @param string $points_distribution 'individual' or 'team'
+ * @param int $donation_bonus_enabled 1 or 0
+ * @param float $donation_percentage Percentage of donations to add as bonus points
+ * @param string $donation_distribution 'individual' or 'team'
+ * @return array Report data rows
+ * @since 2.2.1
+ */
+if ( ! function_exists( 'subsales_build_team_sales_report' ) ) {
+    function subsales_build_team_sales_report( 
+        $points_mode = 'dollar', 
+        $points_denomination = 1.0,
+        $points_distribution = 'individual',
+        $donation_bonus_enabled = 0,
+        $donation_percentage = 50.0,
+        $donation_distribution = 'team'
+    ) {
+        global $wpdb;
+        $orders_table = $wpdb->prefix . 'ss_orders';
+        $teams_table = $wpdb->prefix . 'ss_teams';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
+        $products_config = order_sync_get_products_config();
+        
+        // Get all non-deleted orders with necessary fields
+        $orders = $wpdb->get_results(
+            "SELECT id, order_data, created_at, team_id, user_id FROM {$orders_table} WHERE deleted = 0 ORDER BY created_at DESC",
+            ARRAY_A
+        );
+        
+        // Get all active signups with campaign dates to ensure everyone signed up gets included
+        $signups = $wpdb->get_results(
+            "SELECT s.user_id, s.team_id, 
+                    c.campaign_date as date,
+                    t.name as team_name,
+                    u.name as person_name
+             FROM {$signups_table} s
+             JOIN {$campaigns_table} c ON s.campaign_id = c.id
+             JOIN {$teams_table} t ON s.team_id = t.id
+             JOIN {$members_table} u ON s.user_id = u.id
+             WHERE s.status = 'active'
+             ORDER BY c.campaign_date, t.name, u.name",
+            ARRAY_A
+        );
+        
+        // First pass: Initialize all signed-up people with zero values
+        $aggregated_data = array();
+        $team_totals = array();
+        
+        foreach ( $signups as $signup ) {
+            $date = $signup['date'];
+            $team_name = $signup['team_name'];
+            $person_name = $signup['person_name'];
+            $key = $date . '|' . $team_name . '|' . $person_name;
+            
+            if ( ! isset( $aggregated_data[ $key ] ) ) {
+                $aggregated_data[ $key ] = array(
+                    'date' => $date,
+                    'team_name' => $team_name,
+                    'person_name' => $person_name,
+                    'product_quantity' => 0,
+                    'total_donations' => 0.0,
+                    'order_count' => 0
+                );
+            }
+            
+            $team_key = $date . '|' . $team_name;
+            if ( ! isset( $team_totals[ $team_key ] ) ) {
+                $team_totals[ $team_key ] = array(
+                    'product_quantity' => 0,
+                    'donations' => 0.0,
+                    'members' => array()
+                );
+            }
+            
+            if ( ! in_array( $person_name, $team_totals[ $team_key ]['members'] ) ) {
+                $team_totals[ $team_key ]['members'][] = $person_name;
+            }
+        }
+        
+        // Second pass: aggregate order data
+        foreach ( $orders as $order ) {
+            $order_data = json_decode( $order['order_data'], true );
+            if ( ! is_array( $order_data ) ) continue;
+            
+            $date = date( 'Y-m-d', strtotime( $order['created_at'] ) );
+            $team_id = intval( $order['team_id'] );
+            $team_name = 'Unknown Team';
+            
+            if ( $team_id === -1 ) {
+                $team_name = 'Individual';
+            } elseif ( $team_id > 0 ) {
+                $team_name_result = $wpdb->get_var( $wpdb->prepare(
+                    "SELECT name FROM {$teams_table} WHERE id = %d", $team_id
+                ) );
+                if ( $team_name_result ) $team_name = $team_name_result;
+            }
+            
+            $user_id = intval( $order['user_id'] );
+            $person_name = 'Unknown Person';
+            if ( $user_id > 0 ) {
+                $person_name_result = $wpdb->get_var( $wpdb->prepare(
+                    "SELECT name FROM {$members_table} WHERE id = %d", $user_id
+                ) );
+                if ( $person_name_result ) $person_name = $person_name_result;
+            }
+            
+            if ( $person_name === 'Unknown Person' ) {
+                if ( isset( $order_data['customerName'] ) && ! empty( $order_data['customerName'] ) ) {
+                    $person_name = $order_data['customerName'];
+                } elseif ( isset( $order_data['entered_by_name'] ) && ! empty( $order_data['entered_by_name'] ) ) {
+                    $person_name = $order_data['entered_by_name'];
+                }
+            }
+            
+            $key = $date . '|' . $team_name . '|' . $person_name;
+            
+            if ( ! isset( $aggregated_data[ $key ] ) ) {
+                $aggregated_data[ $key ] = array(
+                    'date' => $date,
+                    'team_name' => $team_name,
+                    'person_name' => $person_name,
+                    'product_quantity' => 0,
+                    'total_donations' => 0.0,
+                    'order_count' => 0,
+                    'team_id' => $team_id
+                );
+            }
+            
+            // Calculate product quantity
+            $order_product_qty = 0;
+            if ( isset( $order_data['products'] ) && is_array( $order_data['products'] ) ) {
+                foreach ( $order_data['products'] as $product ) {
+                    $qty = isset( $product['qty'] ) ? intval( $product['qty'] ) : 0;
+                    $order_product_qty += $qty;
+                }
+            } else {
+                foreach ( $products_config as $prod ) {
+                    $pid = $prod['id'];
+                    $qty = 0;
+                    if ( isset( $order_data[ $pid . 'Qty' ] ) ) {
+                        $qty = intval( $order_data[ $pid . 'Qty' ] );
+                    } elseif ( isset( $order_data[ $pid . '_qty' ] ) ) {
+                        $qty = intval( $order_data[ $pid . '_qty' ] );
+                    }
+                    $order_product_qty += $qty;
+                }
+            }
+            
+            $order_donations = isset( $order_data['donationAmount'] ) ? floatval( $order_data['donationAmount'] ) : 0.0;
+            
+            $aggregated_data[ $key ]['product_quantity'] += $order_product_qty;
+            $aggregated_data[ $key ]['total_donations'] += $order_donations;
+            $aggregated_data[ $key ]['order_count']++;
+            
+            $team_key = $date . '|' . $team_name;
+            if ( ! isset( $team_totals[ $team_key ] ) ) {
+                $team_totals[ $team_key ] = array(
+                    'product_quantity' => 0,
+                    'donations' => 0.0,
+                    'members' => array()
+                );
+            }
+            $team_totals[ $team_key ]['product_quantity'] += $order_product_qty;
+            $team_totals[ $team_key ]['donations'] += $order_donations;
+            
+            if ( ! in_array( $person_name, $team_totals[ $team_key ]['members'] ) ) {
+                $team_totals[ $team_key ]['members'][] = $person_name;
+            }
+        }
+        
+        // Third pass: calculate points
+        $report_rows = array();
+        foreach ( $aggregated_data as $row ) {
+            $date = $row['date'];
+            $team_name = $row['team_name'];
+            $person_name = $row['person_name'];
+            $team_key = $date . '|' . $team_name;
+            
+            $points = 0.0;
+            $is_individual_mode = isset( $row['team_id'] ) && $row['team_id'] === -1;
+            
+            if ( $is_individual_mode || $points_distribution === 'individual' ) {
+                $points = $row['product_quantity'] * $points_denomination;
+            } else {
+                $team_data = $team_totals[ $team_key ];
+                $member_count = count( $team_data['members'] );
+                if ( $member_count > 0 ) {
+                    $team_points = $team_data['product_quantity'] * $points_denomination;
+                    $points = $team_points / $member_count;
+                }
+            }
+            
+            $donation_bonus = 0.0;
+            if ( $donation_bonus_enabled ) {
+                if ( $is_individual_mode || $donation_distribution === 'individual' ) {
+                    $donation_bonus = $row['total_donations'] * ( $donation_percentage / 100.0 );
+                } else {
+                    $team_data = $team_totals[ $team_key ];
+                    $member_count = count( $team_data['members'] );
+                    if ( $member_count > 0 ) {
+                        $donation_bonus = ( $team_data['donations'] * ( $donation_percentage / 100.0 ) ) / $member_count;
+                    }
+                }
+            }
+            
+            $total_points = $points + $donation_bonus;
+            
+            $tooltip_parts = array();
+            if ( $is_individual_mode || $points_distribution === 'individual' ) {
+                $tooltip_parts[] = sprintf(
+                    'Product Points: %s products × %s = %s',
+                    number_format( $row['product_quantity'], 0 ),
+                    number_format( $points_denomination, 2 ),
+                    number_format( $points, 2 )
+                );
+            } else {
+                $team_data = $team_totals[ $team_key ];
+                $member_count = count( $team_data['members'] );
+                $tooltip_parts[] = sprintf(
+                    'Product Points: %s products × %s ÷ %d members = %s',
+                    number_format( $team_data['product_quantity'], 0 ),
+                    number_format( $points_denomination, 2 ),
+                    $member_count,
+                    number_format( $points, 2 )
+                );
+            }
+            
+            if ( $donation_bonus_enabled && $donation_bonus > 0 ) {
+                if ( $is_individual_mode || $donation_distribution === 'individual' ) {
+                    $tooltip_parts[] = sprintf(
+                        'Donation Bonus: $%s × %s%% = %s',
+                        number_format( $row['total_donations'], 2 ),
+                        number_format( $donation_percentage, 1 ),
+                        number_format( $donation_bonus, 2 )
+                    );
+                } else {
+                    $team_data = $team_totals[ $team_key ];
+                    $member_count = count( $team_data['members'] );
+                    $tooltip_parts[] = sprintf(
+                        'Donation Bonus: $%s × %s%% ÷ %d members = %s',
+                        number_format( $team_data['donations'], 2 ),
+                        number_format( $donation_percentage, 1 ),
+                        $member_count,
+                        number_format( $donation_bonus, 2 )
+                    );
+                }
+            }
+            
+            $tooltip_parts[] = sprintf( 'Total: %s points', number_format( $total_points, 2 ) );
+            $tooltip = implode( '\n', $tooltip_parts );
+            
+            $report_rows[] = array(
+                'date' => $row['date'],
+                'team_name' => $row['team_name'],
+                'person_name' => $row['person_name'],
+                'product_quantity' => $row['product_quantity'],
+                'total_donations' => $row['total_donations'],
+                'points' => $total_points,
+                'order_count' => $row['order_count'],
+                'points_tooltip' => $tooltip
+            );
+        }
+        
+        // Sort by date (descending), then by team name (ascending)
+        usort( $report_rows, function( $a, $b ) {
+            $date_cmp = strcmp( $b['date'], $a['date'] );
+            if ( $date_cmp !== 0 ) return $date_cmp;
+            return strcmp( $a['team_name'], $b['team_name'] );
+        } );
+        
+        return $report_rows;
+    }
+}
+
+// Export team sales report CSV
+add_action( 'admin_post_subsales_export_team_sales_report', 'subsales_export_team_sales_report_csv' );
+function subsales_export_team_sales_report_csv() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
+    check_admin_referer( 'subsales_export_report', '_wpnonce' );
+    
+    // Get points calculation settings
+    $points_mode = get_option( 'subsales_points_mode', 'dollar' );
+    $points_denomination = floatval( get_option( 'subsales_points_denomination', 1.0 ) );
+    $points_distribution = get_option( 'subsales_points_distribution', 'individual' );
+    $donation_bonus_enabled = get_option( 'subsales_donation_bonus_enabled', 0 );
+    $donation_percentage = floatval( get_option( 'subsales_donation_percentage', 50.0 ) );
+    $donation_distribution = get_option( 'subsales_donation_distribution', 'team' );
+    
+    // Build report data
+    $report_data = subsales_build_team_sales_report( 
+        $points_mode, 
+        $points_denomination, 
+        $points_distribution,
+        $donation_bonus_enabled,
+        $donation_percentage,
+        $donation_distribution
+    );
+    
+    // Generate filename with hyphenated date format: BKMBPointsReport1-26-26.csv
+    $date = date( 'n-j-y' ); // Single digit month/day, 2-digit year
+    $filename = 'BKMBPointsReport' . $date . '.csv';
+    
+    // Set headers for CSV download
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=' . $filename );
+    
+    // Open output stream
+    $output = fopen( 'php://output', 'w' );
+    
+    // Write header row
+    fputcsv( $output, array( 'Date', 'Team', 'Person', 'Points' ) );
+    
+    // Write data rows
+    foreach ( $report_data as $row ) {
+        fputcsv( $output, array(
+            $row['date'],
+            $row['team_name'],
+            $row['person_name'],
+            number_format( $row['points'], 2 )
+        ) );
+    }
+    
+    fclose( $output );
     exit;
 }
 

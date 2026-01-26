@@ -30,43 +30,7 @@ $donation_bonus_enabled = get_option( 'subsales_donation_bonus_enabled', 0 );
 $donation_percentage = floatval( get_option( 'subsales_donation_percentage', 50.0 ) );
 $donation_distribution = get_option( 'subsales_donation_distribution', 'team' );
 
-// Handle CSV export
-if ( isset( $_GET['export'] ) && $_GET['export'] === 'csv' ) {
-    check_admin_referer( 'subsales_export_report', 'nonce' );
-    
-    // Build report data
-    $report_data = subsales_build_team_sales_report( 
-        $points_mode, 
-        $points_denomination, 
-        $points_distribution,
-        $donation_bonus_enabled,
-        $donation_percentage,
-        $donation_distribution
-    );
-    
-    // Set headers for CSV download
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename=team-sales-report-' . date( 'Y-m-d' ) . '.csv' );
-    
-    // Open output stream
-    $output = fopen( 'php://output', 'w' );
-    
-    // Write header row
-    fputcsv( $output, array( 'Date', 'Team', 'Person', 'Points' ) );
-    
-    // Write data rows
-    foreach ( $report_data as $row ) {
-        fputcsv( $output, array(
-            $row['date'],
-            $row['team_name'],
-            $row['person_name'],
-            number_format( $row['points'], 2 )
-        ) );
-    }
-    
-    fclose( $output );
-    exit;
-}
+// CSV export is now handled via admin-post action (see subsales_export_team_sales_report in main file)
 
 // Build report data
 $report_data = subsales_build_team_sales_report( 
@@ -81,6 +45,9 @@ $report_data = subsales_build_team_sales_report(
 // Check if print view
 $is_print = isset( $_GET['print'] ) && $_GET['print'] === '1';
 
+// Function is defined in main plugin file (subsales-management.php)
+// Kept here with function_exists check for backwards compatibility
+if ( ! function_exists( 'subsales_build_team_sales_report' ) ) :
 /**
  * Build team sales report data
  * 
@@ -402,6 +369,7 @@ function subsales_build_team_sales_report(
     
     return $report_rows;
 }
+endif; // function_exists check
 
 ?>
 
@@ -464,7 +432,7 @@ function subsales_build_team_sales_report(
     <div class="subsales-report-actions" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccd0d4; border-radius: 4px;">
         <div style="display: flex; gap: 10px; align-items: center;">
             <strong>Export Options:</strong>
-            <a href="<?php echo wp_nonce_url( add_query_arg( array( 'page' => 'subsales-reports', 'export' => 'csv' ), admin_url( 'admin.php' ) ), 'subsales_export_report', 'nonce' ); ?>" class="button">
+            <a href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_team_sales_report&_wpnonce=' . wp_create_nonce( 'subsales_export_report' ) ) ); ?>" class="button">
                 <span class="dashicons dashicons-download" style="margin-top: 3px;"></span> Export to CSV
             </a>
             <a href="<?php echo add_query_arg( array( 'page' => 'subsales-reports', 'print' => '1' ), admin_url( 'admin.php' ) ); ?>" class="button" target="_blank">
