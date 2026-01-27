@@ -35,6 +35,17 @@ class Subsales_Teams {
         $data = $request->get_json_params();
         
         $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
+        $sales_enabled = (bool) get_option( 'subsales_sales_enabled', 1 );
+        if ( ! $sales_enabled ) {
+            Subsales_Database::log_auth( 'failed', null, '', array(
+                'mode' => $login_mode,
+                'reason' => 'sales_disabled'
+            ), 'pwa' );
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Sales are currently closed. Please check back later.'
+            ), 403 );
+        }
         
         // DEBUG log: Login attempt started
         Subsales_Database::log( 'DEBUG', 'auth', 'Login attempt started', array(
@@ -292,6 +303,13 @@ class Subsales_Teams {
      */
     public static function verify_team_access( $request ) {
         $data = $request->get_json_params();
+        $sales_enabled = (bool) get_option( 'subsales_sales_enabled', 1 );
+        if ( ! $sales_enabled ) {
+            return new WP_REST_Response( array(
+                'valid' => false,
+                'message' => 'Sales are currently closed. Please check back later.'
+            ), 403 );
+        }
         
         if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
             return new WP_REST_Response( 'Missing team name or access code', 400 );

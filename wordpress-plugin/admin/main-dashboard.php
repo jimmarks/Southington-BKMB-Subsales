@@ -279,9 +279,9 @@ $zip_array = $served_zips;
     <h1>Subsales Management</h1>
     
     <!-- Sales Mode Toggle, Today/Overall Toggle, and Active Users -->
-    <div class="subsales-mode-controls subsales-option-1" style="background: #fff; padding: 15px; border: 1px solid #ccd0d4; border-radius: 4px; margin-bottom: 20px; display: flex; align-items: center; gap: 30px; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <strong style="font-size: 14px;">Sales Mode:</strong>
+    <div class="subsales-mode-controls">
+        <div class="subsales-mode-control-item">
+            <strong>Sales Mode:</strong>
             <label class="subsales-toggle-switch">
                 <input type="checkbox" id="salesModeToggle" <?php checked( get_option( 'subsales_sales_mode', 'legacy' ), 'user' ); ?> />
                 <span class="subsales-toggle-slider"></span>
@@ -290,8 +290,8 @@ $zip_array = $served_zips;
             </label>
         </div>
         
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <strong style="font-size: 14px;">View:</strong>
+        <div class="subsales-mode-control-item">
+            <strong>View:</strong>
             <label class="subsales-toggle-switch">
                 <input type="checkbox" id="timeRangeToggle" />
                 <span class="subsales-toggle-slider subsales-time-slider"></span>
@@ -300,10 +300,10 @@ $zip_array = $served_zips;
             </label>
         </div>
         
-        <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="dashicons dashicons-admin-users" style="color: #2271b1; font-size: 16px;"></span>
-            <strong style="font-size: 14px;">Active Users:</strong>
-            <span id="activeUserCount" class="subsales-chip" style="background: #2271b1; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 13px; cursor: pointer; font-weight: 600; min-width: 24px; text-align: center;" title="Click to view app sessions">0</span>
+        <div class="subsales-mode-control-item">
+            <span class="dashicons dashicons-admin-users"></span>
+            <strong>Active Users:</strong>
+            <span id="activeUserCount" class="subsales-chip" title="Click to view app sessions">0</span>
         </div>
     </div>
     

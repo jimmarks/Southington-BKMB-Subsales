@@ -161,6 +161,15 @@ class Subsales_Orders {
 
         $data = $request->get_json_params();
         
+        $sales_enabled = (bool) get_option( 'subsales_sales_enabled', 1 );
+        if ( ! $sales_enabled ) {
+            Subsales_Database::log( 'WARNING', 'orders', 'Order creation blocked - sales disabled', array(), 'api' );
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Sales are currently closed. Please check back later.'
+            ), 403 );
+        }
+        
         // Log order creation attempt
         Subsales_Database::log( 'DEBUG', 'orders', 'Create order API called', array(
             'has_order_id' => isset( $data['order_id'] ),

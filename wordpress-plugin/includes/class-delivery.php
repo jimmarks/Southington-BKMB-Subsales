@@ -302,7 +302,8 @@ class Subsales_Delivery {
 
         // Start HTML - Note: CSS is NOT included here because this HTML fragment
         // will be wrapped by generate_combined_manifest_wrapper() which provides the CSS
-        $html = '';
+        // Wrap in <body> so wrapper regex can extract the section
+        $html = '<body>';
         
         // First Packing List (PAGE 1)
         $html .= '<div class="manifest-page packing-list">';
@@ -405,7 +406,7 @@ class Subsales_Delivery {
         $html .= '</div>';
         $html .= '</div>'; // Close page
 
-        $html .= '</body></html>';
+        $html .= '</body>';
         
         return $html;
     }

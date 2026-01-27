@@ -541,6 +541,8 @@ tr.subsales-deleted-order td:not(:last-child) {
 .subsales-modal-overlay.open {
   display: block;
 }
+
+.subsales-stats-zero-state {
   padding: 20px;
   text-align: center;
   background: #f0f6fc;
@@ -1364,26 +1366,75 @@ body.subsales-manifest-viewer .page-footer {
 }
 
 /* Toggle Switch Styles (used in dashboard and edit order form) */
+/* Mode Controls Container */
+.subsales-mode-controls {
+    background: #fff;
+    padding: 15px;
+    border: 1px solid #ccd0d4;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+.subsales-mode-control-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.subsales-mode-control-item strong {
+    font-size: 14px;
+    line-height: 1;
+    margin: 0;
+}
+
+.subsales-mode-control-item .dashicons {
+    color: #2271b1;
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+    vertical-align: middle;
+}
+
+.subsales-chip {
+    background: #2271b1;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-size: 13px;
+    cursor: pointer;
+    font-weight: 600;
+    min-width: 24px;
+    text-align: center;
+    display: inline-block;
+    line-height: 1.4;
+    vertical-align: middle;
+}
+
 .subsales-toggle-switch {
     position: relative;
-    display: inline-flex;
+    display: inline-grid;
+    grid-template-columns: 31px 59px 66px;
     align-items: center;
-    width: 140px;
-    height: 24px;
+    column-gap: 10px;
 }
 
 .subsales-toggle-switch input {
+    position: absolute;
     opacity: 0;
-    width: 0;
-    height: 0;
+    width: 1px;
+    height: 1px;
 }
 
 .subsales-toggle-switch .subsales-toggle-slider {
     position: absolute;
     cursor: pointer;
     top: 0;
-    left: 60px;
-    right: 35px;
+    left: 39px;
+    right: 80px;
     bottom: 0;
     background-color: #ddd;
     transition: .3s;
@@ -1393,14 +1444,14 @@ body.subsales-manifest-viewer .page-footer {
 .subsales-toggle-switch .subsales-toggle-slider:before {
     position: absolute;
     content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: .3s;
+    height: 22px;
+    width: 22px;
+    left: 2px;
+    top: 2px;
+    background-color: #fff;
+    transition: transform .2s ease;
     border-radius: 50%;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25);
 }
 
 .subsales-toggle-switch input:checked + .subsales-toggle-slider {
@@ -1408,34 +1459,38 @@ body.subsales-manifest-viewer .page-footer {
 }
 
 .subsales-toggle-switch input:checked + .subsales-toggle-slider:before {
-    transform: translateX(17px);
+    transform: translateX(30px);
 }
 
 .subsales-toggle-switch .subsales-toggle-label-left,
 .subsales-toggle-switch .subsales-toggle-label-right {
-    position: absolute;
-    font-size: 12px;
-    font-weight: 500;
-    z-index: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
     user-select: none;
+    line-height: 26px;
 }
 
 .subsales-toggle-switch .subsales-toggle-label-left {
-    left: 0;
-    color: #2c3338;
+    grid-column: 1;
+    text-align: right;
 }
 
 .subsales-toggle-switch .subsales-toggle-label-right {
-    right: 0;
-    color: #787c82;
+    grid-column: 3;
+    text-align: left;
 }
 
 .subsales-toggle-switch input:checked ~ .subsales-toggle-label-left {
-    color: #787c82;
+    color: #6b7280;
 }
 
 .subsales-toggle-switch input:checked ~ .subsales-toggle-label-right {
-    color: #2c3338;
+    color: #1d2327;
+}
+
+.subsales-toggle-switch input:not(:checked) ~ .subsales-toggle-label-left {
+    color: #1d2327;
 }
 
 /* Time range slider variant (blue when checked for "Overall") */

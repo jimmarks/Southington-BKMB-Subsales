@@ -39,6 +39,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
         $donation_bonus_enabled = isset( $_POST['donation_bonus_enabled'] ) ? 1 : 0;
         $donation_percentage = isset( $_POST['donation_percentage'] ) ? floatval( $_POST['donation_percentage'] ) : 50.0;
         $donation_distribution = isset( $_POST['donation_distribution'] ) ? sanitize_text_field( $_POST['donation_distribution'] ) : 'team';
+        $sales_enabled = isset( $_POST['sales_enabled'] ) ? 1 : 0;
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
@@ -53,6 +54,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
         update_option( 'subsales_donation_bonus_enabled', $donation_bonus_enabled );
         update_option( 'subsales_donation_percentage', $donation_percentage );
         update_option( 'subsales_donation_distribution', $donation_distribution );
+        update_option( 'subsales_sales_enabled', $sales_enabled );
 
         if ( $portal_slug !== $old_slug ) {
             order_sync_ensure_pwa_page( $portal_slug );
@@ -241,6 +243,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
     $pwa_icon_text_color = get_option( 'subsales_pwa_icon_text_color', '#ffffff' );
     $pwa_icon_use_primary = get_option( 'subsales_pwa_icon_use_primary', 1 );
     $pwa_icon_bg_color = get_option( 'subsales_pwa_icon_bg_color', '#2d6cdf' );
+    $sales_enabled = get_option( 'subsales_sales_enabled', 1 );
     ?>
     <div class="wrap">
         <h1>Subsales Settings</h1>
@@ -304,6 +307,16 @@ if ( ! current_user_can( 'manage_options' ) ) {
                     <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
                     <input type="hidden" name="panel" value="overall" />
                     <table class="form-table">
+                        <tr>
+                            <th scope="row">Enable Subsales</th>
+                            <td>
+                                <label style="display:flex;align-items:center;gap:10px;">
+                                    <input type="checkbox" name="sales_enabled" value="1" <?php checked( intval( $sales_enabled ), 1 ); ?> />
+                                    <span><strong>Subsales is active</strong></span>
+                                </label>
+                                <p class="description">When unchecked, the PWA will show a thank-you message and block logins and new orders.</p>
+                            </td>
+                        </tr>
                         <tr>
                             <th scope="row">Google Maps API Key</th>
                             <td>

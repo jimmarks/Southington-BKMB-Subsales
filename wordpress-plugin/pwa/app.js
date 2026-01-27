@@ -769,6 +769,10 @@
   const networkStatus = qs('#networkStatus');
   const syncStatus = qs('#syncStatus');
 
+  const salesClosedSection = qs('#salesClosedSection');
+  const salesClosedMessage = qs('#salesClosedMessage');
+  const salesClosedRetry = qs('#salesClosedRetry');
+
   // Products will be rendered dynamically from configured products (localized in cfg.products)
   const donationAmount = qs('#donationAmount');
   const orderTotalEl = qs('#orderTotal');
@@ -776,6 +780,8 @@
   const payCash = qs('#payCash');
   const checkNumberRow = qs('#checkNumberRow');
   const checkNumber = qs('#checkNumber');
+
+  let salesEnabled = true;
 
   // Products configuration: mutable cache. Prefer reading from window.SUBSALES_PWA_CONFIG at render time.
   let productsConfig = (cfg.products && Array.isArray(cfg.products)) ? cfg.products.slice() : [];
@@ -1337,12 +1343,62 @@
             try{ renderProducts(); }catch(e){}
           }
         }catch(e){}
+        if (typeof j.salesEnabled !== 'undefined') {
+          if (j.salesEnabled) {
+            hideSalesClosed();
+          } else {
+            showSalesClosed(j.salesClosedMessage || 'Sales are closed right now. Please check back later.');
+          }
+        }
         return j;
       }
       return null;
     }catch(e){ console.warn('fetchAppConfig failed', e); return null; }
   }
   // session duration will be provided by server-localized config as milliseconds (cfg.sessionDuration)
+
+  function showSalesClosed(reason){
+    salesEnabled = false;
+    const msg = reason || 'Sales are closed right now. Please check back later.';
+    if (salesClosedMessage) salesClosedMessage.textContent = msg;
+    if (loginSection) { loginSection.classList.add('hidden'); try{ loginSection.style.display='none'; }catch(e){} }
+    if (appSection) { appSection.classList.add('hidden'); try{ appSection.style.display='none'; }catch(e){} }
+    if (salesClosedSection) { salesClosedSection.classList.remove('hidden'); try{ salesClosedSection.style.display='block'; }catch(e){} }
+    try { localStorage.setItem('salesEnabled', '0'); localStorage.setItem('salesClosedMessage', msg); } catch(e){}
+  }
+
+  function hideSalesClosed(){
+    salesEnabled = true;
+    if (salesClosedSection) { salesClosedSection.classList.add('hidden'); try{ salesClosedSection.style.display='none'; }catch(e){} }
+    try { localStorage.setItem('salesEnabled', '1'); } catch(e){}
+    if (loginSection) { loginSection.classList.remove('hidden'); try{ loginSection.style.display='block'; }catch(e){} }
+  }
+
+  const cachedSalesFlag = localStorage.getItem('salesEnabled');
+  if (cachedSalesFlag === '0') {
+    showSalesClosed(localStorage.getItem('salesClosedMessage') || 'Sales are closed right now. Please check back later.');
+  }
+
+  async function refreshSalesStatus(){
+    try{
+      const url = apiBase ? (apiBase + '/config') : '/wp-json/order-manager/v1/config';
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const cfgResp = await resp.json().catch(()=>null);
+      if (!cfgResp) return;
+      if (typeof cfgResp.salesEnabled !== 'undefined') {
+        if (cfgResp.salesEnabled) {
+          hideSalesClosed();
+        } else {
+          showSalesClosed(cfgResp.salesClosedMessage || 'Sales are closed right now. Please check back later.');
+        }
+      }
+    }catch(e){ console.warn('refreshSalesStatus failed', e); }
+  }
+
+  if (salesClosedRetry) {
+    salesClosedRetry.addEventListener('click', ()=>{ refreshSalesStatus(); });
+  }
 
   // Populate a team member <select> element with members array
   function populateTeamMemberSelect(members){
@@ -1849,6 +1905,13 @@
           productsConfig.length = 0;
           j.products.forEach(p => productsConfig.push(p));
           try { renderProducts(); } catch(e){}
+        }
+        if (typeof j.salesEnabled !== 'undefined') {
+          if (j.salesEnabled) {
+            hideSalesClosed();
+          } else {
+            showSalesClosed(j.salesClosedMessage || 'Sales are closed right now. Please check back later.');
+          }
         }
         return j;
       }
