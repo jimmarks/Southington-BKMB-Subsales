@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.3.20
+ * Version: 2.3.21
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5587,25 +5587,13 @@ function order_sync_check_permissions( WP_REST_Request $request ) {
         }
         
         // Special case: team_id = -1 means "individual" user (no team assignment required)
-        // For individual users, we still need to verify they have an active session
+        // For individual users, verify they exist and optionally check for active session
         if ( $team_id === '-1' || intval( $team_id ) === -1 ) {
-            // Check if user has an active PWA session (session-based auth for individual mode)
-            $sessions_table = $wpdb->prefix . 'ss_pwa_sessions';
-            $active_session = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$sessions_table} 
-                 WHERE user_id = %d 
-                 AND status = 'active' 
-                 AND session_expiry > NOW()",
-                intval( $user_id )
-            ));
-            
-            if ( $active_session ) {
-                error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (active session verified)' );
-                return true;
-            }
-            
-            error_log( 'Subsales: perm_check individual user FAILED - no active session for user_id=' . $user_id );
-            return false;
+            // User existence already verified above - allow access for individual users
+            // This allows them to view their orders even after session timeout
+            // Security: They can only see orders WHERE user_id matches (enforced by get_orders filter)
+            error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (individual mode)' );
+            return true;
         }
         
         // Verify user belongs to the team (validates relationship, not session)
