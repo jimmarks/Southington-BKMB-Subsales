@@ -2918,7 +2918,9 @@
     }catch(e){ console.warn('fetchRemoteOrders failed', e); return []; }
   }
 
-  // Show 'My orders' — local queued and remote orders for current user, today only
+  // Show 'My orders' — local queued and remote orders for current user
+  // Individual mode: shows all untallied orders
+  // Team mode: shows today's orders only
   async function showMyOrders(){
 
     // Get current user ID (supports both user mode and legacy mode)
@@ -2980,20 +2982,29 @@
       });
     }
     
-    // Fetch and filter remote orders: current user + today only
+    // Fetch and filter remote orders
+    // Individual mode (user): show all untallied orders
+    // Team mode (legacy): show today only
     const remote = await fetchRemoteOrders(1000);
     
     // Log remote fetch results
     if (window.PWALogger) {
       window.PWALogger.log('api', 'My Orders - Remote orders fetched', {
         total_remote_orders: remote ? remote.length : 0,
-        online: navigator.onLine
+        online: navigator.onLine,
+        login_mode: loginMode
       });
     }
     
     const remoteFiltered = (remote || []).filter(r => {
-      // Check if order is from today
-      if (!isToday(r.created_at || r.createdAt)) return false;
+      // Date filter depends on login mode
+      if (loginMode === 'legacy') {
+        // Team mode: only show today's orders
+        if (!isToday(r.created_at || r.createdAt)) return false;
+      } else {
+        // Individual mode: show all untallied orders (tallied field not present or 0)
+        if (r.tallied === 1 || r.tallied === '1') return false;
+      }
       
       // Check if order belongs to current user
       // r.order_data may be present as object (server decodes) or as json string
@@ -3057,7 +3068,10 @@
          </div>` 
       : '';
 
-    modal.innerHTML = `<div class="inlay-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;"><div style="flex:1;min-width:280px;"> <h4>Local (pending sync)</h4>${localHtml}${exportButtonsHtml}</div><div style="flex:1;min-width:280px;"><h4>Remote (today only)</h4>${remoteHtml}</div></div>`;
+    // Remote orders label depends on mode
+    const remoteLabel = loginMode === 'user' ? 'Remote (untallied)' : 'Remote (today only)';
+    
+    modal.innerHTML = `<div class="inlay-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;"><div style="flex:1;min-width:280px;"> <h4>Local (pending sync)</h4>${localHtml}${exportButtonsHtml}</div><div style="flex:1;min-width:280px;"><h4>${remoteLabel}</h4>${remoteHtml}</div></div>`;
     const closeBtn = qs('#closeMyOrdersBtn'); 
     if (closeBtn) closeBtn.addEventListener('click', ()=>{ 
       modal.classList.add('hidden'); 
