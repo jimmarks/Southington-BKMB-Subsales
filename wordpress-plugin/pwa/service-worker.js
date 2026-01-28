@@ -1,5 +1,5 @@
 // Subsales PWA service worker with offline-first support
-const CACHE_NAME = 'subsales-pwa-v2026-01-28-untallied-fix';
+const CACHE_NAME = 'subsales-pwa-v2026-01-28-teamid-fix';
 // Resolve asset URLs relative to the service worker's scope so the SW works when the plugin
 // is served from a nested path (e.g. /subsales-portal/). We build absolute URLs at runtime.
 const ASSETS = [

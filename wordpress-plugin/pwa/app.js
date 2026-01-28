@@ -2933,17 +2933,22 @@
       });
     }
     
-    let currentUserId, currentUserName;
+    let currentUserId, currentUserName, currentTeamId;
     
     if (loginMode === 'user') {
       // User mode: use userId from localStorage
       currentUserId = localStorage.getItem('userId') || '';
       currentUserName = localStorage.getItem('userName') || '';
+      currentTeamId = localStorage.getItem('selectedTeamId') || '';
     } else {
       // Legacy mode: use teamMemberId
       currentUserId = localStorage.getItem('teamMemberId') || '';
       currentUserName = localStorage.getItem('teamMemberName') || '';
+      currentTeamId = localStorage.getItem('teamId') || '';
     }
+    
+    // Check if we're in individual mode (team_id = -1)
+    const isIndividualMode = (currentTeamId === '-1' || currentTeamId === -1);
 
 
     // Helper function to check if order is from today
@@ -2997,13 +3002,15 @@
     }
     
     const remoteFiltered = (remote || []).filter(r => {
-      // Date filter depends on login mode
-      if (loginMode === 'legacy') {
-        // Team mode: only show today's orders
-        if (!isToday(r.created_at || r.createdAt)) return false;
-      } else {
+      // Date/tally filtering depends on mode:
+      // Individual mode (team -1): Show all untallied orders regardless of date
+      // Team mode: Show only today's orders
+      if (isIndividualMode) {
         // Individual mode: show all untallied orders (tallied field not present or 0)
         if (r.tallied === 1 || r.tallied === '1') return false;
+      } else {
+        // Team mode: only show today's orders
+        if (!isToday(r.created_at || r.createdAt)) return false;
       }
       
       // Check if order belongs to current user
@@ -3069,7 +3076,7 @@
       : '';
 
     // Remote orders label depends on mode
-    const remoteLabel = loginMode === 'user' ? 'Remote (untallied)' : 'Remote (today only)';
+    const remoteLabel = isIndividualMode ? 'Remote (untallied)' : 'Remote (today only)';
     
     modal.innerHTML = `<div class="inlay-header"><strong>My Orders (${currentUserName||currentUserId||'You'})</strong><button id="closeMyOrdersBtn" class="sm-btn">Close</button></div><div style="display:flex;gap:12px;flex-wrap:wrap;padding:12px;"><div style="flex:1;min-width:280px;"> <h4>Local (pending sync)</h4>${localHtml}${exportButtonsHtml}</div><div style="flex:1;min-width:280px;"><h4>${remoteLabel}</h4>${remoteHtml}</div></div>`;
     const closeBtn = qs('#closeMyOrdersBtn'); 
