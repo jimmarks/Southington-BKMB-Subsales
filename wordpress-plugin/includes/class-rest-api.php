@@ -30,52 +30,52 @@ class Subsales_REST_API {
         register_rest_route( 'order-manager/v1', '/orders', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Orders', 'get_orders' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
 
         register_rest_route( 'order-manager/v1', '/orders', array(
             'methods' => 'POST',
             'callback' => array( 'Subsales_Orders', 'create_order' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Orders', 'get_order_by_id' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'PUT',
             'callback' => array( 'Subsales_Orders', 'update_order' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
 
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>[a-zA-Z0-9-]+)', array(
             'methods' => 'DELETE',
             'callback' => array( 'Subsales_Orders', 'delete_order' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         // Order History API
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/history', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Orders', 'get_order_history' ),
-            'permission_callback' => 'order_sync_check_admin_permissions',
+            'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
         ));
         
         // Order Restore API
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/restore', array(
             'methods' => 'POST',
             'callback' => array( 'Subsales_Orders', 'restore_order' ),
-            'permission_callback' => 'order_sync_check_admin_permissions',
+            'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
         ));
         
         // Order Tally API
         register_rest_route( 'order-manager/v1', '/orders/tally', array(
             'methods' => 'POST',
             'callback' => array( 'Subsales_Orders', 'tally_orders' ),
-            'permission_callback' => 'order_sync_check_admin_permissions',
+            'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
         ));
         
         // Authentication API
@@ -136,63 +136,63 @@ class Subsales_REST_API {
         register_rest_route( 'order-manager/v1', '/teams/members', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Teams', 'get_team_members_endpoint' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         // User Management API
         register_rest_route( 'order-manager/v1', '/users', array(
             'methods' => 'POST',
             'callback' => array( 'Subsales_Teams', 'create_user' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/users', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Teams', 'get_users' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Teams', 'get_user_by_id' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'PUT',
             'callback' => array( 'Subsales_Teams', 'update_user' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)', array(
             'methods' => 'DELETE',
             'callback' => array( 'Subsales_Teams', 'delete_user' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         // Team Assignment API
         register_rest_route( 'order-manager/v1', '/users/(?P<id>\d+)/teams', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Teams', 'get_user_teams' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/assign', array(
             'methods' => 'POST',
             'callback' => array( 'Subsales_Teams', 'assign_user_to_team' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users/(?P<userId>\d+)', array(
             'methods' => 'DELETE',
             'callback' => array( 'Subsales_Teams', 'remove_user_from_team' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         register_rest_route( 'order-manager/v1', '/teams/(?P<id>\d+)/users', array(
             'methods' => 'GET',
             'callback' => array( 'Subsales_Teams', 'get_team_users' ),
-            'permission_callback' => 'order_sync_check_permissions',
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
         
         // PWA Session Tracking API
@@ -489,5 +489,159 @@ class Subsales_REST_API {
             'success' => true,
             'message' => 'Log recorded'
         ) );
+    }
+    
+    /**
+     * Check permissions for REST API requests
+     * Supports multiple authentication methods:
+     * - Team credentials (X-Team-Name + X-Access-Code)
+     * - User credentials (X-User-ID + X-Team-ID)
+     * - Legacy team member (X-Team-Email + X-Team-ID)
+     * - WordPress admin user
+     *
+     * @param WP_REST_Request $request REST request object
+     * @return bool True if authenticated, false otherwise
+     */
+    public static function check_permissions( $request ) {
+        global $wpdb;
+        
+        // Enhanced debug logging
+        $all_headers = array();
+        foreach ( $_SERVER as $key => $value ) {
+            if ( strpos( $key, 'HTTP_X_' ) === 0 ) {
+                $header_name = str_replace( 'HTTP_X_', 'X-', $key );
+                $header_name = str_replace( '_', '-', $header_name );
+                $all_headers[ $header_name ] = $value;
+            }
+        }
+        error_log( 'Subsales: perm_check called for route: ' . $request->get_route() . ' | Headers: ' . wp_json_encode( $all_headers ) );
+        
+        if ( strpos( $request->get_route(), '/config' ) !== false ) {
+            $team_name = $request->get_header( 'X-Team-Name' );
+            $access_code = $request->get_header( 'X-Access-Code' );
+            
+            if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
+                $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+                if ( $team ) {
+                    return true;
+                }
+            }
+        }
+        
+        // Legacy auth: X-Team-Name + X-Access-Code
+        $team_name = $request->get_header( 'X-Team-Name' );
+        $access_code = $request->get_header( 'X-Access-Code' );
+        
+        // Fallback: check $_SERVER directly in case headers aren't coming through properly
+        if ( empty( $team_name ) && isset( $_SERVER['HTTP_X_TEAM_NAME'] ) ) {
+            $team_name = sanitize_text_field( $_SERVER['HTTP_X_TEAM_NAME'] );
+        }
+        if ( empty( $access_code ) && isset( $_SERVER['HTTP_X_ACCESS_CODE'] ) ) {
+            $access_code = sanitize_text_field( $_SERVER['HTTP_X_ACCESS_CODE'] );
+        }
+        
+        if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
+            $team = order_sync_get_team_by_credentials( $team_name, $access_code );
+            if ( $team ) {
+                error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+                return true;
+            }
+            error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ', code=' . ( $access_code ? 'present' : 'missing' ) . ')' );
+            return false;
+        }
+        
+        // User-based auth: X-User-ID + X-Team-ID (Phase 4)
+        // NOTE: This validates user/team relationship WITHOUT requiring an active session
+        // This allows offline orders to sync even after logout, using embedded credentials
+        $user_id = $request->get_header( 'X-User-ID' );
+        $team_id = $request->get_header( 'X-Team-ID' );
+        
+        // Fallback: check $_SERVER directly in case headers aren't coming through properly
+        if ( empty( $user_id ) && isset( $_SERVER['HTTP_X_USER_ID'] ) ) {
+            $user_id = sanitize_text_field( $_SERVER['HTTP_X_USER_ID'] );
+        }
+        if ( empty( $team_id ) && isset( $_SERVER['HTTP_X_TEAM_ID'] ) ) {
+            $team_id = sanitize_text_field( $_SERVER['HTTP_X_TEAM_ID'] );
+        }
+        
+        if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
+            $members_table = $wpdb->prefix . 'ss_team_members';
+            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+            
+            // Verify user exists
+            $user = $wpdb->get_row( $wpdb->prepare(
+                "SELECT * FROM {$members_table} WHERE id = %d",
+                intval( $user_id )
+            ), ARRAY_A );
+            
+            if ( ! $user ) {
+                error_log( 'Subsales: perm_check invalid user_id=' . $user_id );
+                return false;
+            }
+            
+            // Special case: team_id = -1 means "individual" user (no team assignment required)
+            // For individual users, verify they exist and optionally check for active session
+            if ( $team_id === '-1' || intval( $team_id ) === -1 ) {
+                // User existence already verified above - allow access for individual users
+                // This allows them to view their orders even after session timeout
+                // Security: They can only see orders WHERE user_id matches (enforced by get_orders filter)
+                error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (individual mode)' );
+                return true;
+            }
+            
+            // Verify user belongs to the team (validates relationship, not session)
+            // This allows post-logout sync using order's embedded credentials
+            $assignment = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+                intval( $user_id ),
+                intval( $team_id )
+            ));
+            
+            if ( $assignment ) {
+                error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id . ' (session-independent)' );
+                return true;
+            }
+            
+            error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
+            return false;
+        }
+        
+        // Legacy: X-Team-Email + X-Team-ID
+        $team_email = $request->get_header( 'X-Team-Email' );
+        $team_id = $request->get_header( 'X-Team-ID' );
+        
+        if ( ! empty( $team_email ) && ! empty( $team_id ) ) {
+            $member = order_sync_verify_team_member( $team_email, $team_id );
+            if ( $member ) {
+                error_log( 'Subsales: perm_check team member ok id=' . ( isset($member['id']) ? $member['id'] : 'unknown' ) );
+                return true;
+            }
+        }
+        
+        error_log( 'Subsales: perm_check FAILED - no valid auth headers, falling back to WP user check' );
+        return current_user_can( 'edit_posts' );
+    }
+    
+    /**
+     * Admin-only permission callback for sensitive operations
+     * 
+     * @param WP_REST_Request $request REST request object
+     * @return bool True if admin authenticated, false otherwise
+     */
+    public static function check_admin_permissions( $request ) {
+        // Check if user is logged into WordPress admin with edit permissions
+        if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+            return true;
+        }
+        
+        // Optionally support API key authentication for admin operations
+        $api_key = $request->get_header( 'X-API-Key' );
+        $stored_key = get_option( 'order_sync_api_key', '' );
+        
+        if ( ! empty( $api_key ) && ! empty( $stored_key ) && hash_equals( $stored_key, $api_key ) ) {
+            return true;
+        }
+        
+        return false;
     }
 }

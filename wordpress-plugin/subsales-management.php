@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.3.21
+ * Version: 2.3.22
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -5509,142 +5509,24 @@ function order_sync_test_maps_key_ajax() {
     wp_send_json_error( array( 'status' => $status, 'message' => $message, 'raw' => $json ) );
 }
 // Permission callback
+/**
+ * Backward compatibility wrapper for permission check
+ * Delegates to Subsales_REST_API::check_permissions()
+ * 
+ * @deprecated Use Subsales_REST_API::check_permissions() instead
+ */
 function order_sync_check_permissions( WP_REST_Request $request ) {
-    global $wpdb;
-    
-    // Enhanced debug logging
-    $all_headers = array();
-    foreach ( $_SERVER as $key => $value ) {
-        if ( strpos( $key, 'HTTP_X_' ) === 0 ) {
-            $header_name = str_replace( 'HTTP_X_', 'X-', $key );
-            $header_name = str_replace( '_', '-', $header_name );
-            $all_headers[ $header_name ] = $value;
-        }
-    }
-    error_log( 'Subsales: perm_check called for route: ' . $request->get_route() . ' | Headers: ' . wp_json_encode( $all_headers ) );
-    
-    if ( strpos( $request->get_route(), '/config' ) !== false ) {
-        $team_name = $request->get_header( 'X-Team-Name' );
-        $access_code = $request->get_header( 'X-Access-Code' );
-        
-        if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-            $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-            if ( $team ) {
-                return true;
-            }
-        }
-    }
-    
-    // Legacy auth: X-Team-Name + X-Access-Code
-    $team_name = $request->get_header( 'X-Team-Name' );
-    $access_code = $request->get_header( 'X-Access-Code' );
-    
-    // Fallback: check $_SERVER directly in case headers aren't coming through properly
-    if ( empty( $team_name ) && isset( $_SERVER['HTTP_X_TEAM_NAME'] ) ) {
-        $team_name = sanitize_text_field( $_SERVER['HTTP_X_TEAM_NAME'] );
-    }
-    if ( empty( $access_code ) && isset( $_SERVER['HTTP_X_ACCESS_CODE'] ) ) {
-        $access_code = sanitize_text_field( $_SERVER['HTTP_X_ACCESS_CODE'] );
-    }
-    
-    if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
-        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-        if ( $team ) {
-            error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
-            return true;
-        }
-        error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ', code=' . ( $access_code ? 'present' : 'missing' ) . ')' );
-        return false;
-    }
-    
-    // User-based auth: X-User-ID + X-Team-ID (Phase 4)
-    // NOTE: This validates user/team relationship WITHOUT requiring an active session
-    // This allows offline orders to sync even after logout, using embedded credentials
-    $user_id = $request->get_header( 'X-User-ID' );
-    $team_id = $request->get_header( 'X-Team-ID' );
-    
-    // Fallback: check $_SERVER directly in case headers aren't coming through properly
-    if ( empty( $user_id ) && isset( $_SERVER['HTTP_X_USER_ID'] ) ) {
-        $user_id = sanitize_text_field( $_SERVER['HTTP_X_USER_ID'] );
-    }
-    if ( empty( $team_id ) && isset( $_SERVER['HTTP_X_TEAM_ID'] ) ) {
-        $team_id = sanitize_text_field( $_SERVER['HTTP_X_TEAM_ID'] );
-    }
-    
-    if ( ! empty( $user_id ) && ! empty( $team_id ) ) {
-        $members_table = $wpdb->prefix . 'ss_team_members';
-        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-        
-        // Verify user exists
-        $user = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM {$members_table} WHERE id = %d",
-            intval( $user_id )
-        ), ARRAY_A );
-        
-        if ( ! $user ) {
-            error_log( 'Subsales: perm_check invalid user_id=' . $user_id );
-            return false;
-        }
-        
-        // Special case: team_id = -1 means "individual" user (no team assignment required)
-        // For individual users, verify they exist and optionally check for active session
-        if ( $team_id === '-1' || intval( $team_id ) === -1 ) {
-            // User existence already verified above - allow access for individual users
-            // This allows them to view their orders even after session timeout
-            // Security: They can only see orders WHERE user_id matches (enforced by get_orders filter)
-            error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (individual mode)' );
-            return true;
-        }
-        
-        // Verify user belongs to the team (validates relationship, not session)
-        // This allows post-logout sync using order's embedded credentials
-        $assignment = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-            intval( $user_id ),
-            intval( $team_id )
-        ));
-        
-        if ( $assignment ) {
-            error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id . ' (session-independent)' );
-            return true;
-        }
-        
-        error_log( 'Subsales: perm_check user not in team user_id=' . $user_id . ' team_id=' . $team_id );
-        return false;
-    }
-    
-    // Legacy: X-Team-Email + X-Team-ID
-    $team_email = $request->get_header( 'X-Team-Email' );
-    $team_id = $request->get_header( 'X-Team-ID' );
-    
-    if ( ! empty( $team_email ) && ! empty( $team_id ) ) {
-        $member = order_sync_verify_team_member( $team_email, $team_id );
-        if ( $member ) {
-            error_log( 'Subsales: perm_check team member ok id=' . ( isset($member['id']) ? $member['id'] : 'unknown' ) );
-            return true;
-        }
-    }
-    
-    error_log( 'Subsales: perm_check FAILED - no valid auth headers, falling back to WP user check' );
-    return current_user_can( 'edit_posts' );
+    return Subsales_REST_API::check_permissions( $request );
 }
 
-// Admin-only permission callback for sensitive operations (edit, delete, restore, history)
+/**
+ * Backward compatibility wrapper for admin permission check
+ * Delegates to Subsales_REST_API::check_admin_permissions()
+ * 
+ * @deprecated Use Subsales_REST_API::check_admin_permissions() instead
+ */
 function order_sync_check_admin_permissions( WP_REST_Request $request ) {
-    // Check if user is logged into WordPress admin with edit permissions
-    if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
-        return true;
-    }
-    
-    // Optionally support API key authentication for admin operations
-    $api_key = $request->get_header( 'X-API-Key' );
-    $stored_key = get_option( 'order_sync_api_key', '' );
-    
-    if ( ! empty( $api_key ) && ! empty( $stored_key ) && hash_equals( $stored_key, $api_key ) ) {
-        return true;
-    }
-    
-    return false;
+    return Subsales_REST_API::check_admin_permissions( $request );
 }
 
 // Orders REST callbacks (get_orders, get_order_by_id, create_order, update_order, delete_order)
