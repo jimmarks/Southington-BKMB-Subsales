@@ -5,6 +5,194 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.106] - 2026-02-10
+
+### Import/Restore - Enhanced Progress Diagnostics
+
+#### Added
+- **Early acknowledgment message** - "Server received file, initializing..." (21%) sent BEFORE streaming setup
+  - Helps diagnose if gaps are in network/buffering vs actual processing
+  - Appears immediately after upload completes
+- **File size display** - Shows backup file size in MB: "Starting restore (2.45 MB backup file)"
+- **ZIP extraction progress**:
+  - "Extracting backup archive (N files)..." when extraction starts (39%)  
+  - "Extracted N files from archive" when extraction completes (39%)
+  - Shows exactly what's happening during the 2-minute gap
+- **Additional buffer control headers**:
+  - `Cache-Control: no-cache` to prevent caching layers
+  - Loops through all output buffer levels to ensure clean state
+  - `apache_setenv('no-gzip', '1')` to disable compression
+
+#### Changed
+- Progress callback now handles special messages with `$stats['message']` parameter
+- "Processing backup file..." moved earlier (38%) before extraction begins  
+- Moved from "Starting restore operation" (25%) to "Starting restore (X MB backup file)" (23%)
+
+#### Technical Details
+**What the gap reveals:**
+- **3:26:16**: Upload completes (client knows)
+- **3:26:17** (expected): "Server received file, initializing..." (if server responsive)
+- **3:26:18** (expected): "Starting restore (2.45 MB backup file)"  
+- **3:26:19** (expected): "Preparing to extract backup file..."
+- **3:26:20** (expected): "Extracting backup archive (145 files)..."
+- **3:26:XX-3:28:YY**: [ZIP EXTRACTION HAPPENING - ~2 minutes for large backups]
+- **3:28:33**: "Extracted 145 files from archive"
+- **3:28:34+**: Clear operations, then table-by-table imports
+
+**Purpose**: These diagnostic messages will show exactly where time is spent:
+- If "Server received file" appears immediately → Server is responsive, gap is in extraction
+- If "Server received file" is delayed → Network/web server buffering issue
+- If "Extracting..." to "Extracted" is 2 minutes → ZIP file size/corruption is the bottleneck
+
+## [2.4.105] - 2026-02-10
+
+### Import/Restore - Real-Time Streaming Progress
+
+#### Changed
+- **PHP Backend (`includes/class-backup-restore.php`)**:
+  - Modified `handle_ajax_import()` to stream progress updates in real-time
+  - Enable output buffering control to flush incremental updates
+  - Added `$progress_callback` parameter to `import_file()`
+  - Calls callback after each table completes with stats (imported/updated counts)
+  - Streams progress as newline-delimited JSON (type: 'progress' or 'complete')
+  - Shows real progress percentages: Upload (0-20%), Clear (25-35%), Tables (40-95%), Complete (100%)
+
+- **JavaScript Frontend (`assets/js/subsales-import-modal.js`)**:
+  - Removed fake progress animation (20%→90% in 1-second increments)
+  - Added `progress` event listener to process streaming response line-by-line
+  - Parses newline-delimited JSON chunks as they arrive from server
+  - Updates progress bar with real percentages based on completed tables
+  - Shows table-by-table completion: "Addresses: 18,194 imported, 0 updated"
+  - Displays clear stages: "Clearing all data...", "Clearing complete"
+  - No more 2-minute silent gaps - updates appear as each table processes
+
+#### Fixed
+- Import progress now shows actual completion per table instead of fake animation
+- User sees which table is being processed in real-time
+- Progress bar increments accurately based on completed work (not time)
+- Clear operations show before/during/after stages
+- Each table completion (e.g., "Orders: 3,456 imported") appears immediately
+
+#### Technical Details
+- Streaming protocol: Server sends JSON lines with `type: 'progress'` (updates) or `type: 'complete'` (final)
+- Progress calculation: 40% base + (table_count × 5%) per table, capped at 95%
+- Upload phase shows transfer progress (0-20%)
+- Clear phase shows warning messages (20-35% if restore mode)
+- Import phase shows per-table results (40-95%)
+- Completion shows final summary with error grouping (100%)
+
+## [2.4.81] - 2026-02-10
+
+### Major Code Refactoring - Backup/Restore System
+
+#### Added
+- **New Class**: `Subsales_Backup_Restore` (`includes/class-backup-restore.php`)
+  - ~1,100 lines extracted from main plugin file
+  - Handles all export, import, and restore operations
+  - Complete rewrite of import processor with filename-based detection
+  - Supports ALL 12 database tables (was only 5 tables before)
+  - Exports complete schema (orders: 21 cols, addresses: 16 cols, all other tables)
+  - Auto-geocodes addresses during import if coordinates missing
+  - Per-table import statistics in confirmation messages
+
+#### Changed
+- **Export System** - Complete overhaul:
+  - Now exports 12 tables: orders, teams, members, user_teams, addresses, edit_history, logs, pwa_sessions, pwa_heartbeats, campaigns, signups, team_campaigns
+  - Was: 5 tables (orders 8 cols, teams 4 cols, members 6 cols, addresses 9 cols, settings 12 opts)
+  - Now: All tables with complete column sets + 16 settings options
+  - Adds `BACKUP_INFO.json` metadata file with record counts
+  - Better logging throughout export process
+
+- **Import System** - Complete rewrite:
+  - Changed from fragile column-name detection to robust filename-based routing
+  - Each table type has dedicated import handler
+  - Generic table import method reduces code duplication
+  - Special handlers for:
+    * Addresses (with auto-geocoding)
+    * User-teams junction table (compound keys)
+    * Signups (compound keys)
+    * Team campaigns (compound keys)
+  - Comprehensive error handling and logging
+  - Returns per-table statistics (imported, updated, skipped)
+
+- **Confirmation Messages** - Enhanced formatting:
+  - HTML formatted with per-table breakdowns
+  - Shows exactly which tables were processed
+  - Displays geocoding and ZIP correction counts
+  - Red error highlighting for issues
+
+#### Technical Details
+- **Architecture**: Follows modular pattern (like class-database.php, class-rest-api.php)
+- **Admin Hooks**: All `admin_post_` handlers registered in class init
+- **Backward Compatible**: Existing settings UI unchanged - just better backend
+- **Code Reduction**: Main plugin file reduced by ~600 lines (14,735 → 14,135)
+- **Maintainability**: Export/import logic now isolated and testable
+
+#### Developer Notes
+See `BACKUP_RESTORE_SPEC.md` for complete technical specification including:
+- All table schemas (12 tables documented)
+- Export structure and file format
+- Import modes (merge vs restore)
+- Detection strategy
+- Testing checklist
+
+## [2.4.39] - 2026-02-05
+
+### Reports Menu Structure Correction
+
+#### Changed
+- **Reports Menu** - Now shows single menu item (no submenus):
+  - Reports page displays clickable cards for each report
+  - Individual report pages hidden from menu but accessible via links
+  - Cleaner navigation without cluttered submenu items
+- **Report Renaming**:
+  - "Team Sales Report" → "Points Report" (better reflects actual purpose)
+  - All page titles and references updated
+
+## [2.4.36] - 2026-02-05
+
+### Address Matching Improvements
+
+#### Fixed
+- **International Country Code Support** - Parser now recognizes:
+  - "EE. UU." (Spanish for USA)
+  - "Stati Uniti" (Italian for USA)
+  - Previous versions only removed "USA", "US", "United States" causing parse failures for international-formatted addresses
+- **Trailing Junk Data Cleanup** - Removes spurious data after main address:
+  - Duplicate house numbers at end (e.g., "231 Debbie Dr... 231")
+  - Random words (e.g., "Southington none", "Plantsville early")
+  - Extra unit descriptors and formatting issues
+- **Street Type Normalization Bug** - Fixed regex grouping in alternation patterns
+  - Previous: `/\bSTREET|ST\.?\b$/` (incorrect boundary grouping)
+  - Now: `/\b(STREET|ST\.?)\b$/` (proper alternation grouping)
+  - Ensures consistent normalization of "Street" → "ST", "Drive" → "DR", etc.
+
+#### Added
+- **ZIP Code Fallback Matching** - Address Coverage Report now:
+  - First attempts exact match with ZIP code
+  - Falls back to matching without ZIP if first attempt fails
+  - Catches cases where order has wrong ZIP but address is valid
+  - Logs "MATCHED WITHOUT ZIP" for debugging wrong ZIP codes
+
+#### Changed
+- **City Extraction** - Strips trailing junk words from city names (none, early, unit, apt, #, numbers)
+- **Street Name Cleanup** - Removes duplicate house numbers and trailing periods from street names
+
+## [2.4.35] - 2026-02-05
+
+### Reports Menu Reorganization
+
+#### Changed
+- **Hierarchical Reports Menu** - Reports now shows landing page with report cards:
+  - Reports → Landing page with report cards
+  - ├─ Team Sales → Original sales by team report
+  - ├─ Address Coverage → Address matching diagnostics
+  - Visual card-based interface for better navigation
+
+#### Added
+- New `admin/reports-index.php` - Reports landing page with card layout
+- Split `render_reports_page()` and `render_team_sales_report()` functions in `class-admin-pages.php`
+
 ## [2.0.0.27] - 2024-12-03
 
 ### Address Management Consolidation & Auto-Resumable Matching

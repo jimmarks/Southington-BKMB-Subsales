@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.3.22
+ * Version: 2.4.114
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.2.1.162' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.4.104' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -60,6 +60,10 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-census-boundaries.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-delivery.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-backup-restore.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-address-helper.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-order-helper.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -1134,6 +1138,7 @@ function order_sync_admin_menu() {
         array( 'Subsales_Admin_Pages', 'render_orders_page' )
     );
     
+    // Reports - Index page listing all reports
     add_submenu_page(
         'subsales-management',
         'Reports',
@@ -1141,6 +1146,56 @@ function order_sync_admin_menu() {
         'manage_options',
         'subsales-reports',
         array( 'Subsales_Admin_Pages', 'render_reports_page' )
+    );
+    
+    // Points Report - Hidden page (accessed via Reports index)
+    add_submenu_page(
+        null,
+        'Points Report',
+        'Points Report',
+        'manage_options',
+        'subsales-team-sales-report',
+        array( 'Subsales_Admin_Pages', 'render_team_sales_report' )
+    );
+    
+    // Address Coverage Report - Hidden page (accessed via Reports index)
+    add_submenu_page(
+        null,
+        'Address Coverage Report',
+        'Address Coverage Report',
+        'manage_options',
+        'subsales-address-coverage',
+        'subsales_address_coverage_page'
+    );
+    
+    // Address Validation Report - Hidden page (accessed via Dashboard card and Reports index)
+    add_submenu_page(
+        null,
+        'Address Validation',
+        'Address Validation',
+        'manage_options',
+        'subsales-address-validation',
+        'subsales_address_validation_page'
+    );
+    
+    // GPS Proximity Search - Hidden page (accessed via Reports index)
+    add_submenu_page(
+        null,
+        'GPS Proximity Search',
+        'GPS Proximity Search',
+        'manage_options',
+        'subsales-gps-proximity',
+        'subsales_gps_proximity_page'
+    );
+    
+    // Order Entry Distance - Hidden page (accessed via Reports index)
+    add_submenu_page(
+        null,
+        'Order Entry Distance Analysis',
+        'Order Entry Distance',
+        'manage_options',
+        'subsales-order-entry-distance',
+        'subsales_order_entry_distance_page'
     );
 
     add_submenu_page(
@@ -1178,6 +1233,16 @@ function order_sync_admin_menu() {
         'manage_options',
         'subsales-logs',
         'subsales_logs_page'
+    );
+    
+    // Hidden submenu: Delivery distribution breakdown (accessed from delivery page)
+    add_submenu_page(
+        null,  // No parent - hidden from menu
+        'Delivery Distribution Breakdown',
+        'Distribution Breakdown',
+        'manage_options',
+        'subsales-delivery-breakdown',
+        'subsales_delivery_breakdown_page'
     );
     
     // Get active PWA sessions count for menu badge
@@ -3231,6 +3296,13 @@ function order_sync_admin_assets( $hook ) {
     wp_enqueue_media();
     wp_enqueue_script( 'subsales-admin-header', SUBSALES_PLUGIN_URL . 'assets/js/admin-header-image.js', array( 'jquery' ), SUBSALES_VERSION, true );
     
+    // Import modal script for Backup/Restore tab
+    wp_enqueue_script( 'subsales-import-modal', SUBSALES_PLUGIN_URL . 'assets/js/subsales-import-modal.js', array( 'jquery' ), SUBSALES_VERSION, true );
+    wp_localize_script( 'subsales-import-modal', 'subsalesImportData', array(
+        'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+        'nonce' => wp_create_nonce( 'subsales_import_ajax' ),
+    ) );
+    
     // ZIP admin JS for Address Extracts tab
     wp_enqueue_script( 'subsales-zip-admin', SUBSALES_PLUGIN_URL . 'assets/js/subsales-zip-admin.js', array( 'jquery' ), SUBSALES_VERSION, true );
     wp_localize_script( 'subsales-zip-admin', 'SubsalesZipAdmin', array(
@@ -3883,9 +3955,9 @@ function order_sync_handle_generate_admin_csv() {
     if ( ! empty( $delivery_date ) ) {
         $start_dt = $delivery_date . ' 00:00:00';
         $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
     } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     }
 
     $configured_products = order_sync_get_products_config();
@@ -3928,7 +4000,12 @@ function order_sync_handle_generate_admin_csv() {
         $addr_norm = order_sync_normalize_address( $address_raw );
         if ( empty( $addr_norm ) ) continue;
 
-        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        // Get seller name - if not in order data, look up by user_id
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : '' ) );
+        if ( empty( $seller ) && ! empty( $r['user_id'] ) ) {
+            $member = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", intval( $r['user_id'] ) ) );
+            $seller = $member ? $member->name : 'Unknown (ID: ' . $r['user_id'] . ')';
+        }
         $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
         $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
 
@@ -3983,9 +4060,9 @@ function order_sync_handle_generate_delivery_xlsx() {
     if ( ! empty( $delivery_date ) ) {
         $start_dt = $delivery_date . ' 00:00:00';
         $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
     } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     }
 
     $configured_products = order_sync_get_products_config();
@@ -4032,7 +4109,12 @@ function order_sync_handle_generate_delivery_xlsx() {
             $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", intval( $r['team_id'] ) ) );
             $team_name = $t ? $t->name : '';
         }
-        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        // Get seller name - if not in order data, look up by user_id
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : '' ) );
+        if ( empty( $seller ) && ! empty( $r['user_id'] ) ) {
+            $member = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", intval( $r['user_id'] ) ) );
+            $seller = $member ? $member->name : 'Unknown (ID: ' . $r['user_id'] . ')';
+        }
         $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
         $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
 
@@ -5069,402 +5151,13 @@ function subsales_export_team_sales_report_csv() {
     exit;
 }
 
-// Admin-post handler: export combined backup (orders + settings) as a ZIP
-add_action( 'admin_post_subsales_export_backup_combined', 'order_sync_admin_export_backup_combined' );
-function order_sync_admin_export_backup_combined() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
-    check_admin_referer( 'subsales_export_nonce' );
-
-    global $wpdb;
-    
-    // Helper function to build CSV in-memory
-    $build_csv = function( $headers, $rows ) {
-        $out = fopen('php://temp', 'r+');
-        fputcsv( $out, $headers );
-        foreach ( $rows as $r ) {
-            fputcsv( $out, $r );
-        }
-        rewind( $out );
-        $csv = stream_get_contents( $out );
-        fclose( $out );
-        return $csv;
-    };
-    
-    // Build orders CSV
-    $orders_table = $wpdb->prefix . 'ss_orders';
-    $orders = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY created_at DESC", ARRAY_A );
-    $orders_csv = $build_csv( 
-        array( 'id','order_id','user_id','team_id','order_data','sync_status','created_at','updated_at' ),
-        array_map( function($r) {
-            return array( $r['id'], $r['order_id'], $r['user_id'], $r['team_id'], $r['order_data'], $r['sync_status'], $r['created_at'], $r['updated_at'] );
-        }, $orders )
-    );
-
-    // Build teams CSV
-    $teams_table = $wpdb->prefix . 'ss_teams';
-    $teams = $wpdb->get_results( "SELECT * FROM {$teams_table} ORDER BY id ASC", ARRAY_A );
-    $teams_csv = $build_csv(
-        array( 'id','team_name','access_code','created_at' ),
-        array_map( function($r) {
-            return array( $r['id'], $r['team_name'], $r['access_code'], $r['created_at'] );
-        }, $teams )
-    );
-    
-    // Build members CSV (with team assignments)
-    $members_table = $wpdb->prefix . 'ss_team_members';
-    $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-    $members = $wpdb->get_results( "
-        SELECT m.*, GROUP_CONCAT(ut.team_id) as team_ids
-        FROM {$members_table} m
-        LEFT JOIN {$user_teams_table} ut ON m.id = ut.user_id
-        GROUP BY m.id
-        ORDER BY m.id ASC
-    ", ARRAY_A );
-    $members_csv = $build_csv(
-        array( 'id','name','phone','email','team_ids','created_at' ),
-        array_map( function($r) {
-            return array( $r['id'], $r['name'], $r['phone'], $r['email'] ?? '', $r['team_ids'] ?? '', $r['created_at'] );
-        }, $members )
-    );
-    
-    // Build addresses CSV (limit to 50k for performance)
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    $addresses = $wpdb->get_results( "SELECT * FROM {$addresses_table} ORDER BY id ASC LIMIT 50000", ARRAY_A );
-    $addresses_csv = $build_csv(
-        array( 'id','address','city','state','zip','lat','lng','source','created_at' ),
-        array_map( function($r) {
-            return array( $r['id'], $r['address'] ?? '', $r['city'] ?? '', $r['state'] ?? '', $r['zip'] ?? '', $r['lat'] ?? '', $r['lng'] ?? '', $r['source'] ?? '', $r['created_at'] ?? '' );
-        }, $addresses )
-    );
-
-    // Build settings CSV
-    $keys = array(
-        'order_sync_portal_slug','order_sync_google_maps_api_key','subsales_branding','order_sync_products',
-        'order_sync_primary_color','order_sync_style_variant','order_sync_interval','order_sync_session_duration',
-        'order_sync_login_mode','subsales_header_image','subsales_served_zipcodes','subsales_delete_on_uninstall'
-    );
-    $settings_csv = $build_csv(
-        array( 'option_key','option_value' ),
-        array_map( function($k) {
-            $v = get_option( $k );
-            if ( is_array( $v ) || is_object( $v ) ) $v = wp_json_encode( $v );
-            return array( $k, $v );
-        }, $keys )
-    );
-
-    // Create ZIP in temp file
-    $zipname = sys_get_temp_dir() . '/subsales-backup-' . time() . '.zip';
-    $za = new ZipArchive();
-    if ( $za->open( $zipname, ZipArchive::CREATE | ZipArchive::OVERWRITE ) !== true ) {
-        wp_die( 'Could not create zip' );
-    }
-    $za->addFromString( 'orders.csv', $orders_csv );
-    $za->addFromString( 'teams.csv', $teams_csv );
-    $za->addFromString( 'members.csv', $members_csv );
-    $za->addFromString( 'addresses.csv', $addresses_csv );
-    $za->addFromString( 'settings.csv', $settings_csv );
-    $za->close();
-
-    // Send file
-    header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename=subsales-backup-' . date('Ymd_His') . '.zip');
-    header('Content-Length: ' . filesize( $zipname ) );
-    readfile( $zipname );
-    @unlink( $zipname );
-    exit;
-}
-
-// Admin-post handler: import backup CSV
-add_action( 'admin_post_subsales_import_backup', 'order_sync_admin_import_backup' );
-function order_sync_admin_import_backup() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
-    check_admin_referer( 'subsales_import_nonce' );
-    if ( ! isset( $_FILES['backup_file'] ) || ! is_uploaded_file( $_FILES['backup_file']['tmp_name'] ) ) {
-        wp_redirect( add_query_arg( 'subsales_import_error', 'nofile', wp_get_referer() ) ); exit;
-    }
-
-    $tmp = $_FILES['backup_file']['tmp_name'];
-    $update_existing = isset( $_POST['import_update_existing'] ) && intval( $_POST['import_update_existing'] ) === 1;
-
-    $result = order_sync_process_import_file( $tmp, $update_existing );
-
-    $msg_parts = array();
-    $msg_parts[] = sprintf( 'Imported=%d', $result['imported'] );
-    $msg_parts[] = sprintf( 'Updated=%d', $result['updated'] );
-    $msg_parts[] = sprintf( 'Skipped=%d', $result['skipped'] );
-    if ( isset( $result['geocoded'] ) && $result['geocoded'] > 0 ) {
-        $msg_parts[] = sprintf( 'Geocoded=%d', $result['geocoded'] );
-    }
-    if ( isset( $result['zip_corrected'] ) && $result['zip_corrected'] > 0 ) {
-        $msg_parts[] = sprintf( 'ZIPs_Corrected=%d', $result['zip_corrected'] );
-    }
-    $msg = implode( ', ', $msg_parts );
-    
-    // Suppress onboarding modal on the immediate redirect after an import/restore
-    set_transient( 'subsales_suppress_onboarding', true, 30 );
-    wp_redirect( add_query_arg( 'subsales_import_result', rawurlencode($msg), wp_get_referer() ) ); exit;
-}
-
-// Reusable import processor: accepts a path to uploaded file (tmp) and returns totals/errors
-function order_sync_process_import_file( $tmp, $update_existing = false ) {
-    $total_imported = 0; $total_updated = 0; $total_skipped = 0; $total_errors = array();
-    $geocoded_count = 0; $zip_corrections = 0;
-    global $wpdb;
-
-    // Helper to process a CSV file path. Returns array(imported, updated, skipped, errors, geocoded, zip_corrected)
-    $process_csv = function( $filepath, $update_existing ) use ( $wpdb ) {
-        $imported = 0; $updated = 0; $skipped = 0; $errors = array(); $geocoded = 0; $zip_corrected = 0;
-        if ( ! file_exists( $filepath ) ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('file_missing'),'geocoded'=>0,'zip_corrected'=>0 );
-        $handle = fopen( $filepath, 'r' );
-        if ( ! $handle ) return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('openfail'),'geocoded'=>0,'zip_corrected'=>0 );
-        $header = fgetcsv( $handle );
-        if ( ! $header ) { fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('invalid'),'geocoded'=>0,'zip_corrected'=>0 ); }
-        $lower = array_map('strtolower',$header);
-        $map = array(); foreach ( $header as $i => $h ) $map[strtolower($h)] = $i;
-        
-        // Detect table type by headers
-        if ( in_array( 'order_id', $lower ) ) {
-            // Orders table
-            $table = $wpdb->prefix . 'ss_orders';
-            while ( ($row = fgetcsv( $handle )) !== false ) {
-                $order_id = isset( $map['order_id'] ) ? $row[$map['order_id']] : '';
-                if ( empty( $order_id ) ) { $skipped++; continue; }
-                $user_id = isset( $map['user_id'] ) ? $row[$map['user_id']] : '';
-                $team_id = isset( $map['team_id'] ) ? intval( $row[$map['team_id']] ) : 0;
-                $order_data = isset( $map['order_data'] ) ? $row[$map['order_data']] : '{}';
-                $sync_status = isset( $map['sync_status'] ) ? $row[$map['sync_status']] : 'synced';
-                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE order_id = %s", $order_id ) );
-                if ( $existing ) {
-                    if ( $update_existing ) {
-                        $res = $wpdb->update( $table, array( 'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'updated_at'=>current_time('mysql') ), array( 'order_id'=>$order_id ), array('%s','%d','%s','%s','%s'), array('%s') );
-                        if ( $res !== false ) $updated++; else $skipped++;
-                    } else { $skipped++; }
-                } else {
-                    $ins = $wpdb->insert( $table, array( 'order_id'=>$order_id,'user_id'=>$user_id,'team_id'=>$team_id,'order_data'=>$order_data,'sync_status'=>$sync_status,'created_at'=>$created_at ), array('%s','%s','%d','%s','%s','%s') );
-                    if ( $ins !== false ) $imported++; else $skipped++;
-                }
-            }
-        } else if ( in_array( 'team_name', $lower ) ) {
-            // Teams table
-            $table = $wpdb->prefix . 'ss_teams';
-            while ( ($row = fgetcsv( $handle )) !== false ) {
-                $team_name = isset( $map['team_name'] ) ? $row[$map['team_name']] : '';
-                if ( empty( $team_name ) ) { $skipped++; continue; }
-                $access_code = isset( $map['access_code'] ) ? $row[$map['access_code']] : '';
-                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE name = %s", $team_name ) );
-                if ( $existing ) {
-                    if ( $update_existing ) {
-                        $res = $wpdb->update( $table, array( 'access_code'=>$access_code ), array( 'name'=>$team_name ), array('%s'), array('%s') );
-                        if ( $res !== false ) $updated++; else $skipped++;
-                    } else { $skipped++; }
-                } else {
-                    $ins = $wpdb->insert( $table, array( 'name'=>$team_name,'access_code'=>$access_code,'created_at'=>$created_at ), array('%s','%s','%s') );
-                    if ( $ins !== false ) $imported++; else $skipped++;
-                }
-            }
-        } else if ( in_array( 'phone', $lower ) && in_array( 'name', $lower ) ) {
-            // Team members table
-            $members_table = $wpdb->prefix . 'ss_team_members';
-            $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-            while ( ($row = fgetcsv( $handle )) !== false ) {
-                $name = isset( $map['name'] ) ? $row[$map['name']] : '';
-                $phone = isset( $map['phone'] ) ? $row[$map['phone']] : '';
-                if ( empty( $name ) || empty( $phone ) ) { $skipped++; continue; }
-                $email = isset( $map['email'] ) ? $row[$map['email']] : '';
-                $team_ids = isset( $map['team_ids'] ) ? $row[$map['team_ids']] : '';
-                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                
-                // Check if member exists by phone (unique)
-                $existing_id = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$members_table} WHERE phone = %s", $phone ) );
-                if ( $existing_id ) {
-                    if ( $update_existing ) {
-                        $res = $wpdb->update( $members_table, array( 'name'=>$name,'email'=>$email ), array( 'id'=>$existing_id ), array('%s','%s'), array('%d') );
-                        if ( $res !== false ) $updated++; else $skipped++;
-                        $user_id = $existing_id;
-                    } else {
-                        $skipped++;
-                        continue;
-                    }
-                } else {
-                    $ins = $wpdb->insert( $members_table, array( 'name'=>$name,'phone'=>$phone,'email'=>$email,'created_at'=>$created_at ), array('%s','%s','%s','%s') );
-                    if ( $ins !== false ) {
-                        $imported++;
-                        $user_id = $wpdb->insert_id;
-                    } else {
-                        $skipped++;
-                        continue;
-                    }
-                }
-                
-                // Handle team assignments (team_ids is comma-separated list)
-                if ( ! empty( $team_ids ) && $user_id ) {
-                    $wpdb->query( $wpdb->prepare( "DELETE FROM {$user_teams_table} WHERE user_id = %d", $user_id ) );
-                    $team_ids_array = explode( ',', $team_ids );
-                    foreach ( $team_ids_array as $tid ) {
-                        $tid = intval( trim( $tid ) );
-                        if ( $tid > 0 ) {
-                            $wpdb->insert( $user_teams_table, array( 'user_id'=>$user_id,'team_id'=>$tid ), array('%d','%d') );
-                        }
-                    }
-                }
-            }
-        } else if ( in_array( 'address', $lower ) && in_array( 'zip', $lower ) ) {
-            // Addresses table
-            $table = $wpdb->prefix . 'ss_addresses';
-            while ( ($row = fgetcsv( $handle )) !== false ) {
-                $address = isset( $map['address'] ) ? $row[$map['address']] : '';
-                $city = isset( $map['city'] ) ? $row[$map['city']] : 'Southington';
-                $state = isset( $map['state'] ) ? $row[$map['state']] : 'CT';
-                $zip = isset( $map['zip'] ) ? $row[$map['zip']] : '';
-                if ( empty( $address ) || empty( $zip ) ) { $skipped++; continue; }
-                
-                // Parse street/house_number from address (simple split)
-                $street = $address;
-                $house_number = '';
-                if ( preg_match( '/^(\d+[A-Za-z]?)\s+(.+)$/', $address, $matches ) ) {
-                    $house_number = $matches[1];
-                    $street = $matches[2];
-                }
-                
-                $unit = isset( $map['unit'] ) ? $row[$map['unit']] : '';
-                $lat = isset( $map['lat'] ) ? $row[$map['lat']] : null;
-                $lng = isset( $map['lng'] ) ? $row[$map['lng']] : null;
-                $source = isset( $map['source'] ) ? $row[$map['source']] : 'csv';
-                $type = isset( $map['type'] ) ? $row[$map['type']] : 'residential';
-                $created_at = isset( $map['created_at'] ) ? $row[$map['created_at']] : current_time('mysql');
-                
-                // Auto-geocode if coordinates are missing
-                if ( ( empty( $lat ) || empty( $lng ) ) && function_exists( 'order_sync_geocode_address' ) ) {
-                    $full_address = trim( $address . ', ' . $city . ', ' . $state . ' ' . $zip );
-                    $coords = order_sync_geocode_address( $full_address );
-                    if ( $coords && isset( $coords['lat'] ) && isset( $coords['lng'] ) ) {
-                        $lat = $coords['lat'];
-                        $lng = $coords['lng'];
-                        if ( $source === 'csv' ) $source = 'geocoded';
-                        $geocoded++;
-                    }
-                }
-                
-                // Validate ZIP against coordinates (if we have both)
-                $original_zip = $zip;
-                if ( ! empty( $lat ) && ! empty( $lng ) && function_exists( 'order_sync_reverse_geocode' ) ) {
-                    $geocoded_zip = order_sync_reverse_geocode( $lat, $lng );
-                    if ( $geocoded_zip && $geocoded_zip !== $zip ) {
-                        // ZIP mismatch - use coordinate-based ZIP as authoritative
-                        $zip = $geocoded_zip;
-                        if ( strpos( $source, 'corrected' ) === false ) {
-                            $source = $source . '_zip_corrected';
-                        }
-                        $zip_corrected++;
-                    }
-                }
-                
-                // Check if address exists (by street, house_number, zip)
-                $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE street = %s AND house_number = %s AND zip = %s", $street, $house_number, $zip ) );
-                if ( $existing ) {
-                    if ( $update_existing ) {
-                        $res = $wpdb->update( $table, array( 'city'=>$city,'state'=>$state,'lat'=>$lat,'lng'=>$lng,'source'=>$source,'unit'=>$unit,'type'=>$type,'full_address'=>$address ), array( 'id'=>$existing ), array('%s','%s','%s','%s','%s','%s','%s','%s'), array('%d') );
-                        if ( $res !== false ) $updated++; else $skipped++;
-                    } else { $skipped++; }
-                } else {
-                    $ins = $wpdb->insert( $table, array( 'street'=>$street,'house_number'=>$house_number,'unit'=>$unit,'city'=>$city,'state'=>$state,'zip'=>$zip,'lat'=>$lat,'lng'=>$lng,'source'=>$source,'type'=>$type,'full_address'=>$address,'created_at'=>$created_at ), array('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s') );
-                    if ( $ins !== false ) $imported++; else $skipped++;
-                }
-            }
-        } else if ( in_array( 'option_key', $lower ) || in_array( 'key', $lower ) ) {
-            // Settings (options)
-            while ( ($row = fgetcsv( $handle )) !== false ) {
-                $key = isset( $map['option_key'] ) ? $row[$map['option_key']] : ( isset($map['key']) ? $row[$map['key']] : '' );
-                $val = isset( $map['option_value'] ) ? $row[$map['option_value']] : ( isset($map['value']) ? $row[$map['value']] : '' );
-                if ( empty( $key ) ) { $skipped++; continue; }
-                $maybe = json_decode( $val, true );
-                if ( json_last_error() === JSON_ERROR_NONE ) $val = $maybe;
-                update_option( $key, $val );
-                $imported++;
-            }
-        } else {
-            fclose($handle); return array( 'imported'=>0,'updated'=>0,'skipped'=>0,'errors'=>array('unknownformat'),'geocoded'=>0,'zip_corrected'=>0 );
-        }
-
-        fclose( $handle );
-        return array( 'imported'=>$imported,'updated'=>$updated,'skipped'=>$skipped,'errors'=>$errors,'geocoded'=>$geocoded,'zip_corrected'=>$zip_corrected );
-    };
-
-    // If the uploaded file is a zip, extract and process contained CSVs
-    $is_zip = false;
-    if ( class_exists( 'ZipArchive' ) ) {
-        $za = new ZipArchive();
-        if ( $za->open( $tmp ) === true ) { $is_zip = true; $za->close(); }
-    }
-
-    if ( $is_zip ) {
-        $tmpdir = wp_tempnam();
-        if ( ! $tmpdir ) $tmpdir = sys_get_temp_dir() . '/' . uniqid('subsales_');
-        if ( ! file_exists( $tmpdir ) ) wp_mkdir_p( $tmpdir );
-        $za = new ZipArchive();
-        if ( $za->open( $tmp ) === true ) {
-            for ( $i = 0; $i < $za->numFiles; $i++ ) {
-                $name = $za->getNameIndex( $i );
-                if ( preg_match('/\.(csv)$/i', $name) ) {
-                    $outpath = $tmpdir . '/' . basename( $name );
-                    copy( 'zip://' . $tmp . '#' . $name, $outpath );
-                    $res = $process_csv( $outpath, $update_existing );
-                    $total_imported += $res['imported'];
-                    $total_updated += $res['updated'];
-                    $total_skipped += $res['skipped'];
-                    $geocoded_count += isset( $res['geocoded'] ) ? $res['geocoded'] : 0;
-                    $zip_corrections += isset( $res['zip_corrected'] ) ? $res['zip_corrected'] : 0;
-                    if ( ! empty( $res['errors'] ) ) $total_errors = array_merge( $total_errors, $res['errors'] );
-                }
-            }
-            $za->close();
-        }
-    } else {
-        $res = $process_csv( $tmp, $update_existing );
-        $total_imported += $res['imported'];
-        $total_updated += $res['updated'];
-        $total_skipped += $res['skipped'];
-        $geocoded_count += isset( $res['geocoded'] ) ? $res['geocoded'] : 0;
-        $zip_corrections += isset( $res['zip_corrected'] ) ? $res['zip_corrected'] : 0;
-        if ( ! empty( $res['errors'] ) ) $total_errors = array_merge( $total_errors, $res['errors'] );
-    }
-
-    return array( 'imported'=>$total_imported, 'updated'=>$total_updated, 'skipped'=>$total_skipped, 'errors'=>$total_errors, 'geocoded'=>$geocoded_count, 'zip_corrected'=>$zip_corrections );
-}
-
-// Admin-post handler: destructive restore (clear plugin data then import uploaded CSV/ZIP)
-add_action( 'admin_post_subsales_restore_and_import', 'order_sync_admin_restore_and_import' );
-function order_sync_admin_restore_and_import() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Insufficient permissions' );
-    check_admin_referer( 'subsales_restore_nonce' );
-    if ( ! isset( $_FILES['backup_file'] ) || ! is_uploaded_file( $_FILES['backup_file']['tmp_name'] ) ) {
-        wp_redirect( add_query_arg( 'subsales_import_error', 'nofile', wp_get_referer() ) ); exit;
-    }
-
-    // Determine clear scope: data, settings, or both (default: both)
-    $restore_target = isset( $_POST['restore_target'] ) ? sanitize_text_field( $_POST['restore_target'] ) : 'both';
-    if ( $restore_target === 'both' ) {
-        if ( function_exists( 'order_sync_clear_data' ) ) order_sync_clear_data();
-    } else if ( $restore_target === 'data' ) {
-        if ( function_exists( 'order_sync_clear_orders' ) ) order_sync_clear_orders();
-    } else if ( $restore_target === 'settings' ) {
-        if ( function_exists( 'order_sync_clear_settings' ) ) order_sync_clear_settings();
-    } else {
-        // Fallback to full clear when unknown value provided
-        if ( function_exists( 'order_sync_clear_data' ) ) order_sync_clear_data();
-    }
-
-    $tmp = $_FILES['backup_file']['tmp_name'];
-    // For restore we always want to import everything; update_existing doesn't make sense after clear
-    $result = order_sync_process_import_file( $tmp, true );
-
-    $msg = sprintf( 'Restored: Imported=%d, Updated=%d, Skipped=%d', $result['imported'], $result['updated'], $result['skipped'] );
-    // Suppress onboarding modal on the immediate redirect after a restore
-    set_transient( 'subsales_suppress_onboarding', true, 30 );
-    wp_redirect( add_query_arg( 'subsales_import_result', rawurlencode($msg), wp_get_referer() ) ); exit;
-}
+// ============================================================
+// BACKUP/RESTORE - Handled by Subsales_Backup_Restore class
+// ============================================================
+// Export handler: admin_post_subsales_export_backup_combined
+// Import handler: admin_post_subsales_import_backup
+// Restore handler: admin_post_subsales_restore_and_import
+// See: includes/class-backup-restore.php
 
 // AJAX endpoint to validate a Google Maps API key from admin UI
 add_action( 'wp_ajax_subsales_test_maps_key', 'order_sync_test_maps_key_ajax' );
@@ -7459,6 +7152,13 @@ function order_sync_ensure_geocode_table() {
 function order_sync_normalize_address( $addr ) {
     if ( ! $addr ) return '';
     $s = trim( preg_replace('/\s+/', ' ', str_replace( array("\n","\r"), ' ', $addr ) ) );
+    
+    // Remove any text after "USA" (including trailing numbers/zips) for Google Maps compatibility
+    if ( preg_match( '/\bUSA\b/i', $s ) ) {
+        $s = preg_replace( '/\bUSA\b.*/i', 'USA', $s );
+        $s = trim( $s );
+    }
+    
     $s = strtolower( $s );
     return $s;
 }
@@ -8081,10 +7781,10 @@ function order_sync_handle_generate_delivery() {
     if ( ! empty( $delivery_date ) ) {
         $start_dt = $delivery_date . ' 00:00:00';
         $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
     } else {
         // No date supplied: export all orders
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC", ARRAY_A );
+        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     }
 
     $configured_products = order_sync_get_products_config();
@@ -8136,7 +7836,12 @@ function order_sync_handle_generate_delivery() {
             $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", intval( $r['team_id'] ) ) );
             $team_name = $t ? $t->name : '';
         }
-        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        // Get seller name - if not in order data, look up by user_id
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : '' ) );
+        if ( empty( $seller ) && ! empty( $r['user_id'] ) ) {
+            $member = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", intval( $r['user_id'] ) ) );
+            $seller = $member ? $member->name : 'Unknown (ID: ' . $r['user_id'] . ')';
+        }
         $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
         $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
         $address_raw = isset( $od['address'] ) ? $od['address'] : ( isset( $od['formatted_address'] ) ? $od['formatted_address'] : '' );
@@ -8298,7 +8003,63 @@ function subsales_campaigns_page() {
     include SUBSALES_PLUGIN_PATH . 'admin/campaigns-page.php';
 }
 
+// Delivery Distribution Breakdown page - shows how orders are distributed to members
+function subsales_delivery_breakdown_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/delivery-breakdown-page.php';
+}
+
 // System Logs page - view all logging activity with filters
+/**
+ * Address Coverage Report Page
+ * Shows which orders have coordinates and which need geocoding
+ * 
+ * @since 2.4.19
+ */
+function subsales_address_coverage_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/address-coverage-report.php';
+}
+
+/**
+ * Address Validation Page
+ */
+function subsales_address_validation_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/address-validation-report.php';
+}
+
+/**
+ * GPS Proximity Search Page
+ */
+function subsales_gps_proximity_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/gps-proximity-report.php';
+}
+
+/**
+ * Order Entry Distance Analysis Page
+ * 
+ * @since 2.4.65
+ */
+function subsales_order_entry_distance_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
+    }
+    include SUBSALES_PLUGIN_PATH . 'admin/order-entry-distance-report.php';
+}
+
+/**
+ * Logs Page
+ */
 function subsales_logs_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
@@ -9683,9 +9444,9 @@ function order_sync_ajax_delivery_preview() {
     if ( $delivery_date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $delivery_date) ) {
         $start_dt = $delivery_date . ' 00:00:00';
         $end_dt = $delivery_date . ' 23:59:59';
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE created_at >= %s AND created_at <= %s ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE created_at >= %s AND created_at <= %s AND deleted = 0 ORDER BY id ASC", $start_dt, $end_dt ), ARRAY_A );
     } else {
-        $rows = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+        $rows = $wpdb->get_results( "SELECT * FROM {$orders_table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     }
     if ( ! $rows ) {
         wp_send_json_error( 'No orders found' );
@@ -9740,7 +9501,12 @@ function order_sync_ajax_delivery_preview() {
             $t = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", intval( $r['team_id'] ) ) );
             $team_name = $t ? $t->name : '';
         }
-        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : $r['user_id'] ) );
+        // Get seller name - if not in order data, look up by user_id
+        $seller = isset( $od['entered_by_name'] ) ? $od['entered_by_name'] : ( isset( $od['seller'] ) ? $od['seller'] : ( isset( $od['user'] ) ? $od['user'] : '' ) );
+        if ( empty( $seller ) && ! empty( $r['user_id'] ) ) {
+            $member = $wpdb->get_row( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", intval( $r['user_id'] ) ) );
+            $seller = $member ? $member->name : 'Unknown (ID: ' . $r['user_id'] . ')';
+        }
         $customer = isset( $od['customerName'] ) ? $od['customerName'] : ( isset( $od['customer'] ) ? $od['customer'] : ( isset( $od['name'] ) ? $od['name'] : '' ) );
         $phone = isset( $od['cellNumber'] ) ? $od['cellNumber'] : ( isset( $od['cell'] ) ? $od['cell'] : ( isset( $od['phone'] ) ? $od['phone'] : '' ) );
 
