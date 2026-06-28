@@ -183,16 +183,9 @@ foreach ( $team_orders as $key => $group ) {
     $campaign_id = $campaign['id'];
     $campaign_name = $campaign['campaign_name'] ? $campaign['campaign_name'] : $campaign_date;
     
-    // Get signups for this campaign and team
-    $signups = $wpdb->get_results( $wpdb->prepare(
-        "SELECT s.user_id, m.name 
-         FROM {$wpdb->prefix}ss_signups s
-         INNER JOIN {$wpdb->prefix}ss_team_members m ON s.user_id = m.id
-         WHERE s.campaign_id = %d AND s.team_id = %d AND s.status = 'active'
-         ORDER BY m.name ASC",
-        $campaign_id,
-        $team_id
-    ), ARRAY_A );
+    // Get sales members for this campaign+team. Drivers are excluded — they
+    // deliver the manifests and never receive distributed orders.
+    $signups = Subsales_Database::get_campaign_team_members( $team_id, $campaign_id );
     
     if ( empty( $signups ) ) {
         foreach ( $orders as $order ) {
@@ -207,10 +200,10 @@ foreach ( $team_orders as $key => $group ) {
         continue;
     }
     
-    $member_ids = array_map( function( $s ) { return intval( $s['user_id'] ); }, $signups );
+    $member_ids = array_map( function( $s ) { return intval( $s['id'] ); }, $signups );
     $signup_by_id = array();
     foreach ( $signups as $s ) {
-        $signup_by_id[ $s['user_id'] ] = $s['name'];
+        $signup_by_id[ $s['id'] ] = $s['name'];
     }
     
     // Initialize load for members who don't have problem orders yet

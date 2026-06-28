@@ -6,10 +6,12 @@
  * registration path. This flow lets a parent:
  *  - Identify their child (name + phone) to find which team and dates the
  *    child signed up for
- *  - Register themselves as the driver linked to that team for those dates
+ *  - Pick which of those team/days they will drive for
+ *  - Register themselves as the driver for the selected team/days
  *
- * Fully API-driven, mirroring the patterns in Subsales_Signups. The existing
- * /auth/login endpoint handles driver login unchanged (name + phone, user mode).
+ * Reuses the canonical data layer (Subsales_Database) for all reads/writes,
+ * the same way the regular child signup does. The child-name field uses the
+ * shared /users/search autocomplete so parents can find their kid quickly.
  *
  * Page:  /driver-signup
  * REST:  POST /order-manager/v1/driver-signup/lookup-child
@@ -68,85 +70,12 @@ class Subsales_Driver_Signup {
             'permission_callback' => '__return_true',
         ));
 
-        // Register the parent as a driver for their child's team(s)/date(s)
+        // Register the parent as a driver for the selected team(s)/date(s)
         register_rest_route( 'order-manager/v1', '/driver-signup', array(
             'methods' => 'POST',
             'callback' => array( __CLASS__, 'rest_driver_signup' ),
             'permission_callback' => '__return_true',
         ));
-    }
-
-    /**
-     * Look up a child by name + phone and return their active signups.
-     *
-     * Shared helper used by both REST endpoints.
-     *
-     * @param string $child_name  Child's name (optional; when provided, must match)
-     * @param string $child_phone Child's phone (10 digits, already validated by caller)
-     * @return array|WP_Error { child, signups } or WP_Error on failure
-     */
-    private static function find_child_signups( $child_name, $child_phone ) {
-        global $wpdb;
-
-        $members_table   = $wpdb->prefix . 'ss_team_members';
-        $signups_table   = $wpdb->prefix . 'ss_signups';
-        $teams_table     = $wpdb->prefix . 'ss_teams';
-        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
-
-        // Find child by phone (mirrors class-teams.php:127)
-        $child = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, name FROM {$members_table} WHERE phone = %s",
-            $child_phone
-        ), ARRAY_A );
-
-        if ( ! $child ) {
-            return new WP_Error(
-                'child_not_found',
-                "We couldn't find a child with that phone number. Have them complete their signup first.",
-                array( 'status' => 404 )
-            );
-        }
-
-        // Name match: case-insensitive partial match (mirrors class-teams.php:161)
-        if ( ! empty( $child_name ) ) {
-            if ( stripos( $child['name'], $child_name ) === false
-                && stripos( $child_name, $child['name'] ) === false ) {
-                return new WP_Error(
-                    'name_mismatch',
-                    'The name does not match the phone number on file.',
-                    array( 'status' => 401 )
-                );
-            }
-        }
-
-        // Child's active signups joined to teams + campaigns
-        $signups = $wpdb->get_results( $wpdb->prepare(
-            "SELECT
-                s.team_id,
-                s.campaign_id,
-                t.name AS team_name,
-                c.campaign_name,
-                c.campaign_date
-            FROM {$signups_table} s
-            INNER JOIN {$teams_table} t ON s.team_id = t.id
-            INNER JOIN {$campaigns_table} c ON s.campaign_id = c.id
-            WHERE s.user_id = %d AND s.status = 'active'
-            ORDER BY c.campaign_date ASC, t.name ASC",
-            $child['id']
-        ), ARRAY_A );
-
-        if ( empty( $signups ) ) {
-            return new WP_Error(
-                'no_signups',
-                "Your child hasn't signed up yet, have them complete their signup first.",
-                array( 'status' => 404 )
-            );
-        }
-
-        return array(
-            'child'   => $child,
-            'signups' => $signups,
-        );
     }
 
     /**
@@ -166,203 +95,127 @@ class Subsales_Driver_Signup {
             return new WP_Error( 'invalid_phone', 'Phone number must be 10 digits.', array( 'status' => 400 ) );
         }
 
-        $result = self::find_child_signups( $child_name, $child_phone );
-        if ( is_wp_error( $result ) ) {
-            return $result;
+        $lookup = Subsales_Database::get_member_signups_by_phone( $child_phone );
+
+        if ( ! $lookup['user'] ) {
+            return new WP_Error(
+                'child_not_found',
+                "We couldn't find a child with that phone number. Have them complete their signup first.",
+                array( 'status' => 404 )
+            );
+        }
+
+        // Name match: case-insensitive partial, both directions
+        $child_actual_name = $lookup['user']['name'];
+        if ( stripos( $child_actual_name, $child_name ) === false
+            && stripos( $child_name, $child_actual_name ) === false ) {
+            return new WP_Error(
+                'name_mismatch',
+                'The name does not match the phone number on file.',
+                array( 'status' => 401 )
+            );
+        }
+
+        if ( empty( $lookup['signups'] ) ) {
+            return new WP_Error(
+                'no_signups',
+                "Your child hasn't signed up yet, have them complete their signup first.",
+                array( 'status' => 404 )
+            );
         }
 
         return rest_ensure_response( array(
             'success'    => true,
-            'child_id'   => intval( $result['child']['id'] ),
-            'child_name' => $result['child']['name'],
-            'signups'    => $result['signups'],
+            'child_id'   => intval( $lookup['user']['id'] ),
+            'child_name' => $child_actual_name,
+            'signups'    => $lookup['signups'],
         ) );
     }
 
     /**
      * POST /driver-signup
-     * Register the parent as a driver for each team/date their child signed up for.
+     * Register the parent as a driver for the team/date rows they selected.
+     *
+     * Body: child_phone, driver_name, driver_phone, selections[]={team_id,campaign_id}
      */
     public static function rest_driver_signup( $request ) {
-        global $wpdb;
-
         $body         = $request->get_json_params();
         $child_phone  = isset( $body['child_phone'] ) ? preg_replace( '/\D/', '', $body['child_phone'] ) : '';
         $driver_name  = isset( $body['driver_name'] ) ? sanitize_text_field( $body['driver_name'] ) : '';
         $driver_phone = isset( $body['driver_phone'] ) ? preg_replace( '/\D/', '', $body['driver_phone'] ) : '';
+        $selections   = ( isset( $body['selections'] ) && is_array( $body['selections'] ) ) ? $body['selections'] : array();
 
         if ( empty( $child_phone ) || empty( $driver_name ) || empty( $driver_phone ) ) {
             return new WP_Error( 'missing_params', 'Child phone, driver name, and driver phone are required.', array( 'status' => 400 ) );
-        }
-
-        if ( ! preg_match( '/^[0-9]{10}$/', $child_phone ) ) {
-            return new WP_Error( 'invalid_phone', 'Child phone number must be 10 digits.', array( 'status' => 400 ) );
         }
 
         if ( ! preg_match( '/^[0-9]{10}$/', $driver_phone ) ) {
             return new WP_Error( 'invalid_phone', 'Driver phone number must be 10 digits.', array( 'status' => 400 ) );
         }
 
-        // Resolve the child's active signups (no name check here — phone already verified in step 1)
-        $result = self::find_child_signups( '', $child_phone );
-        if ( is_wp_error( $result ) ) {
-            return $result;
-        }
-        $signups = $result['signups'];
-
-        $members_table    = $wpdb->prefix . 'ss_team_members';
-        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-        $signups_table    = $wpdb->prefix . 'ss_signups';
-
-        // Get-or-create the driver in ss_team_members with role 'driver'.
-        // Note: if driver phone == child phone, the existing member is found and
-        // simply promoted to role 'driver' (allowed silently).
-        $driver = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id FROM {$members_table} WHERE phone = %s",
-            $driver_phone
-        ), ARRAY_A );
-
-        if ( $driver ) {
-            $driver_id = intval( $driver['id'] );
-            $wpdb->update(
-                $members_table,
-                array( 'name' => $driver_name, 'role' => 'driver' ),
-                array( 'id' => $driver_id ),
-                array( '%s', '%s' ),
-                array( '%d' )
-            );
-        } else {
-            $wpdb->insert(
-                $members_table,
-                array(
-                    'name'   => $driver_name,
-                    'phone'  => $driver_phone,
-                    'role'   => 'driver',
-                    'status' => 'active',
-                ),
-                array( '%s', '%s', '%s', '%s' )
-            );
-            $driver_id = intval( $wpdb->insert_id );
+        if ( empty( $selections ) ) {
+            return new WP_Error( 'no_selection', 'Please choose at least one day to drive.', array( 'status' => 400 ) );
         }
 
-        if ( empty( $driver_id ) ) {
-            subsales_log( 'ERROR', 'driver-signup', 'Failed to create/find driver', array(
-                'driver_phone' => substr( $driver_phone, 0, 3 ) . 'XXXXXXX',
-                'error'        => $wpdb->last_error,
-            ) );
-            return new WP_Error( 'driver_failed', 'Could not register the driver. Please try again.', array( 'status' => 500 ) );
+        // Re-derive the child's signups to build an allow-set (don't trust client team/campaign ids)
+        $lookup = Subsales_Database::get_member_signups_by_phone( $child_phone );
+        if ( ! $lookup['user'] ) {
+            return new WP_Error( 'child_not_found', "We couldn't find a child with that phone number.", array( 'status' => 404 ) );
         }
 
-        // Link the driver to every unique team the child is on (check-then-insert)
-        $team_ids = array_unique( array_map( 'intval', wp_list_pluck( $signups, 'team_id' ) ) );
-        foreach ( $team_ids as $team_id ) {
-            $link_exists = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-                $driver_id, $team_id
-            ) );
-            if ( ! $link_exists ) {
-                $wpdb->insert( $user_teams_table, array(
-                    'user_id' => $driver_id,
-                    'team_id' => $team_id,
-                ), array( '%d', '%d' ) );
+        $allowed = array();
+        foreach ( $lookup['signups'] as $s ) {
+            $allowed[ intval( $s['team_id'] ) . ':' . intval( $s['campaign_id'] ) ] = true;
+        }
+
+        // Validate selections against the allow-set, group campaigns by team
+        $by_team = array();
+        foreach ( $selections as $sel ) {
+            $team_id     = isset( $sel['team_id'] ) ? intval( $sel['team_id'] ) : 0;
+            $campaign_id = isset( $sel['campaign_id'] ) ? intval( $sel['campaign_id'] ) : 0;
+            if ( ! $team_id || ! $campaign_id ) {
+                continue;
             }
+            if ( empty( $allowed[ $team_id . ':' . $campaign_id ] ) ) {
+                continue;
+            }
+            $by_team[ $team_id ][] = $campaign_id;
         }
 
-        // For each team/date, register the driver's signup row, flag them as the
-        // driver, and record the driver name on the team_campaigns record.
+        if ( empty( $by_team ) ) {
+            return new WP_Error( 'invalid_selection', "The selected days could not be matched to your child's signups.", array( 'status' => 400 ) );
+        }
+
+        // Register the driver per team via the canonical signup writer
         $processed = array();
-        foreach ( $signups as $signup ) {
-            $team_id     = intval( $signup['team_id'] );
-            $campaign_id = intval( $signup['campaign_id'] );
-
-            // 1. Ensure the driver has a signup row for this team/date.
-            //    Must exist before set_driver(), which issues an UPDATE on it.
-            $row_exists = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$signups_table}
-                 WHERE user_id = %d AND team_id = %d AND campaign_id = %d",
-                $driver_id, $team_id, $campaign_id
+        foreach ( $by_team as $team_id => $campaign_ids ) {
+            $result = Subsales_Database::register_member_signups( array(
+                'name'         => $driver_name,
+                'phone'        => $driver_phone,
+                'team_id'      => $team_id,
+                'campaign_ids' => $campaign_ids,
+                'is_driver'    => true,
             ) );
 
-            if ( ! $row_exists ) {
-                $wpdb->insert( $signups_table, array(
-                    'user_id'     => $driver_id,
-                    'team_id'     => $team_id,
-                    'campaign_id' => $campaign_id,
-                    'is_driver'   => 1,
-                    'status'      => 'active',
-                    'created_at'  => current_time( 'mysql' ),
-                ), array( '%d', '%d', '%d', '%d', '%s', '%s' ) );
-            } else {
-                // Reactivate if a cancelled row exists
-                $wpdb->update(
-                    $signups_table,
-                    array( 'status' => 'active' ),
-                    array( 'user_id' => $driver_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
-                    array( '%s' ),
-                    array( '%d', '%d', '%d' )
-                );
+            if ( is_wp_error( $result ) ) {
+                return $result;
             }
 
-            // 2. Set as the sole driver for this team/date (transactional)
-            Subsales_Database::set_driver( $driver_id, $team_id, $campaign_id );
-
-            // 3. Record driver name on the team_campaigns record (mirrors class-signups.php:492)
-            self::upsert_team_campaign_driver( $team_id, $campaign_id, $driver_name );
-
-            $processed[] = array(
-                'team_id'     => $team_id,
-                'campaign_id' => $campaign_id,
-            );
+            foreach ( $campaign_ids as $cid ) {
+                $processed[] = array( 'team_id' => intval( $team_id ), 'campaign_id' => intval( $cid ) );
+            }
         }
 
         subsales_log( 'INFO', 'driver-signup', 'Driver self-registered', array(
-            'driver_id'   => $driver_id,
             'driver_name' => $driver_name,
-            'team_ids'    => $team_ids,
             'processed'   => count( $processed ),
         ) );
 
         return rest_ensure_response( array(
             'success'   => true,
-            'driver_id' => $driver_id,
             'processed' => $processed,
             'message'   => 'You are registered as the driver. Thank you!',
         ) );
-    }
-
-    /**
-     * Upsert the driver_name on ss_team_campaigns (mirrors class-signups.php:492)
-     */
-    private static function upsert_team_campaign_driver( $team_id, $campaign_id, $driver_name ) {
-        global $wpdb;
-        $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
-
-        $exists = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$team_campaigns_table} WHERE team_id = %d AND campaign_id = %d",
-            $team_id, $campaign_id
-        ) );
-
-        $fields = array(
-            'driver_name'       => $driver_name,
-            'driver_updated_by' => 'Driver self-signup',
-            'driver_updated_at' => current_time( 'mysql' ),
-        );
-
-        if ( $exists ) {
-            $wpdb->update(
-                $team_campaigns_table,
-                $fields,
-                array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
-                array( '%s', '%s', '%s' ),
-                array( '%d', '%d' )
-            );
-        } else {
-            $wpdb->insert(
-                $team_campaigns_table,
-                array_merge( array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ), $fields ),
-                array( '%d', '%d', '%s', '%s', '%s' )
-            );
-        }
     }
 
     /**
@@ -394,7 +247,7 @@ class Subsales_Driver_Signup {
         .header h1 { color: <?php echo esc_attr( $primary_color ); ?>; font-size: 24px; }
         .header p { color: #777; font-size: 15px; margin-top: 4px; }
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .form-group { margin-bottom: 20px; }
+        .form-group { margin-bottom: 20px; position: relative; }
         label { display: block; font-weight: 600; margin-bottom: 8px; color: #555; }
         input[type="text"], input[type="tel"] { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
         input:focus { outline: none; border-color: <?php echo esc_attr( $primary_color ); ?>; }
@@ -411,6 +264,17 @@ class Subsales_Driver_Signup {
         .signup-row:last-child { border-bottom: none; }
         .signup-row .team { font-weight: 600; }
         .signup-row .date { color: #666; }
+        /* Per-day driver selection (reuses the campaign-picker idea from kid signup) */
+        .day-picker { margin-bottom: 20px; }
+        .day-option { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 8px; cursor: pointer; }
+        .day-option input { width: 18px; height: 18px; flex: 0 0 auto; }
+        .day-option .day-team { font-weight: 600; }
+        .day-option .day-date { color: #666; font-size: 14px; }
+        /* Name autocomplete dropdown */
+        .autocomplete-results { border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto; background: #fff; }
+        .autocomplete-results button { display: block; width: 100%; text-align: left; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid #f0f0f0; font-size: 15px; cursor: pointer; }
+        .autocomplete-results button:hover { background: #f5f7ff; }
+        .autocomplete-results .ac-help { padding: 8px 12px; color: #777; font-size: 13px; }
         .footer { text-align: center; padding: 20px 0; margin-top: 20px; }
         .footer-email-btn { display: inline-block; padding: 10px 20px; background: <?php echo esc_attr( $primary_color ); ?>; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; }
     </style>
@@ -429,7 +293,8 @@ class Subsales_Driver_Signup {
         <div class="card" id="step1">
             <div class="form-group">
                 <label for="childName">Your Child's Name</label>
-                <input type="text" id="childName" placeholder="Child's full name" autocomplete="off">
+                <input type="text" id="childName" placeholder="Start typing your child's name" autocomplete="off">
+                <div class="autocomplete-results hidden" id="childNameResults"></div>
             </div>
             <div class="form-group">
                 <label for="childPhone">Your Child's Phone Number</label>
@@ -442,6 +307,10 @@ class Subsales_Driver_Signup {
         <!-- Step 2: Driver details -->
         <div class="card hidden" id="step2">
             <div class="child-summary" id="childSummary"></div>
+            <div class="form-group">
+                <label>Which days will you drive?</label>
+                <div class="day-picker" id="dayPicker"></div>
+            </div>
             <div class="form-group">
                 <label for="driverName">Your Name (Driver)</label>
                 <input type="text" id="driverName" placeholder="Your full name" autocomplete="off">
@@ -476,20 +345,71 @@ class Subsales_Driver_Signup {
         function showError(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
         function hideError(el) { el.textContent = ''; el.classList.add('hidden'); }
 
-        function renderSignups(signups) {
-            return signups.map(s => {
-                const d = s.campaign_date || '';
-                const label = s.campaign_name ? (s.campaign_name + ' — ' + d) : d;
-                return '<div class="signup-row"><span class="team">' + escapeHtml(s.team_name) +
-                    '</span> <span class="date">' + escapeHtml(label) + '</span></div>';
-            }).join('');
-        }
-
         function escapeHtml(str) {
             const div = document.createElement('div');
             div.textContent = str == null ? '' : String(str);
             return div.innerHTML;
         }
+
+        function dayLabel(s) {
+            const d = s.campaign_date || '';
+            return s.campaign_name ? (s.campaign_name + ' — ' + d) : d;
+        }
+
+        // Read-only summary list (used in confirmation)
+        function renderSignups(signups) {
+            return signups.map(s =>
+                '<div class="signup-row"><span class="team">' + escapeHtml(s.team_name) +
+                '</span> <span class="date">' + escapeHtml(dayLabel(s)) + '</span></div>'
+            ).join('');
+        }
+
+        // Per-day checkboxes (all checked by default)
+        function renderDayPicker(signups) {
+            return signups.map((s, i) =>
+                '<label class="day-option">' +
+                    '<input type="checkbox" class="day-check" data-team-id="' + parseInt(s.team_id, 10) +
+                        '" data-campaign-id="' + parseInt(s.campaign_id, 10) + '" checked>' +
+                    '<span><span class="day-team">' + escapeHtml(s.team_name) + '</span><br>' +
+                    '<span class="day-date">' + escapeHtml(dayLabel(s)) + '</span></span>' +
+                '</label>'
+            ).join('');
+        }
+
+        // ---- Child-name autocomplete (shared /users/search endpoint) ----
+        let acTimer = null;
+        $('childName').addEventListener('input', () => {
+            const query = $('childName').value.trim();
+            const box = $('childNameResults');
+            childData = null; // typing invalidates a prior selection
+            if (acTimer) clearTimeout(acTimer);
+            if (query.length < 2) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+            acTimer = setTimeout(async () => {
+                try {
+                    const res = await fetch(apiBase + '/users/search?name=' + encodeURIComponent(query));
+                    const data = await res.json();
+                    if (!Array.isArray(data) || data.length === 0) {
+                        box.innerHTML = '<div class="ac-help">No matches yet — keep typing your child’s name.</div>';
+                        box.classList.remove('hidden');
+                        return;
+                    }
+                    box.innerHTML = data.map(u =>
+                        '<button type="button" data-name="' + escapeHtml(u.name) + '">' + escapeHtml(u.name) + '</button>'
+                    ).join('');
+                    box.classList.remove('hidden');
+                    box.querySelectorAll('button').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            $('childName').value = btn.dataset.name;
+                            box.classList.add('hidden');
+                            box.innerHTML = '';
+                            $('childPhone').focus();
+                        });
+                    });
+                } catch (e) {
+                    box.classList.add('hidden');
+                }
+            }, 200);
+        });
 
         // Step 1: look up child
         $('lookupBtn').addEventListener('click', async () => {
@@ -519,8 +439,9 @@ class Subsales_Driver_Signup {
                 }
 
                 childData = data;
-                $('childSummary').innerHTML =
-                    '<h3>' + escapeHtml(data.child_name) + '</h3>' + renderSignups(data.signups);
+                $('childSummary').innerHTML = '<h3>' + escapeHtml(data.child_name) + '</h3>' +
+                    '<p style="font-size:14px;color:#666;">Uncheck any days you are not driving.</p>';
+                $('dayPicker').innerHTML = renderDayPicker(data.signups);
                 $('step1').classList.add('hidden');
                 $('step2').classList.remove('hidden');
             } catch (e) {
@@ -542,6 +463,15 @@ class Subsales_Driver_Signup {
                 return;
             }
 
+            const selections = Array.from(document.querySelectorAll('.day-check'))
+                .filter(c => c.checked)
+                .map(c => ({ team_id: parseInt(c.dataset.teamId, 10), campaign_id: parseInt(c.dataset.campaignId, 10) }));
+
+            if (selections.length === 0) {
+                showError($('step2Error'), 'Please choose at least one day to drive.');
+                return;
+            }
+
             $('registerBtn').disabled = true;
             $('registerBtn').textContent = 'Registering…';
 
@@ -552,7 +482,8 @@ class Subsales_Driver_Signup {
                     body: JSON.stringify({
                         child_phone: $('childPhone').value.trim(),
                         driver_name,
-                        driver_phone
+                        driver_phone,
+                        selections
                     })
                 });
                 const data = await res.json();
@@ -562,9 +493,13 @@ class Subsales_Driver_Signup {
                     return;
                 }
 
+                // Show only the days they registered for
+                const chosen = new Set(selections.map(s => s.team_id + ':' + s.campaign_id));
+                const chosenSignups = childData.signups.filter(s => chosen.has(parseInt(s.team_id, 10) + ':' + parseInt(s.campaign_id, 10)));
+
                 $('confirmationMsg').textContent = data.message || 'You are registered as the driver.';
-                $('confirmationSummary').innerHTML =
-                    '<h3>' + escapeHtml(childData.child_name) + '</h3>' + renderSignups(childData.signups);
+                $('confirmationSummary').innerHTML = '<h3>' + escapeHtml(driver_name) + ' — driving for ' +
+                    escapeHtml(childData.child_name) + '</h3>' + renderSignups(chosenSignups);
                 $('step2').classList.add('hidden');
                 $('confirmation').classList.remove('hidden');
             } catch (e) {

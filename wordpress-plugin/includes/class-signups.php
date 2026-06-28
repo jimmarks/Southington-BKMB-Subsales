@@ -157,140 +157,34 @@ class Subsales_Signups {
      * POST /signup - Submit new signup
      */
     public static function rest_submit_signup( $request ) {
-        global $wpdb;
-        
         $body = $request->get_json_params();
-        $name = isset( $body['name'] ) ? sanitize_text_field( $body['name'] ) : '';
-        $phone = isset( $body['phone'] ) ? preg_replace( '/\D/', '', $body['phone'] ) : '';
-        $team_name = isset( $body['team_name'] ) ? sanitize_text_field( $body['team_name'] ) : '';
-        $campaign_ids = isset( $body['campaign_ids'] ) ? array_map( 'intval', $body['campaign_ids'] ) : array();
-        
-        if ( empty( $name ) || empty( $phone ) || empty( $team_name ) || empty( $campaign_ids ) ) {
-            return new WP_Error( 'missing_params', 'Missing required parameters', array( 'status' => 400 ) );
-        }
-        
-        $members_table = $wpdb->prefix . 'ss_team_members';
-        $teams_table = $wpdb->prefix . 'ss_teams';
-        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-        $signups_table = $wpdb->prefix . 'ss_signups';
-        
-        // Get or create user
-        $user = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id FROM {$members_table} WHERE phone = %s",
-            $phone
+
+        // Delegate to the canonical signup writer (shared with driver signup).
+        $result = Subsales_Database::register_member_signups( array(
+            'name'         => isset( $body['name'] ) ? $body['name'] : '',
+            'phone'        => isset( $body['phone'] ) ? $body['phone'] : '',
+            'team_name'    => isset( $body['team_name'] ) ? $body['team_name'] : '',
+            'campaign_ids' => isset( $body['campaign_ids'] ) ? $body['campaign_ids'] : array(),
+            'is_driver'    => false,
         ) );
-        
-        if ( $user ) {
-            $user_id = $user->id;
-        } else {
-            $wpdb->insert( $members_table, array(
-                'name' => $name,
-                'phone' => $phone,
-                'status' => 'active'
-            ), array( '%s', '%s', '%s' ) );
-            $user_id = $wpdb->insert_id;
+
+        if ( is_wp_error( $result ) ) {
+            return $result;
         }
-        
-        // Get or create team (case-insensitive lookup)
-        $team = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, name FROM {$teams_table} WHERE LOWER(name) = LOWER(%s)",
-            $team_name
-        ) );
-        
-        if ( $team ) {
-            $team_id = $team->id;
-            // Use the existing team's name (preserves original casing)
-            $team_name = $team->name;
-        } else {
-            $access_code = strtoupper( substr( md5( $team_name . time() ), 0, 6 ) );
-            $wpdb->insert( $teams_table, array(
-                'name' => $team_name,
-                'access_code' => $access_code,
-                'status' => 'active'
-            ), array( '%s', '%s', '%s' ) );
-            $team_id = $wpdb->insert_id;
-        }
-        
-        // Link user to team if not already linked
-        $link_exists = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
-            $user_id, $team_id
-        ) );
-        
-        if ( ! $link_exists ) {
-            $wpdb->insert( $user_teams_table, array(
-                'user_id' => $user_id,
-                'team_id' => $team_id
-            ), array( '%d', '%d' ) );
-        }
-        
-        // Create signups for each campaign
-        $signups_created = 0;
-        $skipped = array();
-        
-        subsales_log( 'DEBUG', 'signup', 'Processing signup request', array(
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'campaign_ids' => $campaign_ids
-        ) );
-        
-        foreach ( $campaign_ids as $campaign_id ) {
-            // Check for duplicate signup
-            subsales_log( 'DEBUG', 'signup', 'Checking for existing signup', array(
-                'user_id' => $user_id,
-                'team_id' => $team_id,
-                'campaign_id' => $campaign_id
-            ) );
-            
-            $exists = $wpdb->get_var( $wpdb->prepare(
-                "SELECT COUNT(*) FROM {$signups_table} 
-                WHERE user_id = %d AND team_id = %d AND campaign_id = %d",
-                $user_id, $team_id, $campaign_id
-            ) );
-            
-            subsales_log( 'DEBUG', 'signup', 'Checking campaign signup', array(
-                'campaign_id' => $campaign_id,
-                'exists' => $exists ? 'yes' : 'no'
-            ) );
-            
-            if ( $exists ) {
-                $skipped[] = $campaign_id;
-                continue;
-            }
-            
-            $result = $wpdb->insert( $signups_table, array(
-                'user_id' => $user_id,
-                'team_id' => $team_id,
-                'campaign_id' => $campaign_id,
-                'status' => 'active',
-                'created_at' => current_time( 'mysql' )
-            ), array( '%d', '%d', '%d', '%s', '%s' ) );
-            
-            if ( $result ) {
-                $signups_created++;
-            } else {
-                subsales_log( 'ERROR', 'signup', 'Failed to insert signup', array(
-                    'user_id' => $user_id,
-                    'team_id' => $team_id,
-                    'campaign_id' => $campaign_id,
-                    'error' => $wpdb->last_error
-                ) );
-            }
-        }
-        
+
         subsales_log( 'INFO', 'signup', 'Signup completed', array(
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'new_signups' => $signups_created,
-            'skipped' => $skipped
+            'user_id'     => $result['user_id'],
+            'team_id'     => $result['team_id'],
+            'new_signups' => $result['signups_created'],
+            'skipped'     => $result['skipped'],
         ) );
-        
+
         return rest_ensure_response( array(
-            'success' => true,
-            'user_id' => $user_id,
-            'team_id' => $team_id,
-            'signups_created' => $signups_created,
-            'skipped' => $skipped
+            'success'         => true,
+            'user_id'         => $result['user_id'],
+            'team_id'         => $result['team_id'],
+            'signups_created' => $result['signups_created'],
+            'skipped'         => $result['skipped'],
         ) );
     }
     
@@ -298,54 +192,23 @@ class Subsales_Signups {
      * POST /my-signups - Get user's signups by phone
      */
     public static function rest_get_my_signups( $request ) {
-        global $wpdb;
-        
         // Accept phone from either POST body or GET query for backward compatibility
         $phone = $request->get_param( 'phone' );
         if ( empty( $phone ) ) {
             $body = $request->get_json_params();
             $phone = isset( $body['phone'] ) ? $body['phone'] : '';
         }
-        
+
         $phone = preg_replace( '/\D/', '', $phone );
-        
+
         if ( empty( $phone ) ) {
             return new WP_Error( 'missing_phone', 'Phone number is required', array( 'status' => 400 ) );
         }
-        
-        $members_table = $wpdb->prefix . 'ss_team_members';
-        $signups_table = $wpdb->prefix . 'ss_signups';
-        $teams_table = $wpdb->prefix . 'ss_teams';
-        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
-        
-        // Get user
-        $user = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, name FROM {$members_table} WHERE phone = %s",
-            $phone
-        ) );
-        
-        if ( ! $user ) {
-            return rest_ensure_response( array() );
-        }
-        
-        // Get all signups for this user
-        $signups = $wpdb->get_results( $wpdb->prepare(
-            "SELECT 
-                s.id AS signup_id,
-                s.campaign_id,
-                s.team_id,
-                c.name AS campaign_name,
-                c.date AS campaign_date,
-                t.name AS team_name
-            FROM {$signups_table} s
-            INNER JOIN {$campaigns_table} c ON s.campaign_id = c.id
-            INNER JOIN {$teams_table} t ON s.team_id = t.id
-            WHERE s.user_id = %d AND s.status = 'active'
-            ORDER BY c.date ASC",
-            $user->id
-        ), ARRAY_A );
-        
-        return rest_ensure_response( $signups );
+
+        // Canonical reader (uses real campaign_name/campaign_date columns)
+        $lookup = Subsales_Database::get_member_signups_by_phone( $phone );
+
+        return rest_ensure_response( $lookup['signups'] );
     }
     
     /**
@@ -422,52 +285,39 @@ class Subsales_Signups {
      */
     public static function rest_get_team_roster( $request ) {
         global $wpdb;
-        
+
         $team_id = intval( $request->get_param( 'team_id' ) );
         $campaign_id = intval( $request->get_param( 'campaign_id' ) );
-        
+
         if ( empty( $team_id ) || empty( $campaign_id ) ) {
             return new WP_Error( 'missing_params', 'Team ID and Campaign ID are required', array( 'status' => 400 ) );
         }
-        
-        $members_table = $wpdb->prefix . 'ss_team_members';
-        $signups_table = $wpdb->prefix . 'ss_signups';
+
+        // Canonical roster: members excludes the driver (single source of truth)
+        $roster  = Subsales_Database::get_campaign_team_roster( $team_id, $campaign_id );
+        $members = array_map( function( $m ) {
+            return array( 'user_id' => $m['id'], 'name' => $m['name'], 'phone' => $m['phone'] );
+        }, $roster['members'] );
+
+        // Driver metadata (who/when) still lives on ss_team_campaigns
         $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
-        
-        // Get all team members signed up for this campaign
-        $members = $wpdb->get_results( $wpdb->prepare(
-            "SELECT 
-                m.id AS user_id,
-                m.name,
-                m.phone
-            FROM {$signups_table} s
-            INNER JOIN {$members_table} m ON s.user_id = m.id
-            WHERE s.team_id = %d AND s.campaign_id = %d AND s.status = 'active'
-            ORDER BY m.name ASC",
-            $team_id,
-            $campaign_id
-        ), ARRAY_A );
-        
-        // Get driver info from team_campaigns table
         $driver_info = $wpdb->get_row( $wpdb->prepare(
-            "SELECT 
-                tc.driver_name,
-                tc.driver_updated_by,
-                tc.driver_updated_at
-            FROM {$team_campaigns_table} tc
-            WHERE tc.team_id = %d AND tc.campaign_id = %d",
+            "SELECT driver_name, driver_updated_by, driver_updated_at
+             FROM {$team_campaigns_table}
+             WHERE team_id = %d AND campaign_id = %d",
             $team_id,
             $campaign_id
         ), ARRAY_A );
-        
-        $response = array(
-            'members' => $members,
-            'driver_name' => $driver_info ? $driver_info['driver_name'] : '',
+
+        // Prefer the live driver from signups; fall back to the recorded name
+        $driver_name = $roster['driver'] ? $roster['driver']['name'] : ( $driver_info ? $driver_info['driver_name'] : '' );
+
+        return rest_ensure_response( array(
+            'members'           => $members,
+            'driver_name'       => $driver_name,
             'driver_updated_by' => $driver_info ? $driver_info['driver_updated_by'] : '',
-            'driver_updated_at' => $driver_info ? $driver_info['driver_updated_at'] : ''
-        );
-        
-        return rest_ensure_response( $response );
+            'driver_updated_at' => $driver_info ? $driver_info['driver_updated_at'] : '',
+        ) );
     }
     
     /**

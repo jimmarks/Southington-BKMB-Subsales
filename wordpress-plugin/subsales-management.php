@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.4.115
+ * Version: 2.4.116
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.4.115' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.4.116' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -11605,30 +11605,31 @@ function ss_teams_page() {
                                             <h4 style="margin: 10px 0;">Team Members</h4>
                                             <div class="team-members-list">
                                                 <?php
-                                                // Get team members via junction table
-                                                $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-                                                $team_member_ids = $wpdb->get_col( $wpdb->prepare(
-                                                    "SELECT user_id FROM {$user_teams_table} WHERE team_id = %d",
-                                                    $team['id']
-                                                ));
-                                                
-                                                $team_members_new = array();
-                                                if ( ! empty( $team_member_ids ) ) {
-                                                    $team_members_new = $wpdb->get_results(
-                                                        "SELECT * FROM {$members_table} WHERE id IN (" . implode( ',', array_map( 'intval', $team_member_ids ) ) . ")",
-                                                        ARRAY_A
-                                                    );
-                                                }
+                                                // Canonical team membership; each member tagged is_driver
+                                                // (derived from active driver signups). Sort sales first
+                                                // and drivers last so we can render a divider between them.
+                                                $team_members_new = Subsales_Database::get_team_membership( $team['id'] );
+                                                usort( $team_members_new, function( $a, $b ) {
+                                                    $ad = ! empty( $a['is_driver'] ) ? 1 : 0;
+                                                    $bd = ! empty( $b['is_driver'] ) ? 1 : 0;
+                                                    if ( $ad !== $bd ) { return $ad - $bd; }
+                                                    return strcasecmp( $a['name'], $b['name'] );
+                                                } );
+                                                $driver_divider_shown = false;
                                                 
                                                 if ( ! empty( $team_members_new ) ) : ?>
                                                 <?php foreach ( $team_members_new as $member ) : ?>
                                                     <?php $member_is_active = ( $member['status'] ?? 'active' ) === 'active'; ?>
+                                                    <?php $member_is_driver = ! empty( $member['is_driver'] ); ?>
+                                                    <?php if ( $member_is_driver && ! $driver_divider_shown ) : $driver_divider_shown = true; ?>
+                                                        <div style="border-top: 2px solid #e0e0e0; margin: 14px 0 10px; padding-top: 8px; font-size: 12px; font-weight: 600; color: #f0a020; text-transform: uppercase; letter-spacing: 0.5px;">Drivers</div>
+                                                    <?php endif; ?>
                                                     <div class="user-card team-member-card" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
-                                                         style="background: <?php echo $member_is_active ? '#fff' : '#f5f5f5'; ?>; border: 1px solid <?php echo $member_is_active ? '#4CAF50' : '#ccc'; ?>; border-radius: 4px; padding: 10px; margin-bottom: 8px; position: relative;<?php echo $member_is_active ? '' : ' opacity: 0.7;'; ?>">
+                                                         style="background: <?php echo $member_is_active ? '#fff' : '#f5f5f5'; ?>; border: 1px solid <?php echo $member_is_driver ? '#f0a020' : ( $member_is_active ? '#4CAF50' : '#ccc' ); ?>; border-radius: 4px; padding: 10px; margin-bottom: 8px; position: relative;<?php echo $member_is_active ? '' : ' opacity: 0.7;'; ?>">
                                                         <button type="button" class="remove-from-team" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
                                                                 style="position: absolute; top: 5px; right: 5px; background: #dc3232; color: #fff; border: none; border-radius: 3px; cursor: pointer; padding: 2px 6px; font-size: 11px;"
                                                                 title="Remove from team">×</button>
-                                                        <strong><?php echo esc_html( $member['name'] ); ?></strong>
+                                                        <strong><?php echo esc_html( $member['name'] ); ?></strong> <?php if ( $member_is_driver ) : ?><span style="display:inline-block; margin-left:6px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#fff; background:#f0a020; padding:2px 6px; border-radius:3px;">Driver</span><?php endif; ?>
                                                         <?php if ( ! $member_is_active ) : ?>
                                                             <span style="font-size: 11px; color: #999;">(Inactive)</span>
                                                         <?php endif; ?>
@@ -13651,31 +13652,18 @@ function subsales_rest_verify_user( $request ) {
  * GET /wp-json/order-manager/v1/users/search?name=query
  */
 function subsales_rest_search_users( $request ) {
-    global $wpdb;
-    $table = $wpdb->prefix . 'ss_team_members';
-    
     // Accept both 'q' and 'name' parameters for backwards compatibility
     $search = $request->get_param( 'q' );
     if ( empty( $search ) ) {
         $search = $request->get_param( 'name' );
     }
-    
+
     if ( empty( $search ) || strlen( $search ) < 2 ) {
         return rest_ensure_response( array() );
     }
-    
-    // Search users by name - DO NOT return phone numbers (PII protection for kids)
-    // Phone validation happens on backend during signup submission
-    $users = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, name FROM {$table} WHERE name LIKE %s ORDER BY name ASC LIMIT 20",
-        '%' . $wpdb->esc_like( $search ) . '%'
-    ), ARRAY_A );
-    
-    if ( ! $users ) {
-        return rest_ensure_response( array() );
-    }
-    
-    return rest_ensure_response( $users );
+
+    // Canonical name search (id + name only — no phone, PII protection for kids)
+    return rest_ensure_response( Subsales_Database::search_members_by_name( $search, 20 ) );
 }
 
 /**

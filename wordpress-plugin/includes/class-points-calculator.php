@@ -49,20 +49,12 @@ class Subsales_Points_Calculator {
             ARRAY_A
         );
         
-        // Get all active signups with campaign dates to ensure everyone signed up gets included
-        $signups = $wpdb->get_results(
-            "SELECT s.user_id, s.team_id, 
-                    c.campaign_date as date,
-                    t.name as team_name,
-                    u.name as person_name
-             FROM {$signups_table} s
-             JOIN {$campaigns_table} c ON s.campaign_id = c.id
-             JOIN {$teams_table} t ON s.team_id = t.id
-             JOIN {$members_table} u ON s.user_id = u.id
-             WHERE s.status = 'active'
-             ORDER BY c.campaign_date, t.name, u.name",
-            ARRAY_A
-        );
+        // Get all active signups so everyone signed up is included. Drivers are
+        // excluded — they are not sales members and must not affect team counts.
+        $signups = Subsales_Database::get_active_signups( array(
+            'status'          => 'active',
+            'exclude_drivers' => true,
+        ) );
         
         // Initialize data structures
         $aggregated_data = array();
@@ -70,9 +62,9 @@ class Subsales_Points_Calculator {
         
         // First pass: Initialize all signed-up people with zero values
         foreach ( $signups as $signup ) {
-            $date = $signup['date'];
+            $date = $signup['campaign_date'];
             $team_name = $signup['team_name'];
-            $person_name = $signup['person_name'];
+            $person_name = $signup['user_name'];
             
             $key = $date . '|' . $team_name . '|' . $person_name;
             

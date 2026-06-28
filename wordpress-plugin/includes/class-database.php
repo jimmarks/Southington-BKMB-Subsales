@@ -1661,7 +1661,12 @@ class Subsales_Database {
         if ( ! empty( $filters['status'] ) ) {
             $where[] = $wpdb->prepare( 's.status = %s', $filters['status'] );
         }
-        
+
+        // Exclude drivers (is_driver=1) from sales/member-oriented queries
+        if ( ! empty( $filters['exclude_drivers'] ) ) {
+            $where[] = 's.is_driver = 0';
+        }
+
         $where_sql = implode( ' AND ', $where );
         
         $signups = $wpdb->get_results(
@@ -1871,6 +1876,443 @@ class Subsales_Database {
         }
         
         return $grouped;
+    }
+
+    // ============================================================
+    // Canonical Member / Roster Access (single source of truth)
+    //
+    // Every feature should read/write team-member & signup data
+    // through these methods instead of hand-writing SQL.
+    // `ss_signups.is_driver` is authoritative for driver status;
+    // `ss_team_members.role` is kept in sync for display only.
+    // ============================================================
+
+    /**
+     * Get-or-create a team member, keyed by phone (unique).
+     * Syncs name (and role, when provided) on an existing member.
+     *
+     * @param string      $name  Member name
+     * @param string      $phone 10-digit phone (caller normalizes)
+     * @param string|null $role  When set, update role (e.g. 'driver'); null leaves it untouched
+     * @return int|false Member ID, or false on failure
+     */
+    public static function get_or_create_member( $name, $phone, $role = null ) {
+        global $wpdb;
+        $members_table = $wpdb->prefix . 'ss_team_members';
+
+        $member = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id FROM {$members_table} WHERE phone = %s",
+            $phone
+        ), ARRAY_A );
+
+        if ( $member ) {
+            $member_id = intval( $member['id'] );
+            $update = array();
+            $format = array();
+            if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
+            if ( $role !== null && $role !== '' ) { $update['role'] = $role; $format[] = '%s'; }
+            if ( ! empty( $update ) ) {
+                $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
+            }
+            return $member_id;
+        }
+
+        $wpdb->insert( $members_table, array(
+            'name'   => $name,
+            'phone'  => $phone,
+            'role'   => ( $role !== null && $role !== '' ) ? $role : 'member',
+            'status' => 'active',
+        ), array( '%s', '%s', '%s', '%s' ) );
+
+        return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
+    }
+
+    /**
+     * Get-or-create a team by name (case-insensitive). Preserves the
+     * original casing of an existing team.
+     *
+     * @param string $team_name
+     * @return array { id, name }
+     */
+    public static function get_or_create_team( $team_name ) {
+        global $wpdb;
+        $teams_table = $wpdb->prefix . 'ss_teams';
+
+        $team = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, name FROM {$teams_table} WHERE LOWER(name) = LOWER(%s)",
+            $team_name
+        ), ARRAY_A );
+
+        if ( $team ) {
+            return array( 'id' => intval( $team['id'] ), 'name' => $team['name'] );
+        }
+
+        $access_code = strtoupper( substr( md5( $team_name . time() ), 0, 6 ) );
+        $wpdb->insert( $teams_table, array(
+            'name'        => $team_name,
+            'access_code' => $access_code,
+            'status'      => 'active',
+        ), array( '%s', '%s', '%s' ) );
+
+        return array( 'id' => intval( $wpdb->insert_id ), 'name' => $team_name );
+    }
+
+    /**
+     * Idempotently link a member to a team (ss_user_teams).
+     */
+    public static function link_member_to_team( $user_id, $team_id ) {
+        global $wpdb;
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+            $user_id, $team_id
+        ) );
+
+        if ( ! $exists ) {
+            $wpdb->insert( $user_teams_table, array(
+                'user_id' => $user_id,
+                'team_id' => $team_id,
+            ), array( '%d', '%d' ) );
+        }
+    }
+
+    /**
+     * Single write path for signups — used by BOTH kid signup and driver
+     * signup. Creates/links the member and team, then creates a signup per
+     * campaign.
+     *
+     * Sales (is_driver=false) preserves the original kid-signup semantics:
+     * a duplicate signup (any status) for the same user/team/campaign is
+     * skipped.
+     *
+     * Driver (is_driver=true) ensures an active driver signup row, makes the
+     * member the sole driver for that team+campaign (set_driver), and records
+     * the driver name on ss_team_campaigns.
+     *
+     * @param array $args { name, phone, team_name|team_id, campaign_ids[], is_driver }
+     * @return array|WP_Error { user_id, team_id, team_name, signups_created, skipped[], is_driver }
+     */
+    public static function register_member_signups( $args ) {
+        global $wpdb;
+
+        $name         = isset( $args['name'] ) ? sanitize_text_field( $args['name'] ) : '';
+        $phone        = isset( $args['phone'] ) ? preg_replace( '/\D/', '', $args['phone'] ) : '';
+        $campaign_ids = isset( $args['campaign_ids'] ) ? array_map( 'intval', (array) $args['campaign_ids'] ) : array();
+        $is_driver    = ! empty( $args['is_driver'] );
+
+        if ( $name === '' || $phone === '' || empty( $campaign_ids ) ) {
+            return new WP_Error( 'missing_params', 'Name, phone, and at least one campaign are required.', array( 'status' => 400 ) );
+        }
+
+        // Resolve the team (by id or get-or-create by name)
+        if ( ! empty( $args['team_id'] ) ) {
+            $team_id     = intval( $args['team_id'] );
+            $teams_table = $wpdb->prefix . 'ss_teams';
+            $team_name   = $wpdb->get_var( $wpdb->prepare( "SELECT name FROM {$teams_table} WHERE id = %d", $team_id ) );
+            if ( ! $team_name ) {
+                return new WP_Error( 'invalid_team', 'Team not found.', array( 'status' => 404 ) );
+            }
+        } elseif ( ! empty( $args['team_name'] ) ) {
+            $team      = self::get_or_create_team( sanitize_text_field( $args['team_name'] ) );
+            $team_id   = $team['id'];
+            $team_name = $team['name'];
+        } else {
+            return new WP_Error( 'missing_team', 'A team is required.', array( 'status' => 400 ) );
+        }
+
+        // Resolve the member (sync role to 'driver' only for driver signups)
+        $user_id = self::get_or_create_member( $name, $phone, $is_driver ? 'driver' : null );
+        if ( ! $user_id ) {
+            return new WP_Error( 'member_failed', 'Could not create the member.', array( 'status' => 500 ) );
+        }
+
+        self::link_member_to_team( $user_id, $team_id );
+
+        $signups_table   = $wpdb->prefix . 'ss_signups';
+        $signups_created = 0;
+        $skipped         = array();
+
+        foreach ( $campaign_ids as $campaign_id ) {
+            $existing = $wpdb->get_row( $wpdb->prepare(
+                "SELECT id, status FROM {$signups_table}
+                 WHERE user_id = %d AND team_id = %d AND campaign_id = %d",
+                $user_id, $team_id, $campaign_id
+            ), ARRAY_A );
+
+            if ( ! $is_driver ) {
+                // Kid-signup semantics: skip if a signup row already exists
+                if ( $existing ) {
+                    $skipped[] = $campaign_id;
+                    continue;
+                }
+                $inserted = $wpdb->insert( $signups_table, array(
+                    'user_id'    => $user_id,
+                    'team_id'    => $team_id,
+                    'campaign_id'=> $campaign_id,
+                    'status'     => 'active',
+                    'created_at' => current_time( 'mysql' ),
+                ), array( '%d', '%d', '%d', '%s', '%s' ) );
+
+                if ( $inserted ) {
+                    $signups_created++;
+                } else {
+                    subsales_log( 'ERROR', 'signup', 'Failed to insert signup', array(
+                        'user_id' => $user_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id,
+                        'error' => $wpdb->last_error,
+                    ) );
+                }
+                continue;
+            }
+
+            // Driver-signup semantics: ensure an active row exists, then make sole driver
+            if ( ! $existing ) {
+                $wpdb->insert( $signups_table, array(
+                    'user_id'    => $user_id,
+                    'team_id'    => $team_id,
+                    'campaign_id'=> $campaign_id,
+                    'is_driver'  => 1,
+                    'status'     => 'active',
+                    'created_at' => current_time( 'mysql' ),
+                ), array( '%d', '%d', '%d', '%d', '%s', '%s' ) );
+            } else {
+                $wpdb->update( $signups_table,
+                    array( 'status' => 'active' ),
+                    array( 'user_id' => $user_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
+                    array( '%s' ), array( '%d', '%d', '%d' )
+                );
+            }
+
+            // Make this member the sole driver for the team+campaign, and record the name
+            self::set_driver( $user_id, $team_id, $campaign_id );
+            self::upsert_team_campaign_driver( $team_id, $campaign_id, $name );
+            $signups_created++;
+        }
+
+        return array(
+            'user_id'         => $user_id,
+            'team_id'         => $team_id,
+            'team_name'       => $team_name,
+            'signups_created' => $signups_created,
+            'skipped'         => $skipped,
+            'is_driver'       => $is_driver,
+        );
+    }
+
+    /**
+     * Record/refresh the driver name on ss_team_campaigns for a team+campaign.
+     */
+    public static function upsert_team_campaign_driver( $team_id, $campaign_id, $driver_name ) {
+        global $wpdb;
+        $team_campaigns_table = $wpdb->prefix . 'ss_team_campaigns';
+
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$team_campaigns_table} WHERE team_id = %d AND campaign_id = %d",
+            $team_id, $campaign_id
+        ) );
+
+        $fields = array(
+            'driver_name'       => $driver_name,
+            'driver_updated_by' => 'Driver self-signup',
+            'driver_updated_at' => current_time( 'mysql' ),
+        );
+
+        if ( $exists ) {
+            $wpdb->update( $team_campaigns_table, $fields,
+                array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
+                array( '%s', '%s', '%s' ), array( '%d', '%d' ) );
+        } else {
+            $wpdb->insert( $team_campaigns_table,
+                array_merge( array( 'team_id' => $team_id, 'campaign_id' => $campaign_id ), $fields ),
+                array( '%d', '%d', '%s', '%s', '%s' ) );
+        }
+    }
+
+    /**
+     * Canonical roster for a single team+campaign (active signups only),
+     * split into sales members and the (single) driver.
+     *
+     * @return array { members: [ {id,name,phone}, ... ], driver: {id,name,phone}|null }
+     */
+    public static function get_campaign_team_roster( $team_id, $campaign_id ) {
+        global $wpdb;
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $members_table = $wpdb->prefix . 'ss_team_members';
+
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.user_id, s.is_driver, m.name, m.phone
+             FROM {$signups_table} s
+             INNER JOIN {$members_table} m ON s.user_id = m.id
+             WHERE s.team_id = %d AND s.campaign_id = %d AND s.status = 'active'
+             ORDER BY s.is_driver ASC, m.name ASC",
+            $team_id, $campaign_id
+        ), ARRAY_A );
+
+        $roster = array( 'members' => array(), 'driver' => null );
+        foreach ( (array) $rows as $r ) {
+            $person = array(
+                'id'    => intval( $r['user_id'] ),
+                'name'  => $r['name'],
+                'phone' => $r['phone'],
+            );
+            if ( intval( $r['is_driver'] ) === 1 ) {
+                $roster['driver'] = $person;
+            } else {
+                $roster['members'][] = $person;
+            }
+        }
+        return $roster;
+    }
+
+    /**
+     * Sales members for a team+campaign. Excludes the driver by default.
+     *
+     * @return array List of { id, name, phone }
+     */
+    public static function get_campaign_team_members( $team_id, $campaign_id, $include_driver = false ) {
+        $roster  = self::get_campaign_team_roster( $team_id, $campaign_id );
+        $members = $roster['members'];
+        if ( $include_driver && $roster['driver'] ) {
+            $members[] = $roster['driver'];
+        }
+        return $members;
+    }
+
+    /**
+     * Count of sales members (drivers excluded) for a team+campaign.
+     */
+    public static function get_campaign_team_member_count( $team_id, $campaign_id ) {
+        return count( self::get_campaign_team_members( $team_id, $campaign_id, false ) );
+    }
+
+    /**
+     * The driver for a team+campaign, or null.
+     */
+    public static function get_campaign_team_driver( $team_id, $campaign_id ) {
+        $roster = self::get_campaign_team_roster( $team_id, $campaign_id );
+        return $roster['driver'];
+    }
+
+    /**
+     * A member's active signups with team & campaign info. Canonical "my
+     * signups" reader (uses the real campaign_name / campaign_date columns).
+     *
+     * @return array List of signup rows
+     */
+    public static function get_member_signups( $user_id ) {
+        global $wpdb;
+        $signups_table   = $wpdb->prefix . 'ss_signups';
+        $teams_table     = $wpdb->prefix . 'ss_teams';
+        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
+
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.id AS signup_id, s.campaign_id, s.team_id, s.is_driver,
+                    t.name AS team_name,
+                    c.campaign_name, c.campaign_date
+             FROM {$signups_table} s
+             INNER JOIN {$teams_table} t ON s.team_id = t.id
+             INNER JOIN {$campaigns_table} c ON s.campaign_id = c.id
+             WHERE s.user_id = %d AND s.status = 'active'
+             ORDER BY c.campaign_date ASC, t.name ASC",
+            $user_id
+        ), ARRAY_A );
+
+        return $rows ? $rows : array();
+    }
+
+    /**
+     * Look up a member by phone and return them with their active signups.
+     *
+     * @return array { user: {id,name}|null, signups: [...] }
+     */
+    public static function get_member_signups_by_phone( $phone ) {
+        global $wpdb;
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $phone = preg_replace( '/\D/', '', $phone );
+
+        $user = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, name FROM {$members_table} WHERE phone = %s",
+            $phone
+        ), ARRAY_A );
+
+        if ( ! $user ) {
+            return array( 'user' => null, 'signups' => array() );
+        }
+
+        return array(
+            'user'    => array( 'id' => intval( $user['id'] ), 'name' => $user['name'] ),
+            'signups' => self::get_member_signups( intval( $user['id'] ) ),
+        );
+    }
+
+    /**
+     * Active signups across the system, optionally excluding drivers.
+     * Thin wrapper over get_signups() defaulting status to 'active'.
+     */
+    public static function get_active_signups( $filters = array() ) {
+        if ( ! isset( $filters['status'] ) ) {
+            $filters['status'] = 'active';
+        }
+        return self::get_signups( $filters );
+    }
+
+    /**
+     * Member name search for autocomplete (returns id + name only).
+     */
+    public static function search_members_by_name( $query, $limit = 20 ) {
+        global $wpdb;
+        $members_table = $wpdb->prefix . 'ss_team_members';
+        $query = trim( (string) $query );
+        if ( $query === '' ) {
+            return array();
+        }
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, name FROM {$members_table} WHERE name LIKE %s ORDER BY name ASC LIMIT %d",
+            '%' . $wpdb->esc_like( $query ) . '%',
+            intval( $limit )
+        ), ARRAY_A );
+        return $rows ? $rows : array();
+    }
+
+    /**
+     * Persistent team membership (from ss_user_teams), each member tagged
+     * with a derived is_driver flag (true if they hold any active driver
+     * signup for this team). Drives the admin Teams roster display.
+     *
+     * @return array List of member rows, each with an added 'is_driver' key
+     */
+    public static function get_team_membership( $team_id ) {
+        global $wpdb;
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $members_table    = $wpdb->prefix . 'ss_team_members';
+        $signups_table    = $wpdb->prefix . 'ss_signups';
+
+        $members = $wpdb->get_results( $wpdb->prepare(
+            "SELECT m.*
+             FROM {$user_teams_table} ut
+             INNER JOIN {$members_table} m ON ut.user_id = m.id
+             WHERE ut.team_id = %d
+             ORDER BY m.name ASC",
+            $team_id
+        ), ARRAY_A );
+
+        if ( ! $members ) {
+            return array();
+        }
+
+        $driver_ids = $wpdb->get_col( $wpdb->prepare(
+            "SELECT DISTINCT user_id FROM {$signups_table}
+             WHERE team_id = %d AND is_driver = 1 AND status = 'active'",
+            $team_id
+        ) );
+        $driver_ids = array_map( 'intval', (array) $driver_ids );
+
+        foreach ( $members as &$m ) {
+            $m['is_driver'] = in_array( intval( $m['id'] ), $driver_ids, true ) ? 1 : 0;
+        }
+        unset( $m );
+
+        return $members;
     }
 }
 
