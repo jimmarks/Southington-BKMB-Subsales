@@ -611,7 +611,7 @@
       // order may be local-format (with createdAt) or remote row with order_data/created_at
       const od = (o.order_data && typeof o.order_data === 'object') ? o.order_data : (o.order_data && typeof o.order_data === 'string' ? (function(){ try{ return JSON.parse(o.order_data); }catch(e){ return {}; } })() : o);
       
-      // Filter by current user
+      // Filter by current user FIRST (always show only MY orders)
       const isMyOrder = (currentUserId && od.entered_by_id && od.entered_by_id === currentUserId) || 
                         (currentUserId && od.subsales_user_id && od.subsales_user_id === currentUserId) ||
                         (currentUserName && od.entered_by_name && od.entered_by_name === currentUserName) ||
@@ -620,15 +620,14 @@
       if (!isMyOrder) return; // skip orders not from current user
       
       // Date/tally filtering depends on mode:
-      // Individual mode (team -1): Show all untallied orders regardless of date
-      // Team mode: Show only today's orders
+      // Individual mode (team -1): Show all MY untallied orders regardless of date or which team created them
+      // Team mode: Show only MY orders from today
       if (isIndividualMode) {
-        // For individual mode, only show orders that haven't been tallied yet
-        const orderTeamId = String(od.team_id || o.team_id || '');
+        // For individual mode, only show orders that haven't been tallied yet (any team)
         const isTallied = (o.tallied === 1 || o.tallied === '1' || od.tallied === 1 || od.tallied === '1');
         
-        // Only include team -1 orders that are not tallied
-        if (orderTeamId !== '-1' || isTallied) return;
+        // Skip tallied orders
+        if (isTallied) return;
       } else {
         // Team mode: only include today's orders
         const created = od && (od.createdAt || od.created_at) || o.createdAt || o.created_at || null;

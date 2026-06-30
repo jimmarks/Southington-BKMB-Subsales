@@ -751,6 +751,23 @@ $params = array();
         
         // Make fetchPage available globally for refresh after edit/delete
         window.SubsalesRefreshOrders = function(){ fetchPage(1); };
+        
+        // Auto-open edit modal if 'edit' parameter in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const editOrderId = urlParams.get('edit');
+        if (editOrderId) {
+            // Wait for initial page load, then open edit modal
+            setTimeout(function() {
+                // The edit parameter is the database ID (order.id)
+                // We need to find the order_id (display ID) from the loaded data
+                // For now, just pass the db ID twice (editOrder will fetch the data)
+                SubsalesOrderEdit.editOrder(parseInt(editOrderId), 'Loading...');
+                
+                // Clean up URL without reloading page
+                const cleanUrl = window.location.pathname + '?page=subsales-orders';
+                window.history.replaceState({}, document.title, cleanUrl);
+            }, 500); // Give table time to load first
+        }
     })();
     
     // Order Edit/Delete/History Manager

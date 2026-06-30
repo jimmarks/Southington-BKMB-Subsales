@@ -291,12 +291,41 @@ if ( ! current_user_can( 'manage_options' ) ) {
             });
         })(jQuery);
         </script>
-    <?php if ( ! empty( $_GET['subsales_import_result'] ) ) :
-            $raw = sanitize_text_field( wp_unslash( $_GET['subsales_import_result'] ) );
-            // decode if it was rawurlencoded
-            $raw = rawurldecode( $raw );
+    <?php 
+        // Check for import/restore result message
+        $import_message = get_transient( 'subsales_import_message' );
+        if ( $import_message ) :
+            delete_transient( 'subsales_import_message' );
+            
+            // Detect if errors occurred
+            $has_errors = ( strpos( $import_message, '||ERROR_MARKER||' ) !== false );
+            $import_message = str_replace( '||ERROR_MARKER||', '', $import_message );
+            
+            // Convert newlines to br tags, allow basic HTML
+            $import_message = nl2br( $import_message, false );
+            
+            $notice_class = $has_errors ? 'notice-error' : 'notice-success';
+            $allowed_tags = array(
+                'strong' => array(),
+                'br' => array(),
+                'em' => array()
+            );
         ?>
-            <div class="notice notice-success"><p><strong>Import result:</strong> <?php echo esc_html( $raw ); ?></p></div>
+            <div class="notice <?php echo esc_attr( $notice_class ); ?> is-dismissible">
+                <p style="line-height: 1.8; margin: 0.5em 0;"><?php echo wp_kses( $import_message, $allowed_tags ); ?></p>
+            </div>
+        <?php endif; ?>
+        
+        <?php if ( ! empty( $_GET['subsales_import_error'] ) ) :
+            $error_code = sanitize_text_field( wp_unslash( $_GET['subsales_import_error'] ) );
+            $error_msg = 'Import failed';
+            if ( $error_code === 'nofile' ) {
+                $error_msg = 'No backup file was uploaded. Please select a file and try again.';
+            } elseif ( $error_code === 'clear_failed' ) {
+                $error_msg = 'Failed to clear existing data before restore. Check system logs for details.';
+            }
+        ?>
+            <div class="notice notice-error"><p><strong>Error:</strong> <?php echo esc_html( $error_msg ); ?></p></div>
         <?php endif; ?>
         
         
@@ -853,10 +882,10 @@ if ( ! current_user_can( 'manage_options' ) ) {
             <!-- Export Section -->
             <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
                 <h3 style="margin-top: 0;">📤 Export Data</h3>
-                <?php $export_nonce = wp_create_nonce( 'subsales_export_nonce' ); ?>
+                <?php $export_nonce = wp_create_nonce( 'subsales_export_backup' ); ?>
                 
                 <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px;">
-                    <a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup_combined&_wpnonce=' . $export_nonce ) ); ?>">
+                    <a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin-post.php?action=subsales_export_backup&_wpnonce=' . $export_nonce ) ); ?>">
                         📦 Export Complete Backup (ZIP)
                     </a>
                 </div>
@@ -883,16 +912,21 @@ if ( ! current_user_can( 'manage_options' ) ) {
             <!-- Import Section -->
             <div style="background: #fff; border: 1px solid #c3c4c7; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
                 <h3 style="margin-top: 0;">📥 Import Data</h3>
+                <p style="background: #f0f0f1; padding: 10px; margin-bottom: 15px; border-radius: 3px;">
+                    <strong>Upload Limits:</strong> 
+                    Max file size: <code><?php echo size_format( wp_max_upload_size() ); ?></code> | 
+                    Max post size: <code><?php echo ini_get( 'post_max_size' ); ?></code>
+                </p>
                 
-                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
-                    <?php wp_nonce_field( 'subsales_import_nonce' ); ?>
+                <form id="subsales-import-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
+                    <?php wp_nonce_field( 'subsales_import_backup' ); ?>
                     <input type="hidden" name="action" value="subsales_import_backup" />
                     
                     <table class="form-table">
                         <tr>
                             <th scope="row">Backup File</th>
                             <td>
-                                <input type="file" name="backup_file" accept="text/csv,text/plain,application/zip,.zip" required style="margin-bottom: 10px;" />
+                                <input type="file" name="backup_file" accept=".csv,.zip,text/csv,application/zip" required style="margin-bottom: 10px;" />
                                 <p class="description">Upload a ZIP backup (complete) or individual CSV file</p>
                             </td>
                         </tr>
@@ -926,13 +960,13 @@ if ( ! current_user_can( 'manage_options' ) ) {
                     <summary style="cursor: pointer; font-weight: 600; padding: 10px; background: #f6f7f7; border-radius: 4px;">Show Restore Options</summary>
                     <div style="padding: 15px; margin-top: 10px; border: 1px solid #ddd; border-radius: 4px;">
                         <form id="subsales-destructive-restore" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data">
-                            <?php wp_nonce_field( 'subsales_restore_nonce' ); ?>
-                            <input type="hidden" name="action" value="subsales_restore_and_import" />
+                            <?php wp_nonce_field( 'subsales_restore_backup' ); ?>
+                            <input type="hidden" name="action" value="subsales_restore_backup" />
                             
                             <table class="form-table">
                                 <tr>
                                     <th scope="row">Backup File</th>
-                                    <td><input type="file" name="backup_file" accept="application/zip,.zip,text/csv,text/plain" required /></td>
+                                    <td><input type="file" name="backup_file" accept=".csv,.zip,text/csv,application/zip" required /></td>
                                 </tr>
                                 <tr>
                                     <th scope="row">Clear Before Import</th>
@@ -1197,3 +1231,33 @@ if ( ! current_user_can( 'manage_options' ) ) {
         </table>
                 </div>
     </div> <!-- .wrap -->
+
+    <!-- Import/Restore Progress Modal -->
+    <div id="subsales-import-modal" class="subsales-modal" style="display: none;">
+        <div class="modal-backdrop"></div>
+        <div class="modal-container">
+            <div class="modal-header">
+                <h2 class="modal-title">Importing Data</h2>
+                <button class="modal-close" disabled title="Close when complete">×</button>
+            </div>
+            
+            <div class="modal-body">
+                <!-- Progress Bar -->
+                <div class="progress-container">
+                    <div class="subsales-progress-bar">
+                        <div class="subsales-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <div class="progress-text">Initializing...</div>
+                </div>
+
+                <!-- Live Log -->
+                <div class="log-container">
+                    <h3>Activity Log</h3>
+                    <div class="import-log"></div>
+                </div>
+
+                <!-- Error Sections (Collapsible) -->
+                <div class="error-sections"></div>
+            </div>
+        </div>
+    </div>

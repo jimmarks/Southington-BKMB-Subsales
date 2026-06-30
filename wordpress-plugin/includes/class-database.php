@@ -29,6 +29,12 @@ class Subsales_Database {
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_old_logs' ) );
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'check_debug_timeout' ) );
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_stale_pwa_sessions' ) );
+        
+        // Schedule nightly address validation (2 AM daily)
+        if ( ! wp_next_scheduled( 'subsales_nightly_address_validation' ) ) {
+            wp_schedule_event( strtotime( '02:00:00' ), 'daily', 'subsales_nightly_address_validation' );
+        }
+        add_action( 'subsales_nightly_address_validation', array( __CLASS__, 'run_address_validation' ) );
     }
     
     /**
@@ -57,13 +63,21 @@ class Subsales_Database {
             tallied tinyint(1) DEFAULT 0,
             tallied_at datetime DEFAULT NULL,
             tallied_by_user_id bigint(20) unsigned DEFAULT NULL,
+            address varchar(500) DEFAULT NULL,
+            address_entry_method enum('autocomplete','manual','gps','unknown') DEFAULT 'unknown',
+            address_validation_status enum('pending','valid','geocode_failed','format_invalid','approved') DEFAULT 'pending',
+            address_validation_date datetime DEFAULT NULL,
+            address_validation_data text DEFAULT NULL,
+            address_hash varchar(64) DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY  (id),
             UNIQUE KEY order_id (order_id),
             KEY team_id (team_id),
             KEY deleted (deleted),
-            KEY tallied (tallied)
+            KEY tallied (tallied),
+            KEY address_validation_status (address_validation_status),
+            KEY address_hash (address_hash)
         ) $charset_collate;";
         
         $teams_sql = "CREATE TABLE $teams_table_name (
@@ -292,6 +306,9 @@ class Subsales_Database {
         self::migrate_user_teams( $team_members_table_name, $user_teams_table_name );
         self::migrate_edit_type_enum( $edit_history_table_name );
         self::migrate_team_campaigns_table( $team_campaigns_table_name );
+        self::migrate_address_validation_columns( $table_name );
+        self::migrate_geocode_cache_columns();
+        self::migrate_address_validation_dismissed_status( $table_name );
     }
     
     /**
@@ -505,6 +522,159 @@ class Subsales_Database {
                  MODIFY COLUMN edit_type enum('create','update','delete','restore') NOT NULL"
             );
         }
+    }
+    
+    /**
+     * Schema migration: Add address validation columns
+     */
+    private static function migrate_address_validation_columns( $table_name ) {
+        global $wpdb;
+        
+        // Check if address column exists
+        $address_column_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$table_name}' 
+             AND COLUMN_NAME = 'address'"
+        );
+        
+        if ( ! $address_column_exists ) {
+            // Add all address validation columns at once
+            $wpdb->query(
+                "ALTER TABLE {$table_name} 
+                 ADD COLUMN address varchar(500) DEFAULT NULL AFTER tallied_by_user_id,
+                 ADD COLUMN address_entry_method enum('autocomplete','manual','gps','unknown') DEFAULT 'unknown' AFTER address,
+                 ADD COLUMN address_validation_status enum('pending','valid','geocode_failed','format_invalid','approved') DEFAULT 'pending' AFTER address_entry_method,
+                 ADD COLUMN address_validation_date datetime DEFAULT NULL AFTER address_validation_status,
+                 ADD COLUMN address_validation_data text DEFAULT NULL AFTER address_validation_date,
+                 ADD COLUMN address_hash varchar(64) DEFAULT NULL AFTER address_validation_data,
+                 ADD INDEX address_validation_status (address_validation_status),
+                 ADD INDEX address_hash (address_hash)"
+            );
+            
+            // Backfill address column from order_data for existing orders
+            $orders = $wpdb->get_results( "SELECT id, order_data FROM {$table_name}", ARRAY_A );
+            foreach ( $orders as $order ) {
+                $order_data = json_decode( $order['order_data'], true );
+                if ( ! empty( $order_data['address'] ) ) {
+                    $address = $order_data['address'];
+                    $address_hash = md5( strtolower( trim( $address ) ) );
+                    
+                    $wpdb->update(
+                        $table_name,
+                        array( 
+                            'address' => $address,
+                            'address_hash' => $address_hash
+                        ),
+                        array( 'id' => $order['id'] ),
+                        array( '%s', '%s' ),
+                        array( '%d' )
+                    );
+                }
+            }
+        }
+    }
+    
+    /**
+     * Schema migration: Add formatted_address and location_type to geocode cache
+     * 
+     * @since 2.4.55
+     */
+    private static function migrate_geocode_cache_columns() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'order_sync_geocodes';
+        
+        // Check if table exists
+        $table_exists = $wpdb->get_var(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$table_name}'"
+        );
+        
+        if ( ! $table_exists ) {
+            return; // Table doesn't exist yet, will be created with proper schema
+        }
+        
+        // Check if formatted_address column exists
+        $formatted_address_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$table_name}' 
+             AND COLUMN_NAME = 'formatted_address'"
+        );
+        
+        if ( ! $formatted_address_exists ) {
+            // Add formatted_address and location_type columns
+            $wpdb->query(
+                "ALTER TABLE {$table_name} 
+                 ADD COLUMN formatted_address TEXT DEFAULT NULL AFTER lng,
+                 ADD COLUMN location_type VARCHAR(32) DEFAULT 'APPROXIMATE' AFTER formatted_address"
+            );
+            
+            subsales_log( 'INFO', 'system', 'Geocode cache table migrated: added formatted_address and location_type columns' );
+        }
+
+        // Subsales_Delivery::geocode_address() caches using `address` and `created_at`
+        // columns that the original schema never created. Add them idempotently so
+        // the cache read/write stops failing with "Unknown column 'address'".
+        $address_col = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$table_name}'
+             AND COLUMN_NAME = 'address'"
+        );
+        if ( ! $address_col ) {
+            $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN address TEXT DEFAULT NULL" );
+            subsales_log( 'INFO', 'system', 'Geocode cache table migrated: added address column' );
+        }
+
+        $created_at_col = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$table_name}'
+             AND COLUMN_NAME = 'created_at'"
+        );
+        if ( ! $created_at_col ) {
+            $wpdb->query( "ALTER TABLE {$table_name} ADD COLUMN created_at datetime DEFAULT NULL" );
+            subsales_log( 'INFO', 'system', 'Geocode cache table migrated: added created_at column' );
+        }
+    }
+    
+    /**
+     * Schema migration: Add 'dismissed' to address_validation_status enum
+     * 
+     * @since 2.4.60
+     */
+    private static function migrate_address_validation_dismissed_status( $table_name ) {
+        global $wpdb;
+        
+        // Check if address_validation_status column exists
+        $column_info = $wpdb->get_row(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$table_name}' 
+             AND COLUMN_NAME = 'address_validation_status'",
+            ARRAY_A
+        );
+        
+        if ( ! $column_info ) {
+            return; // Column doesn't exist yet
+        }
+        
+        // Check if 'dismissed' is already in the enum
+        if ( strpos( $column_info['COLUMN_TYPE'], "'dismissed'" ) !== false ) {
+            return; // Already migrated
+        }
+        
+        // Add 'dismissed' to the enum
+        $wpdb->query(
+            "ALTER TABLE {$table_name} 
+             MODIFY COLUMN address_validation_status 
+             enum('pending','valid','geocode_failed','format_invalid','approved','dismissed') 
+             DEFAULT 'pending'"
+        );
+        
+        subsales_log( 'INFO', 'system', 'Address validation status enum migrated: added dismissed status' );
     }
     
     /**
@@ -1877,6 +2047,288 @@ class Subsales_Database {
         
         return $grouped;
     }
+    
+    /**
+     * Run nightly address validation for orders
+     * Validates addresses that need checking, skips already-validated unless address changed
+     */
+    public static function run_address_validation() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        // Find orders that need validation:
+        // 1. Status = 'pending' (never validated)
+        // 2. Address changed (address_hash doesn't match current address)
+        // 3. All orders (including tallied/delivered) - use dismiss button to filter out unwanted addresses
+        $orders = $wpdb->get_results(
+            "SELECT id, order_id, order_data, address, address_hash, address_validation_status, tallied
+             FROM {$table}
+             WHERE deleted = 0
+             AND address_validation_status != 'dismissed'
+             AND (
+                 address_validation_status = 'pending'
+                 OR address_hash != MD5(LOWER(TRIM(COALESCE(address, ''))))
+                 OR address_validation_date IS NULL
+             )
+             ORDER BY created_at DESC",
+            ARRAY_A
+        );
+        
+        if ( empty( $orders ) ) {
+            subsales_log( 'INFO', 'system', 'Address validation: No orders need validation' );
+            return;
+        }
+        
+        subsales_log( 'INFO', 'system', 'Address validation: Starting validation for ' . count( $orders ) . ' orders' );
+        
+        $validated_count = 0;
+        $valid_count = 0;
+        $failed_count = 0;
+        
+        // Load delivery class for parse/geocode functions
+        require_once SUBSALES_PLUGIN_PATH . 'includes/class-delivery.php';
+        
+        foreach ( $orders as $order ) {
+            // Extract address from order_data if not in address column
+            $address = $order['address'];
+            if ( empty( $address ) ) {
+                $order_data = json_decode( $order['order_data'], true );
+                $address = ! empty( $order_data['address'] ) ? $order_data['address'] : '';
+                
+                // Update address column while we're at it
+                if ( ! empty( $address ) ) {
+                    $wpdb->update(
+                        $table,
+                        array( 'address' => $address ),
+                        array( 'id' => $order['id'] ),
+                        array( '%s' ),
+                        array( '%d' )
+                    );
+                }
+            }
+            
+            if ( empty( $address ) ) {
+                // No address to validate
+                $wpdb->update(
+                    $table,
+                    array(
+                        'address_validation_status' => 'format_invalid',
+                        'address_validation_date' => current_time( 'mysql' ),
+                        'address_validation_data' => json_encode( array( 'error' => 'No address provided' ) )
+                    ),
+                    array( 'id' => $order['id'] ),
+                    array( '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+                $failed_count++;
+                continue;
+            }
+            
+            // Parse address
+            $parsed = Subsales_Delivery::parse_address( $address );
+            if ( ! $parsed || empty( $parsed['house_number'] ) || empty( $parsed['street'] ) ) {
+                // Can't parse - format invalid
+                $wpdb->update(
+                    $table,
+                    array(
+                        'address_validation_status' => 'format_invalid',
+                        'address_validation_date' => current_time( 'mysql' ),
+                        'address_validation_data' => json_encode( array( 'error' => 'Could not parse address', 'address' => $address ) ),
+                        'address_hash' => md5( strtolower( trim( $address ) ) )
+                    ),
+                    array( 'id' => $order['id'] ),
+                    array( '%s', '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+                $failed_count++;
+                continue;
+            }
+            
+            // Check if address exists in wp_ss_addresses
+            $address_table = $wpdb->prefix . 'ss_addresses';
+            $query = "SELECT lat, lng FROM {$address_table} 
+                      WHERE LOWER(TRIM(street)) = %s 
+                      AND LOWER(TRIM(house_number)) = %s";
+            $params = array(
+                strtolower( trim( $parsed['street'] ) ),
+                strtolower( trim( $parsed['house_number'] ) )
+            );
+            
+            // Add unit if specified
+            if ( ! empty( $parsed['unit'] ) ) {
+                $query .= " AND LOWER(TRIM(unit)) = %s";
+                $params[] = strtolower( trim( $parsed['unit'] ) );
+            }
+            
+            $query .= " LIMIT 1";
+            
+            $address_row = $wpdb->get_row( $wpdb->prepare( $query, $params ), ARRAY_A );
+            
+            if ( $address_row && ! empty( $address_row['lat'] ) && ! empty( $address_row['lng'] ) ) {
+                // Found in database - valid!
+                $wpdb->update(
+                    $table,
+                    array(
+                        'address_validation_status' => 'valid',
+                        'address_validation_date' => current_time( 'mysql' ),
+                        'address_validation_data' => json_encode( array( 
+                            'source' => 'database',
+                            'parsed' => $parsed,
+                            'coordinates' => $address_row
+                        ) ),
+                        'address_hash' => md5( strtolower( trim( $address ) ) )
+                    ),
+                    array( 'id' => $order['id'] ),
+                    array( '%s', '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+                $valid_count++;
+                $validated_count++;
+                continue;
+            }
+            
+            // Not in database - try geocoding
+            $coords = Subsales_Delivery::geocode_address( $address );
+            if ( $coords && ! empty( $coords['lat'] ) && ! empty( $coords['lng'] ) ) {
+                // Geocoded successfully
+                // If Google returned a formatted_address, parse that instead of user input
+                // This corrects typos like "walkers crosing" → "Walkers Crossing"
+                $corrected_parsed = $parsed; // Default to original parse
+                $corrected_address = $address;
+                
+                if ( ! empty( $coords['formatted_address'] ) ) {
+                    $corrected_address = $coords['formatted_address'];
+                    $temp_parsed = Subsales_Delivery::parse_address( $coords['formatted_address'] );
+                    
+                    // Only use corrected parse if it has required fields
+                    if ( $temp_parsed && ! empty( $temp_parsed['house_number'] ) && ! empty( $temp_parsed['street'] ) ) {
+                        $corrected_parsed = $temp_parsed;
+                    }
+                }
+                
+                $validation_data = array( 
+                    'source' => 'geocoded',
+                    'original_address' => $address, // User's input with typo
+                    'corrected_address' => $corrected_address, // Google's formatted address
+                    'parsed' => $corrected_parsed, // Parse of corrected address
+                    'coordinates' => array( 'lat' => $coords['lat'], 'lng' => $coords['lng'] ),
+                    'location_type' => ! empty( $coords['location_type'] ) ? $coords['location_type'] : 'APPROXIMATE',
+                    'needs_approval' => true
+                );
+                
+                // Mark as valid (needs approval for database entry)
+                $wpdb->update(
+                    $table,
+                    array(
+                        'address_validation_status' => 'valid',
+                        'address_validation_date' => current_time( 'mysql' ),
+                        'address_validation_data' => json_encode( $validation_data ),
+                        'address_hash' => md5( strtolower( trim( $address ) ) )
+                    ),
+                    array( 'id' => $order['id'] ),
+                    array( '%s', '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+                $valid_count++;
+                $validated_count++;
+            } else {
+                // Geocoding failed
+                $wpdb->update(
+                    $table,
+                    array(
+                        'address_validation_status' => 'geocode_failed',
+                        'address_validation_date' => current_time( 'mysql' ),
+                        'address_validation_data' => json_encode( array( 
+                            'error' => 'Geocoding failed',
+                            'address' => $address,
+                            'parsed' => $parsed
+                        ) ),
+                        'address_hash' => md5( strtolower( trim( $address ) ) )
+                    ),
+                    array( 'id' => $order['id'] ),
+                    array( '%s', '%s', '%s', '%s' ),
+                    array( '%d' )
+                );
+                $failed_count++;
+                $validated_count++;
+            }
+        }
+        
+        subsales_log( 'INFO', 'system', "Address validation complete: {$validated_count} validated, {$valid_count} valid, {$failed_count} failed" );
+    }
+    
+    /**
+     * Get count of orders with address validation issues
+     * 
+     * @return int Count of orders needing attention
+     */
+    public static function get_address_validation_issues_count() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        $count = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$table}
+             WHERE deleted = 0
+             AND tallied = 0
+             AND address_validation_status IN ('geocode_failed', 'format_invalid')"
+        );
+        
+        return intval( $count );
+    }
+    
+    /**
+     * Check if address validation has ever been run
+     * 
+     * Returns true if at least one order has been validated (has address_validation_date)
+     * 
+     * @return bool True if validation has run at least once
+     * @since 2.4.54
+     */
+    public static function has_address_validation_run() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        // Check if the column exists first
+        $column_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() 
+             AND TABLE_NAME = '{$table}' 
+             AND COLUMN_NAME = 'address_validation_date'"
+        );
+        
+        if ( ! $column_exists ) {
+            return false;
+        }
+        
+        // Check if any order has been validated
+        $has_validated = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$table}
+             WHERE address_validation_date IS NOT NULL
+             AND deleted = 0"
+        );
+        
+        return intval( $has_validated ) > 0;
+    }
+    
+    /**
+     * Get count of orders pending validation
+     * 
+     * @return int Count of orders with pending validation status
+     * @since 2.4.54
+     */
+    public static function get_address_validation_pending_count() {
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_orders';
+        
+        $count = $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$table}
+             WHERE deleted = 0
+             AND tallied = 0
+             AND (address_validation_status = 'pending' OR address_validation_status IS NULL)"
+        );
+        
+        return intval( $count );
+    }
 
     // ============================================================
     // Canonical Member / Roster Access (single source of truth)
@@ -2315,4 +2767,3 @@ class Subsales_Database {
         return $members;
     }
 }
-

@@ -9,9 +9,10 @@ tr.subsales-deleted-order td:not(:last-child) {
     color: #999;
 }
 
-/* Top row: 4 columns (Teams, Members, Orders, Address Data) */
-.subsales-top-row{ grid-template-columns: repeat(4, 1fr); }
-@media (max-width:1400px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
+/* Top row: 5 columns (Teams, Members, Orders, Address Data, Address Issues) */
+.subsales-top-row{ grid-template-columns: repeat(5, 1fr); }
+@media (max-width:1600px){ .subsales-top-row{ grid-template-columns: repeat(3, 1fr); } }
+@media (max-width:1200px){ .subsales-top-row{ grid-template-columns: repeat(2, 1fr); } }
 @media (max-width:700px){ .subsales-top-row{ grid-template-columns: 1fr; } }
 
 /* Hero row: Full width Total Revenue widget */
@@ -425,6 +426,15 @@ tr.subsales-deleted-order td:not(:last-child) {
   transition: width 0.3s ease;
 }
 
+/* Progress fill variants for import modal */
+.subsales-progress-fill.complete {
+  background: linear-gradient(90deg, #46b450, #2e7d32);
+}
+
+.subsales-progress-fill.error {
+  background: linear-gradient(90deg, #d63638, #b32d2e);
+}
+
 .subsales-card-actions {
   margin-top: 20px;
   padding-top: 20px;
@@ -539,7 +549,7 @@ tr.subsales-deleted-order td:not(:last-child) {
 }
 
 .subsales-modal-overlay.open {
-  display: block;
+  display: block
 }
 
 .subsales-stats-zero-state {
@@ -1539,3 +1549,331 @@ input:checked + .subsales-time-slider {
     }
 }
 
+/* Address Validation Styling */
+.subsales-box-warning {
+    border-color: #f0ad4e !important;
+    background: #fffbf0 !important;
+}
+
+.subsales-box-warning .postbox-header {
+    background: #fff3cd !important;
+    border-bottom-color: #f0ad4e !important;
+}
+
+.subsales-box-warning .postbox-header h2 {
+    color: #856404 !important;
+}
+
+.subsales-address-validation-inside {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 16px;
+}
+
+.subsales-validation-count {
+    font-size: 36px !important;
+    font-weight: bold;
+    color: #f0ad4e !important;
+    margin: 0 0 8px 0 !important;
+}
+
+.subsales-address-data-label {
+    font-size: 13px;
+    color: #666;
+    margin: 4px 0 12px 0;
+}
+
+.subsales-address-data-action {
+    margin: 0;
+}
+
+/* ============================================
+   Import/Restore Modal Styles
+   ============================================ */
+.subsales-modal {
+    position: fixed;
+    top: 0;
+    left:0;
+    width: 100%;
+    height: 100%;
+    z-index: 100000;
+}
+
+.subsales-modal .modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+}
+
+.subsales-modal .modal-container {
+    position: relative;
+    width: 90%;
+    max-width: 900px;
+    max-height: 90vh;
+    margin: 5vh auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+}
+
+.subsales-modal .modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #f7f7f7;
+    border-radius: 8px 8px 0 0;
+}
+
+.subsales-modal .modal-title {
+    margin: 0;
+    font-size: 20px;
+    color: #333;
+}
+
+.subsales-modal .modal-close {
+    background: #d63638;
+    border: none;
+    color: #fff;
+    font-size: 24px;
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    cursor: pointer;
+    line-height: 1;
+    transition: background 0.2s;
+}
+
+.subsales-modal .modal-close:hover:not(:disabled) {
+    background: #cc2d2d;
+}
+
+.subsales-modal .modal-close:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+.subsales-modal .modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+/* Import Modal Progress Bar */
+.progress-container {
+    margin-bottom: 24px;
+}
+
+.progress-container .subsales-progress-bar {
+    height: 28px;
+    margin: 8px 0;
+}
+
+.progress-container .subsales-progress-fill {
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-container .subsales-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-text {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #666;
+    text-align: center;
+}
+
+/* Log Container */
+.log-container {
+    margin-bottom: 24px;
+}
+
+.log-container h3 {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+    color: #333;
+}
+
+.import-log {
+    background: #f7f7f7;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.log-entry {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-time {
+    color: #999;
+    flex-shrink: 0;
+    min-width: 80px;
+}
+
+.log-entry.with-progress {
+    flex-direction: column;
+}
+
+.log-entry-content {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.mini-progress {
+    margin-top: 6px;
+    height: 4px;
+    background: #e0e0e0;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.mini-progress-bar {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    transition: width 0.2s ease;
+}
+
+.log-icon {
+    flex-shrink: 0;
+    width: 20px;
+}
+
+.log-message {
+    flex: 1;
+    word-break: break-word;
+}
+
+.log-info .log-message { color: #333; }
+.log-success .log-message { color: #2e7d32; font-weight: 600; }
+.log-warning .log-message { color: #f57c00; font-weight: 600; }
+.log-error .log-message { color: #d32f2f; font-weight: 600; }
+
+/* Error Sections */
+.error-sections {
+    margin-top: 24px;
+}
+
+.error-section {
+    margin-bottom: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.error-header {
+    background: #fef7f7;
+    border-left: 4px solid #d63638;
+    padding: 12px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s;
+}
+
+.error-header:hover {
+    background: #fdd;
+}
+
+.error-toggle {
+    font-size: 12px;
+    color: #666;
+    transition: transform 0.2s;
+}
+
+.error-count {
+    color: #666;
+    font-size: 13px;
+}
+
+.error-content {
+    padding: 12px;
+    background: #fff;
+    border-top: 1px solid #ddd;
+}
+
+.error-group {
+    margin-bottom: 12px;
+    padding: 8px;
+    background: #f9f9f9;
+    border-radius: 3px;
+}
+
+.error-group:last-child {
+    margin-bottom: 0;
+}
+
+.error-group-title {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 4px;
+}
+
+.error-line {
+    font-size: 12px;
+    color: #666;
+    padding: 2px 0;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .subsales-modal .modal-container {
+        width: 95%;
+        margin: 2.5vh auto;
+        max-height: 95vh;
+    }
+    
+    .subsales-modal .modal-header,
+    .subsales-modal .modal-body {
+        padding: 16px;
+    }
+    
+    .import-log {
+        max-height: 150px;
+    }
+}

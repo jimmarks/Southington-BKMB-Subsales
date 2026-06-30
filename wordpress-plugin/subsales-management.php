@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 2.4.117
+ * Version: 2.4.118
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.4.117' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '2.4.118' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -7144,10 +7144,12 @@ function order_sync_ensure_geocode_table() {
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         address_hash varchar(64) NOT NULL,
         address_normalized text NOT NULL,
+        address text DEFAULT NULL,
         lat double DEFAULT NULL,
         lng double DEFAULT NULL,
         status varchar(32) DEFAULT 'unknown',
         updated_at datetime DEFAULT NULL,
+        created_at datetime DEFAULT NULL,
         PRIMARY KEY (id),
         UNIQUE KEY address_hash (address_hash(64))
     ) {$charset};";

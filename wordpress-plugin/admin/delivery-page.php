@@ -21,7 +21,7 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
     $configured_products = order_sync_get_products_config();
     $product_totals = array();
     foreach ( $configured_products as $p ) { $product_totals[ $p['id'] ] = 0; }
-    $rows_all = $wpdb->get_results( "SELECT * FROM {$orders_table} ORDER BY id ASC", ARRAY_A );
+    $rows_all = $wpdb->get_results( "SELECT * FROM {$orders_table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
     $pre_total_orders = 0;
     $by_address_pf = array();
     if ( $rows_all ) {
@@ -89,21 +89,17 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
                     </tbody>
                 </table>
             <?php endif; ?>
+            
+            <div style="margin-top:16px; padding-top:16px; border-top:1px solid #e5e5e5;">
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin:0;">
+                    <?php wp_nonce_field( 'subsales_generate_admin_csv' ); ?>
+                    <input type="hidden" name="action" value="subsales_generate_admin_csv" />
+                    <p style="margin:0 0 8px 0;"><strong>Administrative CSV Export</strong></p>
+                    <p class="description" style="margin:0 0 12px 0;">Export all orders to CSV for custom route planning (one row per address).</p>
+                    <button type="submit" class="button button-secondary">📄 Generate Administrative CSV</button>
+                </form>
+            </div>
         </div>
-        <!-- Administrative CSV: admin creates their own routes -> simple CSV export (no driver assignment) -->
-        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-            <?php wp_nonce_field( 'subsales_generate_admin_csv' ); ?>
-            <input type="hidden" name="action" value="subsales_generate_admin_csv" />
-            <table class="form-table">
-                <tr>
-                    <th scope="row">Administrative CSV (no routing)</th>
-                    <td>
-                        <p class="description">Create a CSV export you can open in a spreadsheet to design your own routes. This export contains one row per normalized address and per-product columns. Includes all orders.</p>
-                    </td>
-                </tr>
-            </table>
-            <p class="submit"><button class="button">Generate Administrative CSV</button></p>
-        </form>
 
         <!-- Driver manifests workflow: individual-based routing and HTML generation -->
         <h2 style="margin-top:18px">Generate Individual Delivery Manifests</h2>
@@ -130,6 +126,10 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
                 <button type="submit" class="button button-primary">Generate Individual Manifests (HTML)</button>
             </p>
         </form>
+        
+        <p style="margin-top:12px;">
+            <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-delivery-breakdown' ) ); ?>" class="button button-secondary">📊 View Distribution Breakdown</a>
+        </p>
 
         <div id="subsales_preview_modal" style="display:none; position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.6); z-index:99999;">
             <div style="position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:90%; max-width:1000px; height:80%; background:#fff; border-radius:6px; overflow:hidden;">
@@ -218,9 +218,6 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
             closeBtn && closeBtn.addEventListener('click', function(){ modal.style.display = 'none'; });
         })();
         </script>
-
-        <h2 style="margin-top:24px">Geocoding & limits</h2>
-        <p class="description">Geocoding uses the configured Google Maps API key (Settings &rarr; Overall). Results are cached to speed repeated exports. For very large exports this may run slowly due to API rate limits—consider pre-caching addresses.</p>
         
         <?php if ( isset( $_GET['manifest_url'] ) ): ?>
         <div class="notice notice-success" style="margin-top:20px; padding:12px;">

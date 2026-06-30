@@ -403,6 +403,32 @@ class Subsales_Orders {
             $update_fields['team_id'] = intval( $data['team_id'] );
             $update_formats[] = '%d';
         }
+        
+        // Always sync the dedicated address column with the address in order_data
+        if ( isset( $data['address'] ) ) {
+            $update_fields['address'] = sanitize_text_field( $data['address'] );
+            $update_formats[] = '%s';
+        }
+        
+        // Check if address changed - if so, clear validation status to force re-validation
+        $old_address = isset( $before_data['address'] ) ? $before_data['address'] : '';
+        $new_address = isset( $after_data['address'] ) ? $after_data['address'] : '';
+        
+        if ( $old_address !== $new_address ) {
+            // Address changed - clear validation data so it will be re-validated
+            $update_fields['address_validation_status'] = null;
+            $update_fields['address_validation_data'] = null;
+            $update_fields['address_validation_date'] = null;
+            $update_formats[] = '%s'; // NULL string
+            $update_formats[] = '%s'; // NULL string
+            $update_formats[] = '%s'; // NULL string
+            
+            Subsales_Database::log( 'INFO', 'orders', 'Address changed - clearing validation status', array(
+                'order_id' => $order_id,
+                'old_address' => $old_address,
+                'new_address' => $new_address
+            ), $auth_source, $user_id, $user_name );
+        }
 
         $result = $wpdb->update(
             $table_name,
