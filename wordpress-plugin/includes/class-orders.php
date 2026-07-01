@@ -119,7 +119,57 @@ class Subsales_Orders {
         
         return new WP_REST_Response( $orders, 200 );
     }
-    
+
+    /**
+     * Permission: only the team's driver for today's campaign (or a WP admin)
+     * may pull the whole-team money tally. A child gets 403.
+     *
+     * @param WP_REST_Request $request
+     * @return bool
+     */
+    public static function check_team_tally_permission( $request ) {
+        // WordPress admins always allowed
+        if ( current_user_can( 'edit_posts' ) ) {
+            return true;
+        }
+
+        $user_id = $request->get_header( 'X-User-ID' );
+        $team_id = intval( $request->get_param( 'team_id' ) );
+        if ( empty( $user_id ) || ! $team_id ) {
+            return false;
+        }
+
+        $date = $request->get_param( 'date' );
+        if ( empty( $date ) ) {
+            $date = date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
+        }
+
+        $campaign = Subsales_Database::get_campaign_by_date( sanitize_text_field( $date ) );
+        if ( ! $campaign ) {
+            return false;
+        }
+
+        $driver = Subsales_Database::get_campaign_team_driver( $team_id, intval( $campaign['id'] ) );
+        return ( $driver && intval( $driver['id'] ) === intval( $user_id ) );
+    }
+
+    /**
+     * GET /team-tally?team_id=&date= — driver money-accountability tally.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response|WP_Error
+     */
+    public static function rest_get_team_tally( $request ) {
+        $team_id = intval( $request->get_param( 'team_id' ) );
+        $date    = $request->get_param( 'date' );
+
+        $tally = Subsales_Database::get_team_tally( $team_id, $date ? sanitize_text_field( $date ) : null );
+        if ( is_wp_error( $tally ) ) {
+            return $tally;
+        }
+        return new WP_REST_Response( $tally, 200 );
+    }
+
     /**
      * Get single order by ID
      *

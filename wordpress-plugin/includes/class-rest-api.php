@@ -56,7 +56,14 @@ class Subsales_REST_API {
             'callback' => array( 'Subsales_Orders', 'delete_order' ),
             'permission_callback' => array( __CLASS__, 'check_permissions' ),
         ));
-        
+
+        // Driver money-accountability tally (team-wide + per child). Driver-only.
+        register_rest_route( 'order-manager/v1', '/team-tally', array(
+            'methods' => 'GET',
+            'callback' => array( 'Subsales_Orders', 'rest_get_team_tally' ),
+            'permission_callback' => array( 'Subsales_Orders', 'check_team_tally_permission' ),
+        ));
+
         // Order History API
         register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/history', array(
             'methods' => 'GET',

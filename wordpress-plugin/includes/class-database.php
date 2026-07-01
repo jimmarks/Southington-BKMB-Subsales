@@ -2646,6 +2646,189 @@ class Subsales_Database {
     }
 
     /**
+     * Driver money-accountability tally for a team on a given day.
+     *
+     * Single source of truth for "how much money should the driver have": per
+     * seller and team cash/check/donation/total, item counts, and each seller's
+     * order list for drill-down. Includes sellers with $0 so the driver sees
+     * every child. Uses the same money formula as the EOD tally: per order
+     * total = SUM(qty * price) + donation, bucketed cash/check by payment
+     * method. Includes ALL of the day's orders regardless of tally state.
+     *
+     * @param int         $team_id
+     * @param string|null $date  Y-m-d; defaults to site "today".
+     * @return array|WP_Error
+     */
+    public static function get_team_tally( $team_id, $date = null ) {
+        global $wpdb;
+
+        $team_id = intval( $team_id );
+        if ( ! $team_id ) {
+            return new WP_Error( 'missing_team', 'A team is required.', array( 'status' => 400 ) );
+        }
+        if ( empty( $date ) ) {
+            $date = date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
+        }
+
+        $teams_table  = $wpdb->prefix . 'ss_teams';
+        $orders_table = $wpdb->prefix . 'ss_orders';
+
+        $team_name   = $wpdb->get_var( $wpdb->prepare( "SELECT name FROM {$teams_table} WHERE id = %d", $team_id ) );
+        $campaign    = self::get_campaign_by_date( $date );
+        $campaign_id = $campaign ? intval( $campaign['id'] ) : 0;
+
+        // Product label map (id => name) from the canonical products config
+        $product_names = array();
+        $products_out  = array();
+        if ( function_exists( 'order_sync_get_products_config' ) ) {
+            foreach ( (array) order_sync_get_products_config() as $p ) {
+                if ( ! isset( $p['id'] ) ) { continue; }
+                $pid   = (string) $p['id'];
+                $pname = isset( $p['name'] ) ? $p['name'] : $pid;
+                $product_names[ $pid ] = $pname;
+                $products_out[] = array( 'id' => $pid, 'name' => $pname );
+            }
+        }
+
+        // Seed sellers from the roster so every child appears (even at $0)
+        $sellers = array(); // keyed by seller id (string)
+        $seed_seller = function( $id, $name ) use ( &$sellers ) {
+            $key = (string) $id;
+            if ( ! isset( $sellers[ $key ] ) ) {
+                $sellers[ $key ] = array(
+                    'user_id'      => intval( $id ) ? intval( $id ) : $id,
+                    'name'         => $name !== '' ? $name : 'Unknown',
+                    'cash'         => 0.0,
+                    'check'        => 0.0,
+                    'donation'     => 0.0,
+                    'total'        => 0.0,
+                    'order_count'  => 0,
+                    'checks_count' => 0,
+                    'items'        => array(),
+                    'orders'       => array(),
+                );
+            }
+            return $key;
+        };
+
+        if ( $campaign_id ) {
+            foreach ( self::get_campaign_team_members( $team_id, $campaign_id ) as $m ) {
+                $seed_seller( $m['id'], $m['name'] );
+            }
+        }
+
+        // All of the day's team orders (any tally state), not deleted.
+        // Matches the "today" comparison used by Subsales_Orders::get_orders().
+        $orders = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$orders_table}
+             WHERE team_id = %d AND DATE(created_at) = %s AND deleted = 0
+             ORDER BY created_at ASC",
+            $team_id, $date
+        ), ARRAY_A );
+
+        $totals = array(
+            'cash' => 0.0, 'check' => 0.0, 'donation' => 0.0, 'total' => 0.0,
+            'order_count' => 0, 'checks_count' => 0, 'items' => array(),
+        );
+
+        foreach ( (array) $orders as $order ) {
+            $od = Subsales_Order_Helper::decode_order_data( $order );
+            if ( ! is_array( $od ) ) { $od = array(); }
+
+            // Seller attribution: entered_by_id, else the order's user_id column.
+            // NOTE: driver edits never change these, so an edited order still
+            // counts under the original child.
+            $seller_id   = ( isset( $od['entered_by_id'] ) && $od['entered_by_id'] !== '' ) ? $od['entered_by_id'] : ( isset( $order['user_id'] ) ? $order['user_id'] : '' );
+            $seller_name = ( isset( $od['entered_by_name'] ) && $od['entered_by_name'] !== '' ) ? $od['entered_by_name'] : Subsales_Order_Helper::get_user_name( $seller_id );
+            $key = $seed_seller( $seller_id, $seller_name );
+
+            $donation = floatval( isset( $od['donationAmount'] ) ? $od['donationAmount'] : ( isset( $od['donation'] ) ? $od['donation'] : ( isset( $od['donation_amount'] ) ? $od['donation_amount'] : 0 ) ) );
+            $payment  = isset( $od['paymentMethod'] ) ? $od['paymentMethod'] : ( isset( $od['payment_method'] ) ? $od['payment_method'] : ( isset( $od['payment'] ) ? $od['payment'] : '' ) );
+            $check_no = isset( $od['checkNumber'] ) ? $od['checkNumber'] : ( isset( $od['check_number'] ) ? $od['check_number'] : '' );
+
+            $order_total     = 0.0;
+            $order_items     = array();
+            $products_detail = array();
+            $products_list   = ( isset( $od['products'] ) && is_array( $od['products'] ) ) ? $od['products'] : array();
+            foreach ( $products_list as $pi ) {
+                $pid   = isset( $pi['id'] ) ? (string) $pi['id'] : ( isset( $pi['product_id'] ) ? (string) $pi['product_id'] : ( isset( $pi['name'] ) ? (string) $pi['name'] : '' ) );
+                $qty   = intval( isset( $pi['qty'] ) ? $pi['qty'] : ( isset( $pi['quantity'] ) ? $pi['quantity'] : ( isset( $pi['qty_sold'] ) ? $pi['qty_sold'] : 0 ) ) );
+                $price = floatval( isset( $pi['price'] ) ? $pi['price'] : ( isset( $pi['unit_price'] ) ? $pi['unit_price'] : 0 ) );
+                if ( $qty <= 0 ) { continue; }
+                $order_total += $qty * $price;
+                if ( $pid !== '' ) {
+                    $order_items[ $pid ] = ( isset( $order_items[ $pid ] ) ? $order_items[ $pid ] : 0 ) + $qty;
+                }
+                $products_detail[] = array(
+                    'id'    => $pid,
+                    'name'  => isset( $product_names[ $pid ] ) ? $product_names[ $pid ] : ( isset( $pi['name'] ) ? $pi['name'] : $pid ),
+                    'qty'   => $qty,
+                    'price' => $price,
+                );
+            }
+            $order_total += $donation;
+
+            $is_cash  = ( $payment === 'cash' );
+            $is_check = ( $payment === 'check' );
+
+            $s = &$sellers[ $key ];
+            if ( $is_cash )  { $s['cash']  += $order_total; }
+            if ( $is_check ) { $s['check'] += $order_total; $s['checks_count']++; }
+            $s['donation'] += $donation;
+            $s['total']    += $order_total;
+            $s['order_count']++;
+            foreach ( $order_items as $ipid => $iq ) {
+                $s['items'][ $ipid ] = ( isset( $s['items'][ $ipid ] ) ? $s['items'][ $ipid ] : 0 ) + $iq;
+            }
+            $s['orders'][] = array(
+                'order_id'     => isset( $order['order_id'] ) ? $order['order_id'] : ( isset( $order['id'] ) ? $order['id'] : '' ),
+                'created_at'   => isset( $order['created_at'] ) ? $order['created_at'] : '',
+                'payment'      => $payment,
+                'check_number' => $check_no,
+                'total'        => round( $order_total, 2 ),
+                'donation'     => round( $donation, 2 ),
+                'products'     => $products_detail,
+            );
+            unset( $s );
+
+            if ( $is_cash )  { $totals['cash']  += $order_total; }
+            if ( $is_check ) { $totals['check'] += $order_total; $totals['checks_count']++; }
+            $totals['donation'] += $donation;
+            $totals['total']    += $order_total;
+            $totals['order_count']++;
+            foreach ( $order_items as $ipid => $iq ) {
+                $totals['items'][ $ipid ] = ( isset( $totals['items'][ $ipid ] ) ? $totals['items'][ $ipid ] : 0 ) + $iq;
+            }
+        }
+
+        // Finalize sellers (round, sort by name)
+        $sellers_out = array();
+        foreach ( $sellers as $s ) {
+            $s['cash']     = round( $s['cash'], 2 );
+            $s['check']    = round( $s['check'], 2 );
+            $s['donation'] = round( $s['donation'], 2 );
+            $s['total']    = round( $s['total'], 2 );
+            $sellers_out[] = $s;
+        }
+        usort( $sellers_out, function( $a, $b ) { return strcasecmp( $a['name'], $b['name'] ); } );
+
+        foreach ( array( 'cash', 'check', 'donation', 'total' ) as $k ) {
+            $totals[ $k ] = round( $totals[ $k ], 2 );
+        }
+
+        return array(
+            'team_id'       => $team_id,
+            'team_name'     => $team_name ? $team_name : '',
+            'campaign_id'   => $campaign_id,
+            'campaign_date' => $date,
+            'generated_at'  => current_time( 'mysql' ),
+            'totals'        => $totals,
+            'products'      => $products_out,
+            'sellers'       => $sellers_out,
+        );
+    }
+
+    /**
      * A member's active signups with team & campaign info. Canonical "my
      * signups" reader (uses the real campaign_name / campaign_date columns).
      *

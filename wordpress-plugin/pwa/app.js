@@ -502,6 +502,8 @@
           modal.classList.add('hidden');
           clearOrderForm();
           window._editingOrder = null;
+          // If a driver was editing a child's order, return to the money view.
+          if (window._driverEditing) { window._driverEditing = false; try{ driverReturnFromEdit(); }catch(e){} }
         };
       }
       
@@ -515,6 +517,241 @@
       // Show modal
       modal.classList.remove('hidden');
     }catch(e){ console.warn('showOrderConfirmation error', e); }
+  }
+
+  // ==========================================================================
+  // Driver "Money Accountability" view
+  // A driver (role='driver') logs in exactly like a child, selects their team,
+  // and sees the team's running cash/check totals (per child + team) instead of
+  // the sales form. Money is computed server-side (/team-tally) and re-synced
+  // every 60s. Drivers can drill into a child and edit orders via the same
+  // remote-edit flow children use.
+  // ==========================================================================
+  let _driverTallyData = null;
+  let _driverTimer = null;
+  let _driverLastUpdate = 0;
+  let _driverClockTimer = null;
+
+  function driverHeaders(){
+    return {
+      'X-User-ID': localStorage.getItem('userId') || '',
+      'X-Team-ID': localStorage.getItem('selectedTeamId') || ''
+    };
+  }
+  function dmMoney(n){ return '$' + (Number(n||0)).toFixed(2); }
+  function dmTimeLabel(dt){
+    if (!dt) return '';
+    // created_at is a "YYYY-MM-DD HH:MM:SS" string; show HH:MM.
+    const m = String(dt).match(/(\d{2}):(\d{2})/);
+    return m ? (m[1] + ':' + m[2]) : String(dt);
+  }
+  function dmItemsSummary(items, products){
+    if (!items) return '';
+    const names = {};
+    (products||[]).forEach(p => { names[String(p.id)] = p.name; });
+    return Object.keys(items).map(pid => (names[pid]||pid) + ' ' + items[pid]).join(' · ');
+  }
+
+  // Route to the driver view when appropriate. Safe/no-op for children & admins.
+  function applyDriverRoleView(){
+    try{
+      const role = localStorage.getItem('userRole');
+      const teamId = localStorage.getItem('selectedTeamId');
+      if (role === 'driver' && teamId && teamId !== '-1') {
+        enterDriverMode();
+      }
+    }catch(e){}
+  }
+
+  function ensureDriverMoneyExists(){
+    if (qs('#driverMoney')) return;
+    const app = qs('#appSection'); if (!app) return;
+    const div = document.createElement('div');
+    div.id = 'driverMoney';
+    div.className = 'sm-driver-money hidden';
+    div.innerHTML = '<div class="dm-loading">Loading team totals…</div>';
+    app.appendChild(div);
+  }
+
+  function driverSalesFormRow(){ return qs('#appSection .sm-row'); }
+
+  function enterDriverMode(){
+    ensureDriverMoneyExists();
+    const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = 'none';
+    const mo = qs('#myOrdersBtn'); if (mo) mo.classList.add('hidden');
+    const eod = qs('#eodBtn'); if (eod) eod.classList.add('hidden');
+    const dm = qs('#driverMoney'); if (dm) dm.classList.remove('hidden');
+
+    loadDriverTally();
+    if (_driverTimer) clearInterval(_driverTimer);
+    _driverTimer = setInterval(loadDriverTally, 60000);
+    if (_driverClockTimer) clearInterval(_driverClockTimer);
+    _driverClockTimer = setInterval(driverUpdateClock, 15000);
+    if (!window._driverVisHooked) {
+      window._driverVisHooked = true;
+      document.addEventListener('visibilitychange', function(){
+        const el = qs('#driverMoney');
+        if (!document.hidden && el && !el.classList.contains('hidden')) loadDriverTally();
+      });
+    }
+    // Returning to the money view via the Clear button when mid-edit.
+    if (!window._driverClearHooked) {
+      window._driverClearHooked = true;
+      const clr = qs('#clearFormBtn');
+      if (clr) clr.addEventListener('click', function(){
+        if (window._driverEditing) { window._driverEditing = false; driverReturnFromEdit(); }
+      });
+    }
+  }
+
+  function driverUpdateClock(){
+    const el = qs('#dmUpdated'); if (!el || !_driverLastUpdate) return;
+    const secs = Math.max(0, Math.round((Date.now() - _driverLastUpdate)/1000));
+    const label = secs < 5 ? 'just now' : (secs < 60 ? (secs + 's ago') : (Math.round(secs/60) + 'm ago'));
+    el.textContent = 'Updated ' + label;
+  }
+
+  async function loadDriverTally(){
+    const teamId = localStorage.getItem('selectedTeamId');
+    if (!teamId || teamId === '-1') return;
+    try{
+      const base = apiBase ? apiBase : '/wp-json/order-manager/v1';
+      const resp = await fetch(base + '/team-tally?team_id=' + encodeURIComponent(teamId), { headers: driverHeaders() });
+      if (!resp.ok){ driverMarkStale(); return; }
+      const data = await resp.json();
+      _driverTallyData = data;
+      _driverLastUpdate = Date.now();
+      renderDriverTally(data);
+    }catch(e){ driverMarkStale(); }
+  }
+
+  function driverMarkStale(){
+    const badge = qs('#dmStale'); if (badge) badge.classList.remove('hidden');
+  }
+
+  function renderDriverTally(data){
+    const el = qs('#driverMoney'); if (!el) return;
+    const t = (data && data.totals) || { cash:0, check:0, donation:0, total:0, order_count:0, checks_count:0, items:{} };
+    const products = (data && data.products) || [];
+    const sellers = (data && data.sellers) || [];
+
+    let html = '';
+    html += '<div class="dm-head">';
+    html +=   '<div class="dm-titles"><div class="dm-title">Money Accountability</div>' +
+              '<div class="dm-sub">' + escapeHtml(data.team_name||'') + (data.campaign_date ? (' · ' + escapeHtml(data.campaign_date)) : '') + '</div></div>';
+    html +=   '<div class="dm-meta"><span id="dmUpdated" class="dm-updated">Updated just now</span>' +
+              '<span id="dmStale" class="dm-stale hidden">offline — showing last count</span>' +
+              '<button id="dmRefresh" class="sm-btn dm-refresh">Refresh</button></div>';
+    html += '</div>';
+
+    // Reconciliation hero — what the driver should physically have
+    html += '<div class="dm-hero">';
+    html +=   '<div class="dm-hero-label">You should have</div>';
+    html +=   '<div class="dm-hero-total">' + dmMoney(t.total) + '</div>';
+    html +=   '<div class="dm-hero-split">';
+    html +=     '<div class="dm-chip"><span>Cash</span><strong>' + dmMoney(t.cash) + '</strong></div>';
+    html +=     '<div class="dm-chip"><span>Checks</span><strong>' + dmMoney(t.check) + '</strong>' +
+                '<em>' + (t.checks_count||0) + (t.checks_count===1?' check':' checks') + '</em></div>';
+    html +=   '</div>';
+    html += '</div>';
+
+    // Team total line
+    const itemsSum = dmItemsSummary(t.items, products);
+    html += '<div class="dm-teamline"><strong>Team total</strong> · ' + (t.order_count||0) +
+            (t.order_count===1?' order':' orders') + (itemsSum ? (' · ' + escapeHtml(itemsSum)) : '') +
+            (t.donation ? (' · donations ' + dmMoney(t.donation)) : '') + '</div>';
+
+    // Per-child list
+    html += '<div class="dm-sellers">';
+    if (!sellers.length){
+      html += '<div class="dm-empty">No children on this team for today.</div>';
+    } else {
+      sellers.forEach(s => {
+        const zero = !(s.order_count > 0);
+        html += '<div class="dm-seller' + (zero?' dm-zero':'') + '" data-seller="' + escapeHtml(String(s.user_id)) + '">';
+        html +=   '<button type="button" class="dm-seller-row" data-seller="' + escapeHtml(String(s.user_id)) + '">';
+        html +=     '<span class="dm-name">' + escapeHtml(s.name||'Unknown') + '</span>';
+        if (zero){
+          html +=   '<span class="dm-noorders">No sales yet</span>';
+        } else {
+          html +=   '<span class="dm-cash">' + dmMoney(s.cash) + '</span>';
+          html +=   '<span class="dm-check">' + dmMoney(s.check) + '</span>';
+          html +=   '<span class="dm-total">' + dmMoney(s.total) + '</span>';
+        }
+        html +=   '</button>';
+        html +=   '<div class="dm-drill hidden" data-drill="' + escapeHtml(String(s.user_id)) + '">' + renderDriverDrill(s, products) + '</div>';
+        html += '</div>';
+      });
+    }
+    html += '</div>';
+
+    el.innerHTML = html;
+    driverUpdateClock();
+    driverWireEvents();
+  }
+
+  function renderDriverDrill(seller, products){
+    const orders = seller.orders || [];
+    let h = '';
+    const itemsSum = dmItemsSummary(seller.items, products);
+    if (itemsSum) h += '<div class="dm-drill-items">Items: ' + escapeHtml(itemsSum) + '</div>';
+    if (!orders.length){ h += '<div class="dm-empty">No orders.</div>'; return h; }
+    orders.forEach(o => {
+      const prod = (o.products||[]).map(p => (p.qty + '× ' + (p.name||p.id))).join(', ');
+      const payLabel = o.payment === 'check' ? ('Check' + (o.check_number ? (' #' + escapeHtml(String(o.check_number))) : '')) :
+                       (o.payment === 'cash' ? 'Cash' : (o.payment||'—'));
+      h += '<div class="dm-order">';
+      h +=   '<div class="dm-order-head"><span class="dm-order-time">' + escapeHtml(dmTimeLabel(o.created_at)) + '</span>' +
+             '<span class="dm-order-pay">' + payLabel + '</span>' +
+             '<span class="dm-order-total">' + dmMoney(o.total) + '</span>' +
+             '<button type="button" class="sm-btn dm-edit" data-order-id="' + escapeHtml(String(o.order_id)) + '">Edit</button></div>';
+      h +=   '<div class="dm-order-items">' + escapeHtml(prod || '—') + (o.donation ? (' · donation ' + dmMoney(o.donation)) : '') + '</div>';
+      h += '</div>';
+    });
+    return h;
+  }
+
+  function driverWireEvents(){
+    const el = qs('#driverMoney'); if (!el) return;
+    const rf = el.querySelector('#dmRefresh'); if (rf) rf.addEventListener('click', loadDriverTally);
+    el.querySelectorAll('.dm-seller-row').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-seller');
+        const drill = el.querySelector('.dm-drill[data-drill="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+        if (drill) drill.classList.toggle('hidden');
+      });
+    });
+    el.querySelectorAll('.dm-edit').forEach(b => {
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); driverEditOrder(b.getAttribute('data-order-id')); });
+    });
+  }
+
+  async function driverEditOrder(orderId){
+    if (!orderId) return;
+    try{
+      const base = apiBase ? apiBase : '/wp-json/order-manager/v1';
+      const resp = await fetch(base + '/orders/' + encodeURIComponent(orderId), { headers: driverHeaders() });
+      if (!resp.ok){ alert('Could not load that order to edit.'); return; }
+      const row = await resp.json();
+      const od = (row.order_data && typeof row.order_data === 'string')
+        ? (function(){ try{ return JSON.parse(row.order_data); }catch(e){ return {}; } })()
+        : (row.order_data || {});
+      const orderObj = Object.assign({}, od, { id: row.order_id || orderId });
+      // Show the sales form to edit; remember to return to the money view after save.
+      window._driverEditing = true;
+      const dm = qs('#driverMoney'); if (dm) dm.classList.add('hidden');
+      const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = '';
+      try{ window.scrollTo(0,0); }catch(e){}
+      enterEditMode(orderObj, { local:false, remoteRaw: row });
+    }catch(e){ alert('Could not load that order to edit.'); }
+  }
+
+  function driverReturnFromEdit(){
+    const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = 'none';
+    const dm = qs('#driverMoney'); if (dm) dm.classList.remove('hidden');
+    // Reload now and again shortly, to catch the queued PUT once it syncs.
+    loadDriverTally();
+    setTimeout(loadDriverTally, 2000);
   }
 
   async function renderEod(){
@@ -1176,6 +1413,8 @@
       const nodes = document.querySelectorAll('.sm-auth-hidden');
       nodes.forEach(n => n.classList.remove('sm-auth-hidden'));
     }catch(e){}
+    // Drivers see the team money view instead of the sales form.
+    try{ applyDriverRoleView(); }catch(e){}
   }
 
   // Compute total by iterating product qty inputs and using configured prices
@@ -1603,6 +1842,8 @@
         // Store user session data
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
+        // Role drives which screen we show after auth: 'driver' -> money view.
+        try { localStorage.setItem('userRole', (data.user && data.user.role) ? data.user.role : 'member'); } catch(e){}
         try { localStorage.setItem('userPhone', phoneDigits); } catch(e){}
         
         // Store team member authentication credentials for PUT requests
