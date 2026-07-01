@@ -541,7 +541,11 @@
   function dmMoney(n){ return '$' + (Number(n||0)).toFixed(2); }
   function dmTimeLabel(dt){
     if (!dt) return '';
-    // created_at is a "YYYY-MM-DD HH:MM:SS" string; show HH:MM.
+    // Server sends a UTC ISO string (…Z); show it in the device's local time.
+    try{
+      const d = new Date(dt);
+      if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }catch(e){}
     const m = String(dt).match(/(\d{2}):(\d{2})/);
     return m ? (m[1] + ':' + m[2]) : String(dt);
   }
@@ -573,11 +577,19 @@
     app.appendChild(div);
   }
 
-  function driverSalesFormRow(){ return qs('#appSection .sm-row'); }
+  // Hide/show the seller UI regardless of which shell is live (static
+  // index.html markup vs the app.js template) by toggling every #appSection
+  // child except our money panel.
+  function driverForEachAppChild(fn){
+    const app = qs('#appSection'); if (!app) return;
+    Array.prototype.slice.call(app.children).forEach(fn);
+  }
+  function driverHideSalesUI(){ driverForEachAppChild(function(ch){ if (ch.id !== 'driverMoney') ch.style.display = 'none'; }); }
+  function driverShowSalesUI(){ driverForEachAppChild(function(ch){ if (ch.id !== 'driverMoney') ch.style.display = ''; }); }
 
   function enterDriverMode(){
     ensureDriverMoneyExists();
-    const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = 'none';
+    driverHideSalesUI();
     const mo = qs('#myOrdersBtn'); if (mo) mo.classList.add('hidden');
     const eod = qs('#eodBtn'); if (eod) eod.classList.add('hidden');
     const dm = qs('#driverMoney'); if (dm) dm.classList.remove('hidden');
@@ -617,16 +629,25 @@
     try{
       const base = apiBase ? apiBase : '/wp-json/order-manager/v1';
       const resp = await fetch(base + '/team-tally?team_id=' + encodeURIComponent(teamId), { headers: driverHeaders() });
-      if (!resp.ok){ driverMarkStale(); return; }
+      if (!resp.ok){ driverShowError(resp.status === 403 ? 'You are not the driver for this team.' : ('Could not load totals (error ' + resp.status + ').')); return; }
       const data = await resp.json();
       _driverTallyData = data;
       _driverLastUpdate = Date.now();
       renderDriverTally(data);
-    }catch(e){ driverMarkStale(); }
+    }catch(e){ driverShowError('Network error — could not reach the server.'); }
   }
 
-  function driverMarkStale(){
-    const badge = qs('#dmStale'); if (badge) badge.classList.remove('hidden');
+  // On failure: keep the last good tally (with a stale badge) if we have one,
+  // otherwise show an error + Retry — never a stuck spinner.
+  function driverShowError(msg){
+    if (_driverTallyData){
+      renderDriverTally(_driverTallyData);
+      const badge = qs('#dmStale'); if (badge) badge.classList.remove('hidden');
+      return;
+    }
+    const el = qs('#driverMoney'); if (!el) return;
+    el.innerHTML = '<div class="dm-error"><p>' + escapeHtml(msg) + '</p><button id="dmRetry" class="sm-btn">Retry</button></div>';
+    const rb = el.querySelector('#dmRetry'); if (rb) rb.addEventListener('click', loadDriverTally);
   }
 
   function renderDriverTally(data){
@@ -740,14 +761,14 @@
       // Show the sales form to edit; remember to return to the money view after save.
       window._driverEditing = true;
       const dm = qs('#driverMoney'); if (dm) dm.classList.add('hidden');
-      const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = '';
+      driverShowSalesUI();
       try{ window.scrollTo(0,0); }catch(e){}
       enterEditMode(orderObj, { local:false, remoteRaw: row });
     }catch(e){ alert('Could not load that order to edit.'); }
   }
 
   function driverReturnFromEdit(){
-    const formRow = driverSalesFormRow(); if (formRow) formRow.style.display = 'none';
+    driverHideSalesUI();
     const dm = qs('#driverMoney'); if (dm) dm.classList.remove('hidden');
     // Reload now and again shortly, to catch the queued PUT once it syncs.
     loadDriverTally();

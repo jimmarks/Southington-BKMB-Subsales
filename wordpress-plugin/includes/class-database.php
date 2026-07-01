@@ -2782,7 +2782,9 @@ class Subsales_Database {
             }
             $s['orders'][] = array(
                 'order_id'     => isset( $order['order_id'] ) ? $order['order_id'] : ( isset( $order['id'] ) ? $order['id'] : '' ),
-                'created_at'   => isset( $order['created_at'] ) ? $order['created_at'] : '',
+                // created_at is stored in GMT; emit a UTC ISO string so the
+                // client can render it in the device's local time.
+                'created_at'   => ( isset( $order['created_at'] ) && $order['created_at'] ) ? ( str_replace( ' ', 'T', $order['created_at'] ) . 'Z' ) : '',
                 'payment'      => $payment,
                 'check_number' => $check_no,
                 'total'        => round( $order_total, 2 ),

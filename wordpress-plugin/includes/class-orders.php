@@ -139,18 +139,16 @@ class Subsales_Orders {
             return false;
         }
 
-        $date = $request->get_param( 'date' );
-        if ( empty( $date ) ) {
-            $date = date_i18n( 'Y-m-d', current_time( 'timestamp' ) );
-        }
-
-        $campaign = Subsales_Database::get_campaign_by_date( sanitize_text_field( $date ) );
-        if ( ! $campaign ) {
-            return false;
-        }
-
-        $driver = Subsales_Database::get_campaign_team_driver( $team_id, intval( $campaign['id'] ) );
-        return ( $driver && intval( $driver['id'] ) === intval( $user_id ) );
+        // Allow if this user is a driver for this team on any campaign. A child
+        // never has is_driver=1, so this keeps sellers out, while avoiding a
+        // false 403 on a day that has no campaign yet.
+        global $wpdb;
+        $signups_table = $wpdb->prefix . 'ss_signups';
+        $is_driver = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$signups_table} WHERE user_id = %d AND team_id = %d AND is_driver = 1",
+            intval( $user_id ), $team_id
+        ) );
+        return ( intval( $is_driver ) > 0 );
     }
 
     /**
