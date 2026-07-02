@@ -556,15 +556,30 @@
     return Object.keys(items).map(pid => (names[pid]||pid) + ' ' + items[pid]).join(' · ');
   }
 
-  // Route to the driver view when appropriate. Safe/no-op for children & admins.
+  // Route to the driver view only when authenticated into the app view (login
+  // screen dismissed) as a driver with a real team. Otherwise ensure the money
+  // view is torn down. Safe/no-op for children & admins.
   function applyDriverRoleView(){
     try{
       const role = localStorage.getItem('userRole');
       const teamId = localStorage.getItem('selectedTeamId');
-      if (role === 'driver' && teamId && teamId !== '-1') {
+      const login = qs('#loginSection');
+      const loginHidden = !login || login.classList.contains('hidden') || login.style.display === 'none';
+      const app = qs('#appSection');
+      const appVisible = app && !app.classList.contains('hidden') && app.style.display !== 'none';
+      if (role === 'driver' && teamId && teamId !== '-1' && loginHidden && appVisible) {
         enterDriverMode();
+      } else {
+        driverExitMode();
       }
     }catch(e){}
+  }
+
+  // Tear down the driver view (used on logout / when not authenticated).
+  function driverExitMode(){
+    if (_driverTimer) { clearInterval(_driverTimer); _driverTimer = null; }
+    if (_driverClockTimer) { clearInterval(_driverClockTimer); _driverClockTimer = null; }
+    const dm = qs('#driverMoney'); if (dm) dm.classList.add('hidden');
   }
 
   function ensureDriverMoneyExists(){
@@ -3783,7 +3798,10 @@
         localStorage.removeItem('selectedTeamId');
         localStorage.removeItem('selectedTeamName');
         localStorage.removeItem('userTeams');
-        
+        localStorage.removeItem('userRole');
+        // Tear down the driver money view so the next login starts clean.
+        try{ driverExitMode(); }catch(e){}
+
         await logWithContext('auth', 'Logout complete - session cleared');
       } catch(e){
         if (window.PWALogger) {
