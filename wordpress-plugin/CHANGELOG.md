@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1] - 2026-08-25
+
+### Branch Consolidation
+
+- Merged `feature/driver-signup` (last deployed production code, v2.4.121) into `main`; `main` was previously stale at v2.4.114.
+- Retired the multi-branch workflow going forward — `main` is now the single line of development for this plugin.
+- Version bumped to 3.0.1 as the starting point for the next phase of work (text messaging).
+
 ## [2.4.106] - 2026-02-10
 
 ### Import/Restore - Enhanced Progress Diagnostics
