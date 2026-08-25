@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.2] - 2026-08-25
+
+### PWA Heartbeat Reliability Fixes
+
+#### Fixed
+- **Debug Mode toggle** - "Enable Debug Mode" button was completely non-functional due to a nonce-name mismatch between the button and its handler; even when triggered it wrote to option keys nothing else read. Now correctly enables/disables the actual logging flag used by the heartbeat system, the 24h auto-timeout, and the admin Logs page.
+- **Heartbeat session-recovery data loss** - when a heartbeat arrived for a session the server had lost track of, the client would recreate the session but then discard that heartbeat's own GPS/activity data instead of retrying it. The recreated session's first heartbeat is now retried instead of dropped.
+- **Silent heartbeat-insert failures** - a missing/broken GPS-history table could fail a heartbeat insert with nothing but a PHP error-log line. Failures now also surface as an ERROR row on the admin Logs page.
+- **Duplicate GPS call on order save** - every order save fired two sequential 5-second geolocation requests where only one was ever used; removed the dead, unused call. Cuts up to 10 seconds of latency per save in poor-signal areas.
+
+#### A note on heartbeat gaps while a phone is locked
+
+Some heartbeat gaps will still happen when a phone is locked or the app is backgrounded, and that's expected, not a bug. Every mobile browser (iOS Safari and Android Chrome alike) pauses or heavily throttles anything running in a browser tab once the screen locks or the app drops to the background, as a battery-saving measure — this happens to every website and web app, not something specific to this plugin. A web-based PWA has no way to force the phone to keep it running in the background the way a native, app-store-installed app can; building a native app was a deliberate choice this project didn't make, so this is a limitation we're accepting rather than one we're trying to engineer around. What this release *does* fix are the reliability problems that were actually losing data while the app was open and in active use: the debug toggle that made field issues undiagnosable, the server-side bug that threw away a heartbeat's data even after successfully recovering the session, and the wasted GPS time on every save. An occasional missed ping from a brief network blip, or a gap while the phone sits locked in someone's pocket for an extended stretch, is fine by design - the next heartbeat 30 seconds later covers it - and is a different, expected limitation from the bugs fixed above.
+
 ## [3.0.1] - 2026-08-25
 
 ### Branch Consolidation
