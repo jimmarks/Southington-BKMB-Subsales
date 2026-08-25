@@ -667,7 +667,7 @@
 
   function renderDriverTally(data){
     const el = qs('#driverMoney'); if (!el) return;
-    const t = (data && data.totals) || { cash:0, check:0, donation:0, total:0, order_count:0, checks_count:0, items:{} };
+    const t = (data && data.totals) || { cash:0, check:0, donation:0, digital:0, total:0, sales_total:0, order_count:0, checks_count:0, items:{} };
     const products = (data && data.products) || [];
     const sellers = (data && data.sellers) || [];
 
@@ -688,6 +688,8 @@
     html +=     '<div class="dm-chip"><span>Cash</span><strong>' + dmMoney(t.cash) + '</strong></div>';
     html +=     '<div class="dm-chip"><span>Checks</span><strong>' + dmMoney(t.check) + '</strong>' +
                 '<em>' + (t.checks_count||0) + (t.checks_count===1?' check':' checks') + '</em></div>';
+    html +=     '<div class="dm-chip"><span>Digital</span><strong>' + dmMoney(t.digital) + '</strong>' +
+                '<em>already paid — nothing to collect</em></div>';
     html +=   '</div>';
     html += '</div>';
 
@@ -712,6 +714,7 @@
         } else {
           html +=   '<span class="dm-cash">' + dmMoney(s.cash) + '</span>';
           html +=   '<span class="dm-check">' + dmMoney(s.check) + '</span>';
+          html +=   '<span class="dm-digital">' + dmMoney(s.digital) + '</span>';
           html +=   '<span class="dm-total">' + dmMoney(s.total) + '</span>';
         }
         html +=   '</button>';
@@ -735,7 +738,7 @@
     orders.forEach(o => {
       const prod = (o.products||[]).map(p => (p.qty + '× ' + (p.name||p.id))).join(', ');
       const payLabel = o.payment === 'check' ? ('Check' + (o.check_number ? (' #' + escapeHtml(String(o.check_number))) : '')) :
-                       (o.payment === 'cash' ? 'Cash' : (o.payment||'—'));
+                       (o.payment === 'cash' ? 'Cash' : (o.payment === 'digital' ? 'Digital (paid)' : (o.payment||'—')));
       h += '<div class="dm-order">';
       h +=   '<div class="dm-order-head"><span class="dm-order-time">' + escapeHtml(dmTimeLabel(o.created_at)) + '</span>' +
              '<span class="dm-order-pay">' + payLabel + '</span>' +
@@ -848,7 +851,7 @@
     const products = (productsConfig && Array.isArray(productsConfig)) ? productsConfig : [];
     const prodTotals = {};
     products.forEach(p => { prodTotals[p.id] = 0; });
-    let totalDonation = 0; let totalCash = 0; let totalCheck = 0;
+    let totalDonation = 0; let totalCash = 0; let totalCheck = 0; let totalDigital = 0;
     // Only include today's orders (in server time). Helper to detect same-day using serverInfo.
     function isSameDayForServer(o, created){
       try{
@@ -929,6 +932,7 @@
       totalDonation += donation;
       if (payment === 'cash') totalCash += orderTotal;
       else if (payment === 'check') totalCheck += orderTotal;
+      else if (payment === 'digital') totalDigital += orderTotal;
     }
     all.forEach(o => { try{ extractOrderInfo(o); }catch(e){} });
     
@@ -947,6 +951,9 @@
     html += `<tr><td><strong>Total Donation</strong></td><td style="text-align:right">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
     html += `<tr><td><strong>Total Cash</strong></td><td style="text-align:right">$${Number(totalCash||0).toFixed(2)}</td></tr>`;
     html += `<tr><td><strong>Total Check</strong></td><td style="text-align:right">$${Number(totalCheck||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td><strong>Total Digital</strong></td><td style="text-align:right">$${Number(totalDigital||0).toFixed(2)}</td></tr>`;
+    const totalSales = totalCash + totalCheck + totalDigital + totalDonation;
+    html += `<tr style="border-top:2px solid #0f172a"><td><strong>Total Sales</strong></td><td style="text-align:right"><strong>$${Number(totalSales||0).toFixed(2)}</strong></td></tr>`;
     html += '</tbody></table>';
     container.innerHTML = html;
   }

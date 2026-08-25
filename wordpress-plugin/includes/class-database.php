@@ -3160,7 +3160,9 @@ class Subsales_Database {
                     'cash'         => 0.0,
                     'check'        => 0.0,
                     'donation'     => 0.0,
+                    'digital'      => 0.0,
                     'total'        => 0.0,
+                    'sales_total'  => 0.0,
                     'order_count'  => 0,
                     'checks_count' => 0,
                     'items'        => array(),
@@ -3190,7 +3192,8 @@ class Subsales_Database {
         ), ARRAY_A );
 
         $totals = array(
-            'cash' => 0.0, 'check' => 0.0, 'donation' => 0.0, 'total' => 0.0,
+            'cash' => 0.0, 'check' => 0.0, 'donation' => 0.0, 'digital' => 0.0,
+            'total' => 0.0, 'sales_total' => 0.0,
             'order_count' => 0, 'checks_count' => 0, 'items' => array(),
         );
 
@@ -3231,14 +3234,19 @@ class Subsales_Database {
             }
             $order_total += $donation;
 
-            $is_cash  = ( $payment === 'cash' );
-            $is_check = ( $payment === 'check' );
+            $is_cash    = ( $payment === 'cash' );
+            $is_check   = ( $payment === 'check' );
+            $is_digital = ( $payment === 'digital' );
 
             $s = &$sellers[ $key ];
-            if ( $is_cash )  { $s['cash']  += $order_total; }
-            if ( $is_check ) { $s['check'] += $order_total; $s['checks_count']++; }
+            if ( $is_cash )    { $s['cash']    += $order_total; }
+            if ( $is_check )   { $s['check']   += $order_total; $s['checks_count']++; }
+            if ( $is_digital ) { $s['digital'] += $order_total; }
             $s['donation'] += $donation;
-            $s['total']    += $order_total;
+            // 'total' stays the driver's physical-collection figure (cash+check
+            // only) — digital money never passes through the driver's hands.
+            if ( ! $is_digital ) { $s['total'] += $order_total; }
+            $s['sales_total'] += $order_total;
             $s['order_count']++;
             foreach ( $order_items as $ipid => $iq ) {
                 $s['items'][ $ipid ] = ( isset( $s['items'][ $ipid ] ) ? $s['items'][ $ipid ] : 0 ) + $iq;
@@ -3256,10 +3264,12 @@ class Subsales_Database {
             );
             unset( $s );
 
-            if ( $is_cash )  { $totals['cash']  += $order_total; }
-            if ( $is_check ) { $totals['check'] += $order_total; $totals['checks_count']++; }
+            if ( $is_cash )    { $totals['cash']    += $order_total; }
+            if ( $is_check )   { $totals['check']   += $order_total; $totals['checks_count']++; }
+            if ( $is_digital ) { $totals['digital'] += $order_total; }
             $totals['donation'] += $donation;
-            $totals['total']    += $order_total;
+            if ( ! $is_digital ) { $totals['total'] += $order_total; }
+            $totals['sales_total'] += $order_total;
             $totals['order_count']++;
             foreach ( $order_items as $ipid => $iq ) {
                 $totals['items'][ $ipid ] = ( isset( $totals['items'][ $ipid ] ) ? $totals['items'][ $ipid ] : 0 ) + $iq;
@@ -3269,15 +3279,17 @@ class Subsales_Database {
         // Finalize sellers (round, sort by name)
         $sellers_out = array();
         foreach ( $sellers as $s ) {
-            $s['cash']     = round( $s['cash'], 2 );
-            $s['check']    = round( $s['check'], 2 );
-            $s['donation'] = round( $s['donation'], 2 );
-            $s['total']    = round( $s['total'], 2 );
+            $s['cash']        = round( $s['cash'], 2 );
+            $s['check']       = round( $s['check'], 2 );
+            $s['donation']    = round( $s['donation'], 2 );
+            $s['digital']     = round( $s['digital'], 2 );
+            $s['total']       = round( $s['total'], 2 );
+            $s['sales_total'] = round( $s['sales_total'], 2 );
             $sellers_out[] = $s;
         }
         usort( $sellers_out, function( $a, $b ) { return strcasecmp( $a['name'], $b['name'] ); } );
 
-        foreach ( array( 'cash', 'check', 'donation', 'total' ) as $k ) {
+        foreach ( array( 'cash', 'check', 'donation', 'digital', 'total', 'sales_total' ) as $k ) {
             $totals[ $k ] = round( $totals[ $k ], 2 );
         }
 

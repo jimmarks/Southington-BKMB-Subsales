@@ -333,14 +333,15 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 /* Per-child list */
 .dm-sellers{display:flex;flex-direction:column;gap:8px}
 .dm-seller{border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden;box-shadow:0 2px 8px rgba(16,24,40,0.04)}
-.dm-seller-row{width:100%;display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;padding:12px 14px;background:none;border:none;cursor:pointer;text-align:left;font-size:0.95rem}
+.dm-seller-row{width:100%;display:grid;grid-template-columns:1fr auto auto auto auto;gap:10px;align-items:center;padding:12px 14px;background:none;border:none;cursor:pointer;text-align:left;font-size:0.95rem}
 .dm-seller-row:hover{background:#f8fafc}
 .dm-name{font-weight:700;color:var(--dm-ink)}
-.dm-cash,.dm-check,.dm-total{font-variant-numeric:tabular-nums;text-align:right;min-width:64px}
+.dm-cash,.dm-check,.dm-digital,.dm-total{font-variant-numeric:tabular-nums;text-align:right;min-width:64px}
 .dm-cash{color:var(--dm-green);font-weight:600}
 .dm-check{color:#2563eb;font-weight:600}
+.dm-digital{color:#7c3aed;font-weight:600}
 .dm-total{color:var(--dm-ink);font-weight:800}
-.dm-noorders{grid-column:2 / 5;text-align:right;color:#94a3b8;font-size:0.85rem;font-style:italic}
+.dm-noorders{grid-column:2 / 6;text-align:right;color:#94a3b8;font-size:0.85rem;font-style:italic}
 .dm-zero{opacity:0.6}
 .dm-zero .dm-seller-row:hover{background:#fff}
 /* Drill-down */
@@ -362,5 +363,6 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   .dm-chip{min-width:0;flex:1}
   .dm-seller-row{grid-template-columns:1fr auto auto;font-size:0.9rem}
   .dm-check{display:none}
+  .dm-digital{display:none}
 }
 

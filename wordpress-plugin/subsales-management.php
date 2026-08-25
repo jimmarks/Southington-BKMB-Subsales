@@ -3605,6 +3605,9 @@ function order_sync_fetch_orders_ajax() {
                 // Check must have paymentMethod='check' OR a non-empty checkNumber
                 $where[] = "(JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.paymentMethod')) = %s OR (JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.checkNumber')) IS NOT NULL AND JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.checkNumber')) != ''))";
                 $params[] = 'check';
+            } elseif ( $payment_method === 'digital' ) {
+                $where[] = "JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.paymentMethod')) = %s";
+                $params[] = 'digital';
             }
         } else {
             if ( $payment_method === 'cash' ) {
@@ -3617,6 +3620,9 @@ function order_sync_fetch_orders_ajax() {
                 $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"check"%';
                 $params[] = '%' . $wpdb->esc_like( '"checkNumber"' ) . '%';
                 $params[] = '%' . $wpdb->esc_like( '"checkNumber":""' ) . '%';
+            } elseif ( $payment_method === 'digital' ) {
+                $where[] = "order_data LIKE %s";
+                $params[] = '%' . $wpdb->esc_like( '"paymentMethod"' ) . '%"digital"%';
             }
         }
     }
@@ -3647,7 +3653,7 @@ function order_sync_fetch_orders_ajax() {
     $configured_products = order_sync_get_products_config();
 
     $orders = array();
-    $totals = array( 'cash' => 0.0, 'check' => 0.0, 'grand' => 0.0, 'donations' => 0.0, 'product_totals' => array() );
+    $totals = array( 'cash' => 0.0, 'check' => 0.0, 'digital' => 0.0, 'grand' => 0.0, 'donations' => 0.0, 'product_totals' => array() );
     // initialize product totals for the page
     foreach ( $configured_products as $pconf ) {
         $totals['product_totals'][ $pconf['id'] ] = 0;
@@ -3719,6 +3725,7 @@ function order_sync_fetch_orders_ajax() {
         if ( ! $is_deleted ) {
             if ( strtolower( $payment ) === 'check' ) $totals['check'] += $order_total;
             elseif ( strtolower( $payment ) === 'cash' ) $totals['cash'] += $order_total;
+            if ( strtolower( $payment ) === 'digital' ) $totals['digital'] += $order_total;
             $totals['grand'] += $order_total;
             $totals['donations'] += $donation;
 

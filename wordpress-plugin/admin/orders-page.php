@@ -130,6 +130,7 @@ $params = array();
                             <option value="">Any</option>
                             <option value="cash">Cash</option>
                             <option value="check">Check</option>
+                            <option value="digital">Digital</option>
                         </select>
                     </td>
                     <th>Tally Status</th>
@@ -228,6 +229,16 @@ $params = array();
                         <td id="subsales-page-check" style="text-align:right">$0.00</td>
                         <td></td>
                     </tr>
+                    <tr>
+                        <td colspan="5" style="text-align:right">Digital:</td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td></td>
+                        <?php endforeach; ?>
+                        <td></td>
+                        <td></td>
+                        <td id="subsales-page-digital" style="text-align:right">$0.00</td>
+                        <td></td>
+                    </tr>
                 </tfoot>
             </table>
             </div>
@@ -302,6 +313,7 @@ $params = array();
                                 <select name="paymentMethod">
                                     <option value="cash">Cash</option>
                                     <option value="check">Check</option>
+                                    <option value="digital">Digital</option>
                                 </select>
                             </td>
                         </tr>
@@ -614,6 +626,7 @@ $params = array();
             document.getElementById('subsales-page-total').textContent = '$' + Number(totals.grand || 0).toFixed(2);
             document.getElementById('subsales-page-cash').textContent = '$' + Number(totals.cash || 0).toFixed(2);
             document.getElementById('subsales-page-check').textContent = '$' + Number(totals.check || 0).toFixed(2);
+            document.getElementById('subsales-page-digital').textContent = '$' + Number(totals.digital || 0).toFixed(2);
         }
 
         function renderPagination(page, pages){
