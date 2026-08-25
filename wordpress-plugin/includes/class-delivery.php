@@ -882,12 +882,30 @@ class Subsales_Delivery {
      * @since 2.2.1.230
      */
     public static function generate_qr_code( $url, $size = 1000 ) {
+        $data_uri = self::generate_qr_data_uri( $url, $size );
+        if ( empty( $data_uri ) ) {
+            return '';
+        }
+        return '<img src="' . $data_uri . '" alt="QR Code" />';
+    }
+
+    /**
+     * Generate QR code for URL and return the raw data URI (no <img> wrapper).
+     *
+     * Extracted from generate_qr_code() so callers that need the bare data
+     * URI (e.g. JSON API responses) don't have to strip an <img> tag back out.
+     *
+     * @param string $url URL to encode
+     * @param int $size QR code size in pixels
+     * @return string Data URI string, or empty string on failure
+     */
+    public static function generate_qr_data_uri( $url, $size = 600 ) {
         // Check if endroid QR code library is available
         if ( ! class_exists( 'Endroid\QrCode\QrCode' ) ) {
             subsales_log( 'ERROR', 'delivery', 'QR code library not loaded' );
             return '';
         }
-        
+
         try {
             // For long URLs (like Google Maps directions), use lower error correction
             // This creates a less dense, more scannable QR code
@@ -895,12 +913,12 @@ class Subsales_Delivery {
                 ->setSize( $size )
                 ->setMargin( 20 )
                 ->setErrorCorrectionLevel( new \Endroid\QrCode\ErrorCorrectionLevel\ErrorCorrectionLevelLow() );
-            
+
             $writer = new \Endroid\QrCode\Writer\PngWriter();
             $result = $writer->write( $qrCode );
-            
+
             // Return as base64 data URI
-            return '<img src="' . $result->getDataUri() . '" alt="QR Code" />';
+            return $result->getDataUri();
         } catch ( Exception $e ) {
             subsales_log( 'ERROR', 'delivery', 'QR code generation failed: ' . $e->getMessage() );
             return '';

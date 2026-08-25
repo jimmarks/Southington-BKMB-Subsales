@@ -66,6 +66,8 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-address-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-order-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
@@ -102,6 +104,10 @@ Subsales_AJAX_Handlers::init();
 
 // Initialize Census Boundaries
 Subsales_Census_Boundaries::init();
+
+// Initialize Payment Attempts (hooks expire_stale_attempts onto the existing
+// hourly cleanup action; Subsales_Square_Payments has no hooks of its own)
+Subsales_Payment_Attempts::init();
 
 
 // Activation/Deactivation hooks
