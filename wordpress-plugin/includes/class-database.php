@@ -316,6 +316,7 @@ class Subsales_Database {
         self::migrate_teams_season_id( $teams_table_name );
         self::migrate_campaigns_season_id( $campaigns_table_name );
         self::migrate_orders_season_id( $table_name );
+        self::migrate_payment_attempts_table();
     }
 
     /**
@@ -489,6 +490,62 @@ class Subsales_Database {
                 "UPDATE {$orders_table_name} SET season_id = %d WHERE season_id = 0",
                 $current_season_id
             ) );
+        }
+    }
+
+    /**
+     * Schema migration: Ensure the payment_attempts table exists.
+     *
+     * Brand-new table (Square digital-payment checkout attempts), no
+     * legacy rows to backfill - unlike the season_id migrations above,
+     * this is a pure existence check + create, same shape as
+     * migrate_seasons_table().
+     */
+    private static function migrate_payment_attempts_table() {
+        global $wpdb;
+        $payment_attempts_table_name = $wpdb->prefix . 'ss_payment_attempts';
+
+        $table_exists = $wpdb->get_var(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$payment_attempts_table_name}'"
+        );
+
+        if ( ! $table_exists ) {
+            $charset_collate = $wpdb->get_charset_collate();
+            $sql = "CREATE TABLE $payment_attempts_table_name (
+                id mediumint(9) NOT NULL AUTO_INCREMENT,
+                attempt_uid varchar(64) NOT NULL,
+                season_id mediumint(9) NOT NULL DEFAULT 0,
+                team_id mediumint(9) NOT NULL DEFAULT 0,
+                campaign_id mediumint(9) NOT NULL DEFAULT 0,
+                user_id varchar(255) NOT NULL DEFAULT '',
+                entered_by_name varchar(255) NOT NULL DEFAULT '',
+                draft_order_data longtext NOT NULL,
+                subtotal_amount decimal(10,2) NOT NULL DEFAULT 0,
+                convenience_fee_amount decimal(10,2) NOT NULL DEFAULT 0,
+                total_amount decimal(10,2) NOT NULL DEFAULT 0,
+                square_checkout_id varchar(255) DEFAULT NULL,
+                square_order_id varchar(255) DEFAULT NULL,
+                square_payment_id varchar(255) DEFAULT NULL,
+                checkout_url text DEFAULT NULL,
+                status enum('initiated','paid','cancelled_by_seller','expired','failed') NOT NULL DEFAULT 'initiated',
+                finalized_order_id varchar(255) DEFAULT NULL,
+                created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                expires_at datetime DEFAULT NULL,
+                PRIMARY KEY  (id),
+                UNIQUE KEY attempt_uid (attempt_uid),
+                KEY team_id (team_id),
+                KEY season_id (season_id),
+                KEY status (status),
+                KEY square_checkout_id (square_checkout_id)
+            ) $charset_collate;";
+
+            require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+            dbDelta( $sql );
+
+            subsales_log( 'INFO', 'system', 'Created payment_attempts table via migration' );
         }
     }
 
