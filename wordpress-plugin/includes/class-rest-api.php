@@ -306,6 +306,31 @@ class Subsales_REST_API {
             'callback' => 'subsales_rest_signup_settings',
             'permission_callback' => '__return_true',
         ));
+
+        // Digital payments (Square)
+        register_rest_route( 'order-manager/v1', '/digital-payments/checkout', array(
+            'methods' => 'POST',
+            'callback' => array( 'Subsales_Payment_Attempts', 'create_attempt' ),
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
+        ));
+
+        register_rest_route( 'order-manager/v1', '/digital-payments/status/(?P<id>[a-zA-Z0-9-]+)', array(
+            'methods' => 'GET',
+            'callback' => array( 'Subsales_Payment_Attempts', 'get_status' ),
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
+        ));
+
+        register_rest_route( 'order-manager/v1', '/digital-payments/cancel/(?P<id>[a-zA-Z0-9-]+)', array(
+            'methods' => 'POST',
+            'callback' => array( 'Subsales_Payment_Attempts', 'cancel_attempt' ),
+            'permission_callback' => array( __CLASS__, 'check_permissions' ),
+        ));
+
+        register_rest_route( 'order-manager/v1', '/digital-payments/webhook', array(
+            'methods' => 'POST',
+            'callback' => array( 'Subsales_Payment_Attempts', 'handle_webhook' ),
+            'permission_callback' => '__return_true',
+        ));
     }
     
     /**
