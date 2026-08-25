@@ -45,7 +45,8 @@ class Subsales_PWA {
             'styleVariant' => get_option( 'order_sync_style_variant', 'default' ),
             'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
             'brandName' => get_option( 'subsales_branding', 'Subsales' ),
-            'brandingImage' => $header_image_url
+            'brandingImage' => $header_image_url,
+            'digitalPaymentsEnabled' => (bool) get_option( 'subsales_digital_payments_enabled', false )
         );
         // Include configured products (global, not per-team). Stored as option 'order_sync_products'.
         $settings['products'] = self::get_products_config();

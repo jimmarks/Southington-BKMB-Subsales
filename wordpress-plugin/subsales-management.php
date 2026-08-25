@@ -5395,7 +5395,8 @@ function get_app_config( WP_REST_Request $request ) {
         'loginMode' => $login_mode,
         'salesMode' => $sales_mode,
         'salesEnabled' => $sales_enabled,
-        'debugLoggingEnabled' => $debug_logging_enabled
+        'debugLoggingEnabled' => $debug_logging_enabled,
+        'digitalPaymentsEnabled' => (bool) get_option( 'subsales_digital_payments_enabled', false )
     ), 200 );
 }
 

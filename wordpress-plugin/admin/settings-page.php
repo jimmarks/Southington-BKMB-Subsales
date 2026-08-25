@@ -40,6 +40,19 @@ if ( ! current_user_can( 'manage_options' ) ) {
         $donation_percentage = isset( $_POST['donation_percentage'] ) ? floatval( $_POST['donation_percentage'] ) : 50.0;
         $donation_distribution = isset( $_POST['donation_distribution'] ) ? sanitize_text_field( $_POST['donation_distribution'] ) : 'team';
         $sales_enabled = isset( $_POST['sales_enabled'] ) ? 1 : 0;
+        $subsales_digital_payments_enabled = isset( $_POST['subsales_digital_payments_enabled'] ) ? 1 : 0;
+        $subsales_square_environment = isset( $_POST['subsales_square_environment'] ) ? sanitize_text_field( $_POST['subsales_square_environment'] ) : 'sandbox';
+        if ( ! in_array( $subsales_square_environment, array( 'sandbox', 'production' ), true ) ) {
+            $subsales_square_environment = 'sandbox';
+        }
+        $subsales_square_access_token_sandbox = isset( $_POST['subsales_square_access_token_sandbox'] ) ? sanitize_text_field( $_POST['subsales_square_access_token_sandbox'] ) : '';
+        $subsales_square_access_token_production = isset( $_POST['subsales_square_access_token_production'] ) ? sanitize_text_field( $_POST['subsales_square_access_token_production'] ) : '';
+        $subsales_square_location_id_sandbox = isset( $_POST['subsales_square_location_id_sandbox'] ) ? sanitize_text_field( $_POST['subsales_square_location_id_sandbox'] ) : '';
+        $subsales_square_location_id_production = isset( $_POST['subsales_square_location_id_production'] ) ? sanitize_text_field( $_POST['subsales_square_location_id_production'] ) : '';
+        $subsales_square_webhook_signature_key_sandbox = isset( $_POST['subsales_square_webhook_signature_key_sandbox'] ) ? sanitize_text_field( $_POST['subsales_square_webhook_signature_key_sandbox'] ) : '';
+        $subsales_square_webhook_signature_key_production = isset( $_POST['subsales_square_webhook_signature_key_production'] ) ? sanitize_text_field( $_POST['subsales_square_webhook_signature_key_production'] ) : '';
+        $subsales_convenience_fee_enabled = isset( $_POST['subsales_convenience_fee_enabled'] ) ? 1 : 0;
+        $subsales_convenience_fee_percentage = isset( $_POST['subsales_convenience_fee_percentage'] ) ? floatval( $_POST['subsales_convenience_fee_percentage'] ) : 0.0;
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
@@ -55,6 +68,16 @@ if ( ! current_user_can( 'manage_options' ) ) {
         update_option( 'subsales_donation_percentage', $donation_percentage );
         update_option( 'subsales_donation_distribution', $donation_distribution );
         update_option( 'subsales_sales_enabled', $sales_enabled );
+        update_option( 'subsales_digital_payments_enabled', $subsales_digital_payments_enabled );
+        update_option( 'subsales_square_environment', $subsales_square_environment );
+        update_option( 'subsales_square_access_token_sandbox', $subsales_square_access_token_sandbox );
+        update_option( 'subsales_square_access_token_production', $subsales_square_access_token_production );
+        update_option( 'subsales_square_location_id_sandbox', $subsales_square_location_id_sandbox );
+        update_option( 'subsales_square_location_id_production', $subsales_square_location_id_production );
+        update_option( 'subsales_square_webhook_signature_key_sandbox', $subsales_square_webhook_signature_key_sandbox );
+        update_option( 'subsales_square_webhook_signature_key_production', $subsales_square_webhook_signature_key_production );
+        update_option( 'subsales_convenience_fee_enabled', $subsales_convenience_fee_enabled );
+        update_option( 'subsales_convenience_fee_percentage', $subsales_convenience_fee_percentage );
 
         if ( $portal_slug !== $old_slug ) {
             order_sync_ensure_pwa_page( $portal_slug );
@@ -499,6 +522,124 @@ if ( ! current_user_can( 'manage_options' ) ) {
                                     Donation amount is converted to points at the specified percentage. The dollar value becomes point value.<br>
                                     <strong>Example:</strong> $735 donations × 50% = $367.50 → 367.50 points (split by team or individual)
                                 </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row" colspan="2"><h3 style="margin-top:20px;margin-bottom:10px">Digital Payments (Square)</h3></th>
+                        </tr>
+                        <tr>
+                            <th scope="row">Enable Digital Payments</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="subsales_digital_payments_enabled" value="1" <?php checked( get_option( 'subsales_digital_payments_enabled', 0 ), 1 ); ?> />
+                                    <strong>Enable Square digital payments (QR code checkout)</strong>
+                                </label>
+                                <p class="description">Square credentials must be filled in below before enabling this — once on, sellers see a "Digital Payment" option in the PWA.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Square Environment</th>
+                            <td>
+                                <select name="subsales_square_environment">
+                                    <option value="sandbox" <?php selected( get_option( 'subsales_square_environment', 'sandbox' ), 'sandbox' ); ?>>Sandbox (testing)</option>
+                                    <option value="production" <?php selected( get_option( 'subsales_square_environment', 'sandbox' ), 'production' ); ?>>Production (live payments)</option>
+                                </select>
+                                <p class="description">Use Sandbox for testing with fake payments. Only switch to Production after the full flow has been verified end-to-end in Sandbox.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Square Access Token (Sandbox)</th>
+                            <td>
+                                <input type="password" name="subsales_square_access_token_sandbox" value="<?php echo esc_attr( get_option( 'subsales_square_access_token_sandbox', '' ) ); ?>" class="regular-text" autocomplete="off" />
+                                <p class="description">Sandbox access token from the Square Developer Dashboard.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Square Access Token (Production)</th>
+                            <td>
+                                <input type="password" name="subsales_square_access_token_production" value="<?php echo esc_attr( get_option( 'subsales_square_access_token_production', '' ) ); ?>" class="regular-text" autocomplete="off" />
+                                <p class="description">Production access token — authorizes real charges. Stored via the standard WordPress options table like every other setting here; this is a password field for screen-privacy only, not encryption at rest.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Square Location ID (Sandbox)</th>
+                            <td>
+                                <input type="text" name="subsales_square_location_id_sandbox" value="<?php echo esc_attr( get_option( 'subsales_square_location_id_sandbox', '' ) ); ?>" class="regular-text" />
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Square Location ID (Production)</th>
+                            <td>
+                                <input type="text" name="subsales_square_location_id_production" value="<?php echo esc_attr( get_option( 'subsales_square_location_id_production', '' ) ); ?>" class="regular-text" />
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Webhook Signature Key (Sandbox)</th>
+                            <td>
+                                <input type="password" name="subsales_square_webhook_signature_key_sandbox" value="<?php echo esc_attr( get_option( 'subsales_square_webhook_signature_key_sandbox', '' ) ); ?>" class="regular-text" autocomplete="off" />
+                                <p class="description">Used to verify that incoming Square webhook payloads are genuine.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Webhook Signature Key (Production)</th>
+                            <td>
+                                <input type="password" name="subsales_square_webhook_signature_key_production" value="<?php echo esc_attr( get_option( 'subsales_square_webhook_signature_key_production', '' ) ); ?>" class="regular-text" autocomplete="off" />
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Test Square Credentials</th>
+                            <td>
+                                <p class="description">Tests the environment/token/location currently typed into the fields above (not necessarily what's saved yet).</p>
+                                <p>
+                                    <button type="button" id="test_square_credentials_btn" class="button">Test Square credentials</button>
+                                    <span id="square_test_status" style="margin-left:12px; font-weight:600"></span>
+                                </p>
+                                <div id="square_test_output" style="white-space:pre-wrap; border:1px solid #eee; padding:8px; margin-top:8px; display:none"></div>
+                                <script>
+                                (function(){
+                                    const ajaxUrl = ajaxurl;
+                                    const nonce = <?php echo json_encode( wp_create_nonce( 'subsales_test_square_credentials' ) ); ?>;
+                                    function setStatus(s){ document.getElementById('square_test_status').textContent = s; }
+                                    document.getElementById('test_square_credentials_btn').addEventListener('click', function(){
+                                        const envSelect = document.querySelector('select[name="subsales_square_environment"]');
+                                        const environment = (envSelect && envSelect.value) || 'sandbox';
+                                        const tokenField = document.querySelector('input[name="subsales_square_access_token_' + environment + '"]');
+                                        const locationField = document.querySelector('input[name="subsales_square_location_id_' + environment + '"]');
+                                        const fd = new FormData();
+                                        fd.append('action', 'subsales_test_square_credentials');
+                                        fd.append('nonce', nonce);
+                                        fd.append('environment', environment);
+                                        fd.append('access_token', tokenField ? tokenField.value : '');
+                                        fd.append('location_id', locationField ? locationField.value : '');
+                                        const out = document.getElementById('square_test_output'); out.style.display='block'; out.textContent='Testing...'; setStatus('Testing...');
+                                        fetch(ajaxUrl, { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+                                            if (!j) { out.textContent = 'No response'; setStatus('Error'); return; }
+                                            if (!j.success) {
+                                                out.textContent = 'Error: ' + (j.data && j.data.message ? j.data.message : 'Unknown'); setStatus('Invalid'); return;
+                                            }
+                                            out.textContent = (j.data && j.data.message) ? j.data.message : 'OK';
+                                            setStatus('Valid');
+                                        }).catch(function(e){ out.textContent = 'Fetch error: ' + e.message; setStatus('Error'); });
+                                    });
+                                })();
+                                </script>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">Convenience Fee</th>
+                            <td>
+                                <div style="margin-bottom: 15px;">
+                                    <label>
+                                        <input type="checkbox" name="subsales_convenience_fee_enabled" value="1" <?php checked( get_option( 'subsales_convenience_fee_enabled', 0 ), 1 ); ?> />
+                                        <strong>Enable Convenience Fee</strong>
+                                    </label>
+                                </div>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Convenience Fee Percentage:</label>
+                                    <input type="number" step="0.1" min="0" max="100" name="subsales_convenience_fee_percentage" value="<?php echo esc_attr( get_option( 'subsales_convenience_fee_percentage', 0.0 ) ); ?>" style="width: 100px;" />
+                                    <span>%</span>
+                                </div>
+                                <p class="description" style="margin-top: 10px;">Flat percentage added on top of a digital payment's total to cover processing costs.</p>
                             </td>
                         </tr>
                     </table>

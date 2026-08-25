@@ -29,6 +29,7 @@ class Subsales_AJAX_Handlers {
         add_action( 'wp_ajax_subsales_toggle_debug', array( __CLASS__, 'toggle_debug' ) );
         add_action( 'wp_ajax_subsales_get_active_sessions_count', array( __CLASS__, 'get_active_sessions_count' ) );
         add_action( 'wp_ajax_subsales_test_maps_key', array( __CLASS__, 'test_maps_key' ) );
+        add_action( 'wp_ajax_subsales_test_square_credentials', array( __CLASS__, 'test_square_credentials' ) );
         add_action( 'wp_ajax_subsales_run_init', array( __CLASS__, 'run_init' ) );
         
         // Address Management
@@ -149,6 +150,65 @@ class Subsales_AJAX_Handlers {
         } else {
             wp_send_json_error( array( 'message' => 'API test failed: ' . $data['status'] ) );
         }
+    }
+
+    /**
+     * Test Square API credentials.
+     *
+     * Mirrors test_maps_key(): tests whatever environment/token/location is
+     * currently typed into the settings form (not necessarily saved yet).
+     */
+    public static function test_square_credentials() {
+        check_ajax_referer( 'subsales_test_square_credentials', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'Permission denied' ) );
+        }
+
+        $environment = isset( $_POST['environment'] ) ? sanitize_text_field( $_POST['environment'] ) : 'sandbox';
+        if ( ! in_array( $environment, array( 'sandbox', 'production' ), true ) ) {
+            $environment = 'sandbox';
+        }
+        $access_token = isset( $_POST['access_token'] ) ? sanitize_text_field( $_POST['access_token'] ) : '';
+        $location_id  = isset( $_POST['location_id'] ) ? sanitize_text_field( $_POST['location_id'] ) : '';
+
+        if ( empty( $access_token ) || empty( $location_id ) ) {
+            wp_send_json_error( array( 'message' => 'Access token and Location ID are required' ) );
+        }
+
+        $base_url = ( 'production' === $environment ) ? 'https://connect.squareup.com' : 'https://connect.squareupsandbox.com';
+
+        $response = wp_remote_get( $base_url . '/v2/locations/' . rawurlencode( $location_id ), array(
+            'timeout' => 10,
+            'headers' => array(
+                'Authorization'  => 'Bearer ' . $access_token,
+                // Same pinned API version as Subsales_Square_Payments (Phase 2).
+                'Square-Version' => '2024-01-18',
+            ),
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            wp_send_json_error( array( 'message' => 'Failed to connect to Square API: ' . $response->get_error_message() ) );
+        }
+
+        $response_code = wp_remote_retrieve_response_code( $response );
+        $body = wp_remote_retrieve_body( $response );
+        $data = json_decode( $body, true );
+
+        if ( 200 === $response_code && ! empty( $data['location'] ) ) {
+            $name = ! empty( $data['location']['business_name'] )
+                ? $data['location']['business_name']
+                : ( isset( $data['location']['name'] ) ? $data['location']['name'] : 'Square location' );
+            wp_send_json_success( array( 'message' => 'Credentials are valid! Connected to: ' . $name ) );
+        }
+
+        $error_message = 'Square API test failed (HTTP ' . $response_code . ')';
+        if ( ! empty( $data['errors'][0]['detail'] ) ) {
+            $error_message = $data['errors'][0]['detail'];
+        } elseif ( ! empty( $data['errors'][0]['code'] ) ) {
+            $error_message = $data['errors'][0]['code'];
+        }
+        wp_send_json_error( array( 'message' => $error_message ) );
     }
 
     /**
