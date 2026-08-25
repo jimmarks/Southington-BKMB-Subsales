@@ -129,8 +129,26 @@
             <div class="pay-options">
               <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
               <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
+              <label id="payDigitalOption" class="hidden"><input type="checkbox" id="payDigital" /> <span>Pay by Digital (QR Code)</span></label>
             </div>
             <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
+            <div id="digitalPaymentPanel" class="digital-payment-panel hidden">
+              <div id="digitalConfirmPanel">
+                <p>Is the buyer ready to scan the QR code?</p>
+                <div class="btn-row">
+                  <button id="digitalReadyBtn" type="button" class="sm-btn">Ready</button>
+                  <button id="digitalBackBtn1" type="button" class="sm-btn" style="background-color:#6c757d;color:#fff;">Back</button>
+                </div>
+              </div>
+              <div id="digitalQrPanel" class="hidden">
+                <p id="digitalStatusText">Waiting for buyer...</p>
+                <img id="digitalQrImg" alt="Scan to pay" style="max-width:250px;display:block;margin:0 auto;" />
+                <p id="digitalExpiryText"></p>
+                <div class="btn-row">
+                  <button id="digitalCancelBtn" type="button" class="sm-btn" style="background-color:#dc3545;color:#fff;">Back out to Cash/Check</button>
+                </div>
+              </div>
+            </div>
             <label>Delivery Instructions</label>
             <textarea id="notes" placeholder="house color, long driveway etc"></textarea>
             <div class="btn-row" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px;">

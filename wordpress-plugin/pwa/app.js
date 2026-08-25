@@ -1060,6 +1060,30 @@
   const checkNumberRow = qs('#checkNumberRow');
   const checkNumber = qs('#checkNumber');
 
+  // Digital payment (Square QR) elements — Phase 5
+  const payDigital = qs('#payDigital');
+  const payDigitalOption = qs('#payDigitalOption');
+  const digitalPaymentPanel = qs('#digitalPaymentPanel');
+  const digitalConfirmPanel = qs('#digitalConfirmPanel');
+  const digitalQrPanel = qs('#digitalQrPanel');
+  const digitalReadyBtn = qs('#digitalReadyBtn');
+  const digitalBackBtn1 = qs('#digitalBackBtn1');
+  const digitalCancelBtn = qs('#digitalCancelBtn');
+  const digitalStatusText = qs('#digitalStatusText');
+  const digitalQrImg = qs('#digitalQrImg');
+  const digitalExpiryText = qs('#digitalExpiryText');
+  // Phase 4 exposed this as digitalPaymentsEnabled both on the localized SUBSALES_PWA_CONFIG
+  // and the /config REST response; cfg already IS window.SUBSALES_PWA_CONFIG when present,
+  // but check both explicitly per spec in case cfg fell back to BKMB_PWA_CONFIG/{}.
+  const digitalPaymentsEnabled = !!(cfg.digitalPaymentsEnabled || (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.digitalPaymentsEnabled));
+  if (payDigitalOption) { if (digitalPaymentsEnabled) payDigitalOption.classList.remove('hidden'); else payDigitalOption.classList.add('hidden'); }
+
+  let digitalPollInterval = null;
+  let digitalWaitingMsgInterval = null;
+  let digitalCurrentAttemptId = null;
+  let digitalExpiresAt = null;
+  let digitalOrderData = null; // snapshot of buyer/items captured at "Ready" tap time
+
   let salesEnabled = true;
 
   // Products configuration: mutable cache. Prefer reading from window.SUBSALES_PWA_CONFIG at render time.
@@ -1547,8 +1571,9 @@
 
       // clear any dynamic product qty inputs
       try{ const prodInputs = document.querySelectorAll('input[data-product-id]'); prodInputs.forEach(i=>{ try{ i.value=''; }catch(e){} }); }catch(e){}
-      if (payCheck) payCheck.checked = false; if (payCash) payCash.checked = false;
+      if (payCheck) payCheck.checked = false; if (payCash) payCash.checked = false; if (payDigital) payDigital.checked = false;
       try{ if (checkNumberRow) checkNumberRow.classList.add('hidden'); }catch(e){}
+      try{ hideDigitalPanel(); }catch(e){}
       // reset computed total
       try{ if (orderTotalEl) orderTotalEl.textContent = '$0.00'; }catch(e){}
       // re-run compute to update total state
@@ -1558,8 +1583,284 @@
     }catch(e){ /* silent */ }
   }
 
-  if (payCheck) payCheck.addEventListener('change', ()=>{ if (payCheck.checked) { checkNumberRow && checkNumberRow.classList.remove('hidden'); if (payCash) payCash.checked=false; } else { checkNumberRow && checkNumberRow.classList.add('hidden'); } });
-  if (payCash) payCash.addEventListener('change', ()=>{ if (payCash.checked) { if (payCheck) { payCheck.checked=false; checkNumberRow && checkNumberRow.classList.add('hidden'); } } });
+  if (payCheck) payCheck.addEventListener('change', ()=>{ if (payCheck.checked) { checkNumberRow && checkNumberRow.classList.remove('hidden'); if (payCash) payCash.checked=false; if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } else { checkNumberRow && checkNumberRow.classList.add('hidden'); } });
+  if (payCash) payCash.addEventListener('change', ()=>{ if (payCash.checked) { if (payCheck) { payCheck.checked=false; checkNumberRow && checkNumberRow.classList.add('hidden'); } if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } });
+  if (payDigital) payDigital.addEventListener('change', ()=>{
+    if (payDigital.checked) {
+      if (payCheck) payCheck.checked = false;
+      if (payCash) payCash.checked = false;
+      checkNumberRow && checkNumberRow.classList.add('hidden');
+      showDigitalConfirmPanel();
+    } else {
+      hideDigitalPanel();
+    }
+  });
+
+  // ---- Digital payment (Square QR) flow — Phase 5 ----
+  const DIGITAL_WAITING_MESSAGES = ['Waiting for buyer...', 'Still waiting...', 'Almost there...'];
+
+  function digitalAuthHeaders(){
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    const headers = { 'Content-Type': 'application/json' };
+    if (loginMode === 'user') {
+      headers['X-User-ID'] = localStorage.getItem('userId') || '';
+      headers['X-Team-ID'] = localStorage.getItem('selectedTeamId') || '';
+    } else {
+      headers['X-Team-Name'] = localStorage.getItem('teamName') || '';
+      headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
+    }
+    return headers;
+  }
+
+  function showDigitalConfirmPanel(){
+    if (!digitalPaymentPanel) return;
+    digitalPaymentPanel.classList.remove('hidden');
+    if (digitalConfirmPanel) digitalConfirmPanel.classList.remove('hidden');
+    if (digitalQrPanel) digitalQrPanel.classList.add('hidden');
+  }
+
+  function stopDigitalPolling(){
+    if (digitalPollInterval) { clearInterval(digitalPollInterval); digitalPollInterval = null; }
+    if (digitalWaitingMsgInterval) { clearInterval(digitalWaitingMsgInterval); digitalWaitingMsgInterval = null; }
+  }
+
+  // Resets the whole digital panel back to its starting (hidden) state. Deliberately does NOT
+  // touch customer/address/phone/products/notes — callers that need those cleared too call
+  // clearOrderForm() themselves (which itself calls this function).
+  function hideDigitalPanel(){
+    stopDigitalPolling();
+    if (digitalPaymentPanel) digitalPaymentPanel.classList.add('hidden');
+    if (digitalConfirmPanel) digitalConfirmPanel.classList.remove('hidden');
+    if (digitalQrPanel) digitalQrPanel.classList.add('hidden');
+    if (digitalQrImg) digitalQrImg.src = '';
+    if (digitalExpiryText) digitalExpiryText.textContent = '';
+    digitalCurrentAttemptId = null;
+    digitalExpiresAt = null;
+    digitalOrderData = null;
+  }
+
+  function updateDigitalExpiryText(){
+    if (!digitalExpiryText) return;
+    if (!digitalExpiresAt) { digitalExpiryText.textContent = ''; return; }
+    const msLeft = digitalExpiresAt - Date.now();
+    if (msLeft <= 0) { handleDigitalExpired(); return; }
+    const secs = Math.floor(msLeft / 1000);
+    const mm = Math.floor(secs / 60), ss = secs % 60;
+    digitalExpiryText.textContent = 'Expires in ' + mm + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+
+  function startDigitalWaitingMessages(){
+    let i = 0;
+    if (digitalStatusText) digitalStatusText.textContent = DIGITAL_WAITING_MESSAGES[0];
+    updateDigitalExpiryText();
+    digitalWaitingMsgInterval = setInterval(()=>{
+      i = (i + 1) % DIGITAL_WAITING_MESSAGES.length;
+      if (digitalStatusText) digitalStatusText.textContent = DIGITAL_WAITING_MESSAGES[i];
+      updateDigitalExpiryText();
+    }, 3000);
+  }
+
+  function handleDigitalExpired(){
+    stopDigitalPolling();
+    if (payDigital) payDigital.checked = false;
+    hideDigitalPanel();
+    alert('The QR code expired. Please try again or use Cash/Check.');
+  }
+
+  function handleDigitalCancelledOrExpired(status){
+    stopDigitalPolling();
+    if (payDigital) payDigital.checked = false;
+    hideDigitalPanel();
+    alert(status === 'expired' ? 'The QR code expired. Please try again or use Cash/Check.' : 'The digital payment was cancelled.');
+  }
+
+  // Builds the exact same order object the cash/check Save path builds (same id pattern, same
+  // full field set), for a NEW order. Shared by the Save-button handler and the digital "paid"
+  // handler so there is exactly one place that constructs a new order object.
+  async function buildNewOrderObject(paymentMethod, data, extra){
+    extra = extra || {};
+    const pos = await getCurrentPositionPromise(5000);
+    const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
+
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+    const authCreds = {};
+    if (loginMode === 'user') {
+      authCreds._sync_user_id = localStorage.getItem('userId') || '';
+      authCreds._sync_team_id = localStorage.getItem('selectedTeamId') || '';
+    } else {
+      authCreds._sync_team_name = localStorage.getItem('teamName') || '';
+      authCreds._sync_team_code = localStorage.getItem('teamCode') || '';
+    }
+
+    return {
+      id: 'o-' + Date.now(),
+      customer: data.customer,
+      address: data.address,
+      cellNumber: data.cell,
+      products: data.products,
+      price_snapshot: data.priceSnapshot,
+      donationAmount: data.donation,
+      paymentMethod,
+      checkNumber: data.chkNumber || '',
+      notes: data.notes,
+      createdAt: new Date().toISOString(),
+      subsales_user_id: data.subsalesUserId,
+      subsales_team_id: data.subsalesTeamId,
+      entered_by_id: data.enteredById,
+      entered_by_name: data.enteredByName,
+      teamName: data.teamName,
+      teamCode: data.teamCode,
+      geo,
+      ...authCreds,
+      ...extra
+    };
+  }
+
+  async function handleDigitalPaid(){
+    stopDigitalPolling();
+    const orderData = digitalOrderData;
+    const attemptId = digitalCurrentAttemptId;
+    try{
+      if (!orderData) { console.warn('digital payment marked paid but no captured order data was found'); return; }
+      const order = await buildNewOrderObject('digital', orderData, { digitalAttemptId: attemptId });
+      await Storage.add(order);
+      renderOrders();
+      showOrderConfirmation(order, false);
+      if (navigator.onLine) {
+        trySync().catch(()=>{});
+      }
+    }catch(e){
+      console.warn('error finalizing digital order after payment', e);
+      alert('Payment was received, but saving the order failed: ' + (e.message || e));
+    }finally{
+      if (payDigital) payDigital.checked = false;
+      hideDigitalPanel();
+    }
+  }
+
+  async function pollDigitalStatus(){
+    if (!digitalCurrentAttemptId) { stopDigitalPolling(); return; }
+    // Client-side belt-and-suspenders: react to expiry even if the server hasn't confirmed it yet.
+    if (digitalExpiresAt && Date.now() > digitalExpiresAt) { handleDigitalExpired(); return; }
+    try{
+      const url = apiBase ? (apiBase + '/digital-payments/status/' + encodeURIComponent(digitalCurrentAttemptId)) : ('/wp-json/order-manager/v1/digital-payments/status/' + encodeURIComponent(digitalCurrentAttemptId));
+      const resp = await fetch(url, { headers: digitalAuthHeaders() });
+      if (!resp.ok) { console.warn('digital payment status poll got non-OK response', resp.status); return; }
+      const data = await resp.json().catch(()=>null);
+      const status = data && data.status;
+      if (status === 'paid') { await handleDigitalPaid(); }
+      else if (status === 'cancelled_by_seller' || status === 'expired') { handleDigitalCancelledOrExpired(status); }
+      // status === 'initiated' (or anything else): keep polling, keep cycling the waiting message.
+    }catch(e){
+      // A single transient poll failure is not an emergency — same "don't panic on one blip"
+      // judgment as the session-tracking heartbeat. Log and let the next tick retry.
+      console.warn('digital payment status poll failed, will retry', e);
+    }
+  }
+
+  function startDigitalPolling(){
+    stopDigitalPolling();
+    digitalPollInterval = setInterval(pollDigitalStatus, 3000);
+  }
+
+  digitalBackBtn1 && digitalBackBtn1.addEventListener('click', ()=>{
+    if (payDigital) payDigital.checked = false;
+    hideDigitalPanel();
+  });
+
+  digitalCancelBtn && digitalCancelBtn.addEventListener('click', ()=>{
+    const attemptId = digitalCurrentAttemptId;
+    if (attemptId) {
+      const url = apiBase ? (apiBase + '/digital-payments/cancel/' + encodeURIComponent(attemptId)) : ('/wp-json/order-manager/v1/digital-payments/cancel/' + encodeURIComponent(attemptId));
+      // Fire-and-forget: don't block the UI on the cancel response.
+      fetch(url, { method: 'POST', headers: digitalAuthHeaders() }).catch(e => console.warn('digital payment cancel request failed', e));
+    }
+    if (payDigital) payDigital.checked = false;
+    hideDigitalPanel();
+  });
+
+  digitalReadyBtn && digitalReadyBtn.addEventListener('click', async ()=>{
+    if (digitalReadyBtn.disabled) return;
+    digitalReadyBtn.disabled = true;
+    try{
+      // Same validation the Save button runs for buyer info (see saveOrderBtn handler below) —
+      // NOTE: the current Save-button validation only requires customer+address+phone; there is
+      // no existing "at least one product/donation" check to mirror, so none is added here
+      // (a $0 checkout attempt will simply fail server-side and surface as the generic error below).
+      const customer = qs('#customerName') && qs('#customerName').value.trim();
+      let address = '';
+      try{ address = (qs('#address') && qs('#address').value && qs('#address').value.trim()) || ''; }catch(e){ address = ''; }
+      const unitFloorApt = qs('#unitFloorApt') && qs('#unitFloorApt').value.trim();
+      if (unitFloorApt) { address = address + (address ? ' ' : '') + unitFloorApt; }
+      const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
+
+      if (!customer || !address) { alert('Customer and address required'); return; }
+      if (!cell) { alert('Phone number is required'); return; }
+
+      const notes = qs('#notes') && qs('#notes').value || '';
+      const prodInputs = document.querySelectorAll('input[data-product-id]');
+      const products = [];
+      prodInputs.forEach(pi => {
+        try{
+          const pid = pi.getAttribute('data-product-id');
+          const qty = parseInt(pi.value, 10) || 0;
+          const price = parseFloat(pi.getAttribute('data-product-price') || ((productsConfig.find(p=>String(p.id)===String(pid))||{}).price)) || 0;
+          if (qty > 0) products.push({ id: pid, name: (productsConfig.find(p=>String(p.id)===String(pid))||{}).name || pid, qty: qty, price: Number(price.toFixed(2)) });
+        }catch(e){}
+      });
+      const donation = parseFloat(qs('#donationAmount') && qs('#donationAmount').value) || 0;
+      const priceSnapshot = {};
+      if (productsConfig && Array.isArray(productsConfig)) { productsConfig.forEach(p => { priceSnapshot[p.id] = p.price; }); }
+
+      const salesMode = localStorage.getItem('salesMode') || localStorage.getItem('detectedSalesMode') || 'legacy';
+      let subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode;
+      if (salesMode === 'user') {
+        subsalesUserId = localStorage.getItem('userId') || '';
+        subsalesTeamId = localStorage.getItem('selectedTeamId') || '-1';
+        enteredById = subsalesUserId;
+        enteredByName = localStorage.getItem('userName') || '';
+      } else {
+        enteredById = localStorage.getItem('teamMemberId') || '';
+        enteredByName = localStorage.getItem('teamMemberName') || '';
+        teamName = localStorage.getItem('teamName') || '';
+        teamCode = localStorage.getItem('teamCode') || '';
+      }
+
+      // Snapshot now — this is what gets used to build the real order later, at "paid" time,
+      // not whatever the DOM happens to hold then.
+      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode };
+
+      const url = apiBase ? (apiBase + '/digital-payments/checkout') : '/wp-json/order-manager/v1/digital-payments/checkout';
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: digitalAuthHeaders(),
+        body: JSON.stringify({ customer, address, cellNumber: cell, products, notes, donationAmount: donation, price_snapshot: priceSnapshot })
+      });
+
+      if (!resp.ok) {
+        let msg = 'Could not start the digital payment. Please try again or use Cash/Check.';
+        try{ const j = await resp.json(); if (j && j.message) msg = j.message; }catch(e){}
+        alert(msg);
+        return;
+      }
+
+      const data = await resp.json();
+      digitalCurrentAttemptId = data.attempt_id;
+      digitalExpiresAt = data.expires_at ? new Date(data.expires_at).getTime() : null;
+
+      if (digitalConfirmPanel) digitalConfirmPanel.classList.add('hidden');
+      if (digitalQrPanel) digitalQrPanel.classList.remove('hidden');
+      if (digitalQrImg) digitalQrImg.src = data.qr_code_data_uri || '';
+
+      startDigitalWaitingMessages();
+      startDigitalPolling();
+    }catch(e){
+      console.warn('digital payment checkout request failed', e);
+      alert('Could not start the digital payment. Please try again or use Cash/Check.');
+    }finally{
+      digitalReadyBtn.disabled = false;
+    }
+  });
 
   async function renderOrders(){
     // Main orders list is no longer used for queued orders; they are shown in the inlay.
@@ -2816,42 +3117,11 @@
         order.geo = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy };
       }
     } else {
-      // Creating new order
-      const pos = await getCurrentPositionPromise(5000);
-      const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
-      
-      // Store authentication credentials with order for post-logout sync
-      const loginMode = localStorage.getItem('loginMode') || 'legacy';
-      const authCreds = {};
-      if (loginMode === 'user') {
-        authCreds._sync_user_id = localStorage.getItem('userId') || '';
-        authCreds._sync_team_id = localStorage.getItem('selectedTeamId') || '';
-      } else {
-        authCreds._sync_team_name = localStorage.getItem('teamName') || '';
-        authCreds._sync_team_code = localStorage.getItem('teamCode') || '';
-      }
-      
-      order = {
-        id: 'o-' + Date.now(),
-        customer,
-        address,
-        cellNumber: cell,
-        products: products,
-        price_snapshot: priceSnapshot,
-        donationAmount: donation,
-        paymentMethod,
-        checkNumber: chkNumber,
-        notes,
-        createdAt: new Date().toISOString(),
-        subsales_user_id: subsalesUserId,
-        subsales_team_id: subsalesTeamId,
-        entered_by_id: enteredById,
-        entered_by_name: enteredByName,
-        teamName: teamName,
-        teamCode: teamCode,
-        geo,
-        ...authCreds
-      };
+      // Creating new order — shared with the digital-payment "paid" handler via buildNewOrderObject()
+      order = await buildNewOrderObject(paymentMethod, {
+        customer, address, cell, products, priceSnapshot, donation, chkNumber, notes,
+        subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode
+      });
     }
     
     // Handle save based on edit state - LOCAL FIRST approach
