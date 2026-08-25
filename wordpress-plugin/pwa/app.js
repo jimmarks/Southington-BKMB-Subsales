@@ -2773,10 +2773,6 @@
       teamCode = localStorage.getItem('teamCode') || '';
     }
 
-    // capture GPS coordinates (best-effort)
-    const pos = await getCurrentPositionPromise(5000);
-    const geo = pos && pos.coords ? { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy } : null;
-
     // If we're editing an existing order, start with the original data
     let order;
     const isEditing = window._editingOrder && window._editingOrder.orderId;
