@@ -72,22 +72,22 @@ class Subsales_AJAX_Handlers {
             wp_send_json_error( 'Unauthorized' );
         }
 
-        $current = get_option( 'subsales_debug_mode', 'no' );
-        $new_value = ( $current === 'yes' ) ? 'no' : 'yes';
-        
-        update_option( 'subsales_debug_mode', $new_value );
-        
-        if ( $new_value === 'yes' ) {
-            update_option( 'subsales_debug_mode_expires', time() + (24 * 60 * 60) );
+        $current = get_option( 'subsales_debug_logging_enabled', false );
+        $new_value = ! $current;
+
+        update_option( 'subsales_debug_logging_enabled', $new_value );
+
+        if ( $new_value ) {
+            update_option( 'subsales_debug_logging_started', time() );
         } else {
-            delete_option( 'subsales_debug_mode_expires' );
+            delete_option( 'subsales_debug_logging_started' );
         }
-        
+
         subsales_log( 'INFO', 'system', 'Debug mode toggled', array( 'new_value' => $new_value ) );
-        
+
         wp_send_json_success( array(
-            'debug_mode' => $new_value,
-            'message' => $new_value === 'yes' ? 'Debug mode enabled (auto-disables in 24 hours)' : 'Debug mode disabled'
+            'enabled' => $new_value,
+            'message' => $new_value ? 'Debug mode enabled (auto-disables in 24 hours)' : 'Debug mode disabled'
         ) );
     }
 

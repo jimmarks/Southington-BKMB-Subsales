@@ -8447,7 +8447,7 @@ function subsales_logs_page() {
             
             $.post(ajaxurl, {
                 action: 'subsales_toggle_debug',
-                nonce: '<?php echo wp_create_nonce( 'subsales_debug_toggle' ); ?>'
+                nonce: '<?php echo wp_create_nonce( 'subsales_toggle_debug' ); ?>'
             }, function(response) {
                 if (response.success) {
                     location.reload();

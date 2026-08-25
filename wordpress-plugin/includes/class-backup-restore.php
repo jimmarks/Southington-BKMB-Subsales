@@ -584,8 +584,6 @@ class Subsales_Backup_Restore {
             'subsales_served_zipcodes',
             'subsales_delete_on_uninstall',
             'order_sync_pwa_page_id',
-            'subsales_debug_mode',
-            'subsales_debug_mode_until',
             'subsales_db_version'
         );
         

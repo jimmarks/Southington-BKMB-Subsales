@@ -52,6 +52,7 @@ $options = array(
     'subsales_delete_on_uninstall',
     'subsales_served_zips',
     'subsales_debug_logging_enabled',
+    'subsales_debug_logging_started',
     'subsales_initialized'
 );
 
