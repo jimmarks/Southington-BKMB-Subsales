@@ -915,11 +915,116 @@ class Subsales_Database {
         global $wpdb;
         $teams_table = $wpdb->prefix . 'ss_teams';
         $members_table = $wpdb->prefix . 'ss_team_members';
-        
+
         $wpdb->delete( $members_table, array( 'team_id' => $team_id ), array( '%d' ) );
         return $wpdb->delete( $teams_table, array( 'id' => $team_id ), array( '%d' ) );
     }
-    
+
+    // ============================================================
+    // SEASONS
+    // ============================================================
+
+    /**
+     * List all seasons, newest first.
+     *
+     * @return array
+     */
+    public static function get_seasons() {
+        global $wpdb;
+        $seasons_table = $wpdb->prefix . 'ss_seasons';
+        return $wpdb->get_results( "SELECT * FROM {$seasons_table} ORDER BY id DESC", ARRAY_A );
+    }
+
+    /**
+     * Team/campaign/member counts for one season - used on the "Start New
+     * Season" confirmation screen so the admin sees what they're about to
+     * retire before confirming. Member count is distinct members currently
+     * linked to that season's teams (members themselves aren't season-scoped).
+     *
+     * @param int $season_id
+     * @return array { teams, campaigns, members }
+     */
+    public static function get_season_counts( $season_id ) {
+        global $wpdb;
+        $teams_table      = $wpdb->prefix . 'ss_teams';
+        $campaigns_table  = $wpdb->prefix . 'ss_campaigns';
+        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
+        $season_id = intval( $season_id );
+
+        return array(
+            'teams'     => intval( $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$teams_table} WHERE season_id = %d", $season_id
+            ) ) ),
+            'campaigns' => intval( $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$campaigns_table} WHERE season_id = %d", $season_id
+            ) ) ),
+            'members'   => intval( $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(DISTINCT ut.user_id) FROM {$user_teams_table} ut
+                 INNER JOIN {$teams_table} t ON ut.team_id = t.id
+                 WHERE t.season_id = %d", $season_id
+            ) ) ),
+        );
+    }
+
+    /**
+     * Start a new season: create the season row, make it current, and
+     * retire (never delete) the prior season's teams by flipping them
+     * inactive. Nothing about members, campaigns, signups, or orders is
+     * touched - they stay exactly as they are, forever queryable as history.
+     *
+     * @param string $label New season label, e.g. "2026-2027"
+     * @return array|WP_Error { new_season_id, old_season_id, teams_deactivated }
+     */
+    public static function start_new_season( $label ) {
+        global $wpdb;
+        $label = sanitize_text_field( $label );
+
+        if ( $label === '' ) {
+            return new WP_Error( 'missing_label', 'A season label is required.', array( 'status' => 400 ) );
+        }
+
+        $seasons_table = $wpdb->prefix . 'ss_seasons';
+        $teams_table   = $wpdb->prefix . 'ss_teams';
+
+        $existing = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$seasons_table} WHERE label = %s", $label
+        ) );
+        if ( $existing ) {
+            return new WP_Error( 'duplicate_label', 'A season with that label already exists.', array( 'status' => 409 ) );
+        }
+
+        $old_season_id = intval( get_option( 'subsales_current_season_id' ) );
+
+        $inserted = $wpdb->insert( $seasons_table, array( 'label' => $label ), array( '%s' ) );
+        if ( ! $inserted ) {
+            return new WP_Error( 'insert_failed', 'Could not create the new season.', array( 'status' => 500 ) );
+        }
+        $new_season_id = intval( $wpdb->insert_id );
+
+        update_option( 'subsales_current_season_id', $new_season_id );
+
+        $teams_deactivated = 0;
+        if ( $old_season_id ) {
+            $teams_deactivated = intval( $wpdb->query( $wpdb->prepare(
+                "UPDATE {$teams_table} SET status = 'inactive' WHERE season_id = %d",
+                $old_season_id
+            ) ) );
+        }
+
+        subsales_log( 'INFO', 'system', 'Started new season', array(
+            'new_season_id'      => $new_season_id,
+            'old_season_id'      => $old_season_id,
+            'teams_deactivated'  => $teams_deactivated,
+        ) );
+
+        return array(
+            'new_season_id'     => $new_season_id,
+            'old_season_id'     => $old_season_id,
+            'teams_deactivated' => $teams_deactivated,
+        );
+    }
+
+
     /**
      * Get all active teams
      * 

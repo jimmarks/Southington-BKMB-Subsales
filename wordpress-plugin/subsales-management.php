@@ -1220,7 +1220,16 @@ function order_sync_admin_menu() {
         'subsales-campaigns',
         array( 'Subsales_Admin_Pages', 'render_campaigns_page' )
     );
-    
+
+    add_submenu_page(
+        'subsales-management',
+        'Seasons',
+        'Seasons',
+        'manage_options',
+        'subsales-seasons',
+        array( 'Subsales_Admin_Pages', 'render_seasons_page' )
+    );
+
     // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
     // add_submenu_page(
     //     'subsales-management',
