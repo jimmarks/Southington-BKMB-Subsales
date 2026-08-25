@@ -69,8 +69,14 @@ class Subsales_Delivery {
             wp_die( 'Could not geocode starting address. Please check your Google Maps API key and address.' );
         }
 
-        // Fetch orders (delivery date is for display only, not filtering)
-        $rows = $wpdb->get_results( "SELECT * FROM {$table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
+        // Fetch orders (delivery date is for display only, not filtering).
+        // Scoped to the current season so a manifest run after a new season
+        // starts doesn't pull in already-delivered historical orders.
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE deleted = 0 AND season_id = %d ORDER BY id ASC",
+            $current_season_id
+        ), ARRAY_A );
 
         if ( empty( $rows ) ) {
             $msg = rawurlencode( 'No orders found in database' );

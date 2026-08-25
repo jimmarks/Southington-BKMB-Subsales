@@ -3041,11 +3041,15 @@ class Subsales_Database {
 
         // All of the day's team orders (any tally state), not deleted.
         // Matches the "today" comparison used by Subsales_Orders::get_orders().
+        // Season-scoped internally (every caller means "right now", which
+        // always means the current season) rather than threaded through
+        // this function's signature.
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
         $orders = $wpdb->get_results( $wpdb->prepare(
             "SELECT * FROM {$orders_table}
-             WHERE team_id = %d AND DATE(created_at) = %s AND deleted = 0
+             WHERE team_id = %d AND DATE(created_at) = %s AND deleted = 0 AND season_id = %d
              ORDER BY created_at ASC",
-            $team_id, $date
+            $team_id, $date, $current_season_id
         ), ARRAY_A );
 
         $totals = array(

@@ -277,9 +277,12 @@ class Subsales_Orders {
             'order_id' => $order_id,
             'user_id' => $user_id,
             'order_data' => $order_data,
-            'sync_status' => 'synced'
+            'sync_status' => 'synced',
+            // Always known (a global "current season" setting, not
+            // client-submitted) - unlike team_id this is never conditional.
+            'season_id' => intval( get_option( 'subsales_current_season_id' ) ),
         );
-        $formats = array( '%s', '%s', '%s', '%s' );
+        $formats = array( '%s', '%s', '%s', '%s', '%d' );
         if ( $team_id !== null ) {
             $insert_row['team_id'] = $team_id;
             $formats[] = '%d';
