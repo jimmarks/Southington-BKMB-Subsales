@@ -2634,23 +2634,29 @@ class Subsales_Database {
     // ============================================================
 
     /**
-     * Look up a member by phone for the LIVE signup path. Roster-preload
+     * Look up a member by phone for the KID SIGNUP path only. Roster-preload
      * enforcement: this never creates a new member - an unrecognized phone
      * is a hard rejection, not a fabricated record. On a match, syncs name
-     * (and role, when provided) and reactivates the member (status='active')
-     * so a kid deactivated at the end of a prior season isn't silently
-     * locked out after re-signing-up this season.
+     * and reactivates the member (status='active') so a kid deactivated at
+     * the end of a prior season isn't silently locked out after
+     * re-signing-up this season.
+     *
+     * NOT for driver signup - a driver's own phone is intentionally not
+     * roster-gated (see get_or_create_driver_by_phone()). The security gate
+     * for driver signup is knowing the CHILD's phone number and being
+     * restricted to days the child actually signed up for (enforced in
+     * Subsales_Driver_Signup::rest_driver_signup()); the driver's own phone
+     * is just contact info, not a credential that must be pre-loaded.
      *
      * The roster-import admin tool (which IS allowed to insert brand-new
      * members) has its own separate upsert - this method must stay
      * rejection-only since it backs a public, unauthenticated REST endpoint.
      *
-     * @param string      $name  Member name
-     * @param string      $phone 10-digit phone (caller normalizes)
-     * @param string|null $role  When set, update role (e.g. 'driver'); null leaves it untouched
+     * @param string $name  Member name
+     * @param string $phone 10-digit phone (caller normalizes)
      * @return int|WP_Error Member ID, or WP_Error if the phone isn't on record
      */
-    public static function get_active_member_by_phone( $name, $phone, $role = null ) {
+    public static function get_active_member_by_phone( $name, $phone ) {
         global $wpdb;
         $members_table = $wpdb->prefix . 'ss_team_members';
 
@@ -2671,10 +2677,51 @@ class Subsales_Database {
         $update = array( 'status' => 'active' );
         $format = array( '%s' );
         if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
-        if ( $role !== null && $role !== '' ) { $update['role'] = $role; $format[] = '%s'; }
         $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
 
         return $member_id;
+    }
+
+    /**
+     * Get-or-create a member by phone for the DRIVER SIGNUP path. Unlike
+     * get_active_member_by_phone(), this MAY create a brand-new member -
+     * drivers (usually parents) are not expected to be pre-loaded on the
+     * roster. The security gate for driver signup happens upstream, in
+     * Subsales_Driver_Signup::rest_driver_signup(): the caller must already
+     * know the CHILD's phone number, and the selected team/day pairs are
+     * re-validated against that child's actual signups before this is ever
+     * called - so an unrecognized driver phone is safe to create here.
+     *
+     * @param string $name  Driver name
+     * @param string $phone 10-digit phone (caller normalizes)
+     * @return int|false Member ID, or false on failure
+     */
+    public static function get_or_create_driver_by_phone( $name, $phone ) {
+        global $wpdb;
+        $members_table = $wpdb->prefix . 'ss_team_members';
+
+        $member = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id FROM {$members_table} WHERE phone = %s",
+            $phone
+        ), ARRAY_A );
+
+        if ( $member ) {
+            $member_id = intval( $member['id'] );
+            $update = array( 'status' => 'active', 'role' => 'driver' );
+            $format = array( '%s', '%s' );
+            if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
+            $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
+            return $member_id;
+        }
+
+        $wpdb->insert( $members_table, array(
+            'name'   => $name,
+            'phone'  => $phone,
+            'role'   => 'driver',
+            'status' => 'active',
+        ), array( '%s', '%s', '%s', '%s' ) );
+
+        return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
     }
 
     /**
@@ -2777,10 +2824,21 @@ class Subsales_Database {
             return new WP_Error( 'missing_team', 'A team is required.', array( 'status' => 400 ) );
         }
 
-        // Resolve the member (sync role to 'driver' only for driver signups).
-        // Roster-preload enforcement: an unrecognized phone is rejected here,
-        // not silently created - see get_active_member_by_phone().
-        $user_id = self::get_active_member_by_phone( $name, $phone, $is_driver ? 'driver' : null );
+        // Resolve the member. Kid signup: roster-preload enforced, an
+        // unrecognized phone is rejected. Driver signup: the phone is NOT
+        // roster-gated - the driver's own phone is just contact info, not a
+        // credential, and the real security check (knowing the child's
+        // phone, restricted to the child's actual signups) already happened
+        // upstream in Subsales_Driver_Signup::rest_driver_signup() before
+        // this was ever called.
+        if ( $is_driver ) {
+            $user_id = self::get_or_create_driver_by_phone( $name, $phone );
+            if ( ! $user_id ) {
+                return new WP_Error( 'member_failed', 'Could not create the driver.', array( 'status' => 500 ) );
+            }
+        } else {
+            $user_id = self::get_active_member_by_phone( $name, $phone );
+        }
         if ( is_wp_error( $user_id ) ) {
             return $user_id;
         }
