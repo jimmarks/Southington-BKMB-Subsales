@@ -43,9 +43,14 @@ class Subsales_Points_Calculator {
         $members_table = $wpdb->prefix . 'ss_team_members';
         $products_config = order_sync_get_products_config();
         
-        // Get all non-deleted orders with necessary fields
+        // Get all non-deleted orders with necessary fields, scoped to the
+        // current season so this report doesn't mix in prior-season sales.
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
         $orders = $wpdb->get_results(
-            "SELECT id, order_data, created_at, team_id, user_id FROM {$orders_table} WHERE deleted = 0 ORDER BY created_at DESC",
+            $wpdb->prepare(
+                "SELECT id, order_data, created_at, team_id, user_id FROM {$orders_table} WHERE deleted = 0 AND season_id = %d ORDER BY created_at DESC",
+                $current_season_id
+            ),
             ARRAY_A
         );
         

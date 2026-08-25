@@ -2349,10 +2349,11 @@ class Subsales_Database {
         // 1. Status = 'pending' (never validated)
         // 2. Address changed (address_hash doesn't match current address)
         // 3. All orders (including tallied/delivered) - use dismiss button to filter out unwanted addresses
-        $orders = $wpdb->get_results(
+        $orders = $wpdb->get_results( $wpdb->prepare(
             "SELECT id, order_id, order_data, address, address_hash, address_validation_status, tallied
              FROM {$table}
              WHERE deleted = 0
+             AND season_id = %d
              AND address_validation_status != 'dismissed'
              AND (
                  address_validation_status = 'pending'
@@ -2360,9 +2361,9 @@ class Subsales_Database {
                  OR address_validation_date IS NULL
              )
              ORDER BY created_at DESC",
-            ARRAY_A
-        );
-        
+            intval( get_option( 'subsales_current_season_id' ) )
+        ), ARRAY_A );
+
         if ( empty( $orders ) ) {
             subsales_log( 'INFO', 'system', 'Address validation: No orders need validation' );
             return;
@@ -2554,14 +2555,16 @@ class Subsales_Database {
     public static function get_address_validation_issues_count() {
         global $wpdb;
         $table = $wpdb->prefix . 'ss_orders';
-        
-        $count = $wpdb->get_var(
+
+        $count = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM {$table}
              WHERE deleted = 0
+             AND season_id = %d
              AND tallied = 0
-             AND address_validation_status IN ('geocode_failed', 'format_invalid')"
-        );
-        
+             AND address_validation_status IN ('geocode_failed', 'format_invalid')",
+            intval( get_option( 'subsales_current_season_id' ) )
+        ) );
+
         return intval( $count );
     }
     
@@ -2608,14 +2611,16 @@ class Subsales_Database {
     public static function get_address_validation_pending_count() {
         global $wpdb;
         $table = $wpdb->prefix . 'ss_orders';
-        
-        $count = $wpdb->get_var(
+
+        $count = $wpdb->get_var( $wpdb->prepare(
             "SELECT COUNT(*) FROM {$table}
              WHERE deleted = 0
+             AND season_id = %d
              AND tallied = 0
-             AND (address_validation_status = 'pending' OR address_validation_status IS NULL)"
-        );
-        
+             AND (address_validation_status = 'pending' OR address_validation_status IS NULL)",
+            intval( get_option( 'subsales_current_season_id' ) )
+        ) );
+
         return intval( $count );
     }
 

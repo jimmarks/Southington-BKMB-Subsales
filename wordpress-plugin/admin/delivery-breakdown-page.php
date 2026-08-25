@@ -20,8 +20,11 @@ global $wpdb;
 $orders_table = $wpdb->prefix . 'ss_orders';
 $configured_products = order_sync_get_products_config();
 
-// Fetch all non-deleted orders
-$rows = $wpdb->get_results( "SELECT * FROM {$orders_table} WHERE deleted = 0 ORDER BY id ASC", ARRAY_A );
+// Fetch all non-deleted orders, scoped to the current season
+$rows = $wpdb->get_results( $wpdb->prepare(
+    "SELECT * FROM {$orders_table} WHERE deleted = 0 AND season_id = %d ORDER BY id ASC",
+    intval( get_option( 'subsales_current_season_id' ) )
+), ARRAY_A );
 
 // Parse orders
 $parsed_orders = array();

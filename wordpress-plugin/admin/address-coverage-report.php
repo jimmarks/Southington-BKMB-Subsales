@@ -45,11 +45,11 @@ if ( $address_table_exists && $address_count > 0 ) {
     }
 }
 
-// Get all non-deleted orders
-$orders = $wpdb->get_results( 
-    "SELECT id, order_id, order_data FROM {$wpdb->prefix}ss_orders WHERE deleted = 0 ORDER BY id ASC", 
-    ARRAY_A 
-);
+// Get all non-deleted orders, scoped to the current season
+$orders = $wpdb->get_results( $wpdb->prepare(
+    "SELECT id, order_id, order_data FROM {$wpdb->prefix}ss_orders WHERE deleted = 0 AND season_id = %d ORDER BY id ASC",
+    intval( get_option( 'subsales_current_season_id' ) )
+), ARRAY_A );
 
 // Get products config to filter donation-only orders
 $configured_products = order_sync_get_products_config();

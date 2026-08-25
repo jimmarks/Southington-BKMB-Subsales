@@ -33,7 +33,7 @@ $query = "SELECT
     JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.customer')) as customer,
     JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.entered_by_name')) as seller
 FROM {$wpdb->prefix}ss_orders o
-WHERE o.deleted = 0";
+WHERE o.deleted = 0 AND o.season_id = " . intval( get_option( 'subsales_current_season_id' ) );
 
 if ( $has_gps_only ) {
     $query .= " AND JSON_EXTRACT(o.order_data, '$.geo.latitude') IS NOT NULL

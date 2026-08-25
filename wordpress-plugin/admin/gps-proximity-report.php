@@ -108,17 +108,19 @@ if ( isset( $_POST['search_address'] ) && check_admin_referer( 'gps_proximity_se
                 
                 // Find orders created by this user around this time (±10 minutes)
                 $nearby_orders = $wpdb->get_results( $wpdb->prepare(
-                    "SELECT o.order_id, o.created_at, 
+                    "SELECT o.order_id, o.created_at,
                             JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.address')) as order_address,
                             JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.customer')) as customer
                      FROM {$wpdb->prefix}ss_orders o
                      INNER JOIN {$wpdb->prefix}ss_team_members m ON o.user_id = m.id
                      WHERE m.name = %s
                        AND o.deleted = 0
-                       AND o.created_at BETWEEN DATE_SUB(%s, INTERVAL 10 MINUTE) 
+                       AND o.season_id = %d
+                       AND o.created_at BETWEEN DATE_SUB(%s, INTERVAL 10 MINUTE)
                                             AND DATE_ADD(%s, INTERVAL 10 MINUTE)
                      ORDER BY o.created_at DESC",
                     $user_name,
+                    intval( get_option( 'subsales_current_season_id' ) ),
                     $heartbeat_time,
                     $heartbeat_time
                 ), ARRAY_A );

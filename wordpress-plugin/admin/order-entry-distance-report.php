@@ -66,6 +66,7 @@ function subsales_reverse_geocode( $lat, $lng ) {
 global $wpdb;
 $orders_table = $wpdb->prefix . 'ss_orders';
 $addresses_table = $wpdb->prefix . 'ss_addresses';
+$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
 
 // Handle search
 $search_query = isset( $_GET['search'] ) ? sanitize_text_field( $_GET['search'] ) : '';
@@ -80,9 +81,11 @@ if ( $show_search_results ) {
             "SELECT id, order_id, order_data, address, created_at, user_id, team_id
              FROM {$orders_table}
              WHERE deleted = 0
+             AND season_id = %d
              AND (order_id LIKE %s OR address LIKE %s)
              ORDER BY created_at DESC
              LIMIT 20",
+            $current_season_id,
             '%' . $wpdb->esc_like( $search_query ) . '%',
             '%' . $wpdb->esc_like( $search_query ) . '%'
         ),
@@ -95,12 +98,16 @@ if ( $show_search_results ) {
 } else {
     // Get all orders with GPS data for full report
     $search_orders = $wpdb->get_results(
-        "SELECT id, order_id, order_data, address, created_at, user_id, team_id
-         FROM {$orders_table}
-         WHERE deleted = 0
-         AND JSON_EXTRACT(order_data, '$.geo.latitude') IS NOT NULL
-         AND JSON_EXTRACT(order_data, '$.geo.longitude') IS NOT NULL
-         ORDER BY created_at DESC",
+        $wpdb->prepare(
+            "SELECT id, order_id, order_data, address, created_at, user_id, team_id
+             FROM {$orders_table}
+             WHERE deleted = 0
+             AND season_id = %d
+             AND JSON_EXTRACT(order_data, '$.geo.latitude') IS NOT NULL
+             AND JSON_EXTRACT(order_data, '$.geo.longitude') IS NOT NULL
+             ORDER BY created_at DESC",
+            $current_season_id
+        ),
         ARRAY_A
     );
 }

@@ -58,7 +58,12 @@ class Subsales_Orders {
         if ( $show_deleted !== 'true' && $show_deleted !== '1' && $show_deleted !== 1 && $show_deleted !== true ) {
             $where[] = 'deleted = 0';
         }
-        
+
+        // Always scoped to the current season - this is the admin orders
+        // list, which must not mix in a prior season's already-handled orders.
+        $where[] = 'season_id = %d';
+        $values[] = intval( get_option( 'subsales_current_season_id' ) );
+
         if ( ! empty( $user_id ) ) {
             $where[] = 'user_id = %s';
             $values[] = $user_id;

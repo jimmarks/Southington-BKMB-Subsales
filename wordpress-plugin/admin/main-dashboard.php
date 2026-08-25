@@ -25,7 +25,8 @@ $teams_table = $wpdb->prefix . 'ss_teams';
 $members_table = $wpdb->prefix . 'ss_team_members';
 
 // Get counts
-$order_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$orders_table} WHERE deleted = 0" );
+$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+$order_count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$orders_table} WHERE deleted = 0 AND season_id = %d", $current_season_id ) );
 $team_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'active'" );
 $team_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'inactive'" );
 $member_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} WHERE status = 'active'" );
@@ -35,14 +36,17 @@ $member_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} 
 function subsales_compute_financials( $where_clause = "deleted = 0" ) {
     global $wpdb;
     $orders_table = $wpdb->prefix . 'ss_orders';
-    
+    $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
     $product_sales_total = 0.0;
     $donations_total = 0.0;
     $cash_total = 0.0;
     $check_total = 0.0;
     $order_count = 0;
-    
-    $rows_fin = $wpdb->get_results( "SELECT order_data, created_at FROM {$orders_table} WHERE {$where_clause}", ARRAY_A );
+
+    // Always scoped to the current season, regardless of what the caller's
+    // where_clause otherwise filters on.
+    $rows_fin = $wpdb->get_results( "SELECT order_data, created_at FROM {$orders_table} WHERE ({$where_clause}) AND season_id = {$season_id}", ARRAY_A );
     if ( $rows_fin ) {
         $conf_prods_for_fin = order_sync_get_products_config();
         foreach ( $rows_fin as $rf ) {
@@ -107,7 +111,7 @@ foreach ( $products_conf as $p ) {
     $product_totals_overall[ $p['id'] ] = 0;
     $product_totals_today[ $p['id'] ] = 0;
 }
-$rows = $wpdb->get_results( "SELECT order_data, created_at FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
+$rows = $wpdb->get_results( $wpdb->prepare( "SELECT order_data, created_at FROM {$orders_table} WHERE deleted = 0 AND season_id = %d", $current_season_id ), ARRAY_A );
 if ( $rows ) {
     foreach ( $rows as $r ) {
         $od = json_decode( $r['order_data'], true );
@@ -146,7 +150,7 @@ $team_earnings = array();
 $user_earnings = array();
 
 // Get orders with user_id and team_id from database columns
-$leaderboard_rows = $wpdb->get_results( "SELECT order_data, created_at, user_id, team_id FROM {$orders_table} WHERE deleted = 0", ARRAY_A );
+$leaderboard_rows = $wpdb->get_results( $wpdb->prepare( "SELECT order_data, created_at, user_id, team_id FROM {$orders_table} WHERE deleted = 0 AND season_id = %d", $current_season_id ), ARRAY_A );
 if ( $leaderboard_rows ) {
     foreach ( $leaderboard_rows as $lr ) {
         $od = json_decode( $lr['order_data'], true );

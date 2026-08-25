@@ -12,6 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 global $wpdb;
 $table = $wpdb->prefix . 'ss_orders';
+$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
 
 // Handle address search
 $search_results = null;
@@ -22,13 +23,14 @@ if ( isset( $_POST['search_address'] ) && ! empty( $_POST['search_address'] ) ) 
     
     // Search for orders matching the address (case-insensitive, partial match)
     $search_results = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, order_id, order_data, address, address_entry_method, 
+        "SELECT id, order_id, order_data, address, address_entry_method,
                 address_validation_status, address_validation_date, address_validation_data,
                 created_at, tallied, deleted
          FROM {$table}
-         WHERE address LIKE %s
+         WHERE address LIKE %s AND season_id = %d
          ORDER BY created_at DESC",
-        '%' . $wpdb->esc_like( $search_query ) . '%'
+        '%' . $wpdb->esc_like( $search_query ) . '%',
+        $current_season_id
     ), ARRAY_A );
 }
 
@@ -139,45 +141,48 @@ if ( isset( $_POST['dismiss_address'] ) && isset( $_POST['order_id'] ) ) {
 
 // Fetch orders with validation issues (exclude dismissed)
 // Includes both tallied and untallied orders - use dismiss button to filter out unwanted addresses
-$problem_orders = $wpdb->get_results(
-    "SELECT id, order_id, order_data, address, address_entry_method, 
+$problem_orders = $wpdb->get_results( $wpdb->prepare(
+    "SELECT id, order_id, order_data, address, address_entry_method,
             address_validation_status, address_validation_date, address_validation_data,
             created_at, tallied
      FROM {$table}
      WHERE deleted = 0
+     AND season_id = %d
      AND address_validation_status IN ('geocode_failed', 'format_invalid')
      ORDER BY address_validation_date DESC",
-    ARRAY_A
-);
+    $current_season_id
+), ARRAY_A );
 
 // Fetch dismissed addresses for informational display
-$dismissed_orders = $wpdb->get_results(
-    "SELECT id, order_id, order_data, address, address_entry_method, 
+$dismissed_orders = $wpdb->get_results( $wpdb->prepare(
+    "SELECT id, order_id, order_data, address, address_entry_method,
             address_validation_status, address_validation_date, address_validation_data,
             created_at, tallied
      FROM {$table}
      WHERE deleted = 0
+     AND season_id = %d
      AND address_validation_status = 'dismissed'
      ORDER BY address_validation_date DESC",
-    ARRAY_A
-);
+    $current_season_id
+), ARRAY_A );
 
 // REDESIGNED: Check actual database state instead of relying on cached validation status
 // Get all orders that have been validated with coordinates, then check if they're actually in the database
 $addresses_table = $wpdb->prefix . 'ss_addresses';
-$potential_approvals = $wpdb->get_results(
-    "SELECT id, order_id, order_data, address, address_entry_method, 
+$potential_approvals = $wpdb->get_results( $wpdb->prepare(
+    "SELECT id, order_id, order_data, address, address_entry_method,
             address_validation_status, address_validation_date, address_validation_data,
             created_at, tallied
      FROM {$table}
      WHERE deleted = 0
+     AND season_id = %d
      AND address_validation_status != 'dismissed'
      AND address_validation_data IS NOT NULL
      AND address_validation_data != ''
      AND address_validation_data LIKE '%\"coordinates\"%'
      ORDER BY created_at DESC",
-    ARRAY_A
-);
+    $current_season_id
+), ARRAY_A );
 
 // Now check each one to see if it's actually in the database
 $needs_approval = array();
