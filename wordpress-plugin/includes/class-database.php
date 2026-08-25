@@ -309,8 +309,189 @@ class Subsales_Database {
         self::migrate_address_validation_columns( $table_name );
         self::migrate_geocode_cache_columns();
         self::migrate_address_validation_dismissed_status( $table_name );
+
+        // Season support - must run in this order: seasons table (and its
+        // bootstrap row) before the season_id columns that backfill from it.
+        self::migrate_seasons_table();
+        self::migrate_teams_season_id( $teams_table_name );
+        self::migrate_campaigns_season_id( $campaigns_table_name );
+        self::migrate_orders_season_id( $table_name );
     }
-    
+
+    /**
+     * Schema migration: Ensure seasons table exists, with a bootstrap
+     * "legacy" row so every pre-existing team/campaign/order can be
+     * backfilled to a real season instead of being left at season_id 0.
+     */
+    private static function migrate_seasons_table() {
+        global $wpdb;
+        $seasons_table_name = $wpdb->prefix . 'ss_seasons';
+
+        $table_exists = $wpdb->get_var(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$seasons_table_name}'"
+        );
+
+        if ( ! $table_exists ) {
+            $charset_collate = $wpdb->get_charset_collate();
+            $sql = "CREATE TABLE $seasons_table_name (
+                id mediumint(9) NOT NULL AUTO_INCREMENT,
+                label varchar(255) NOT NULL,
+                created_at datetime DEFAULT CURRENT_TIMESTAMP,
+                updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY  (id),
+                UNIQUE KEY label (label)
+            ) $charset_collate;";
+
+            require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+            dbDelta( $sql );
+
+            subsales_log( 'INFO', 'system', 'Created seasons table via migration' );
+        }
+
+        // Bootstrap row: everything that existed before seasons existed
+        // belongs to one legacy season. Only ever created once - if the
+        // option is already set, a season (bootstrap or a real one the
+        // admin since started) is already current and must not be touched.
+        if ( ! get_option( 'subsales_current_season_id' ) ) {
+            $existing_season = $wpdb->get_var( "SELECT id FROM {$seasons_table_name} ORDER BY id ASC LIMIT 1" );
+            if ( $existing_season ) {
+                $bootstrap_id = intval( $existing_season );
+            } else {
+                $wpdb->insert( $seasons_table_name, array(
+                    'label' => '2025-2026',
+                ), array( '%s' ) );
+                $bootstrap_id = intval( $wpdb->insert_id );
+                subsales_log( 'INFO', 'system', 'Created bootstrap legacy season via migration', array( 'season_id' => $bootstrap_id ) );
+            }
+            update_option( 'subsales_current_season_id', $bootstrap_id );
+        }
+    }
+
+    /**
+     * Schema migration: Add season_id to teams, backfill existing rows to
+     * the current (bootstrap, on first run) season, and tighten the
+     * uniqueness constraint from global-unique-by-name to
+     * unique-by-(name, season) so a team name can be reused every season.
+     */
+    private static function migrate_teams_season_id( $teams_table_name ) {
+        global $wpdb;
+
+        $column_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$teams_table_name}'
+             AND COLUMN_NAME = 'season_id'"
+        );
+
+        if ( ! $column_exists ) {
+            $wpdb->query(
+                "ALTER TABLE {$teams_table_name}
+                 ADD COLUMN season_id mediumint(9) NOT NULL DEFAULT 0 AFTER access_code,
+                 ADD INDEX season_id (season_id)"
+            );
+
+            $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+            if ( $current_season_id ) {
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE {$teams_table_name} SET season_id = %d WHERE season_id = 0",
+                    $current_season_id
+                ) );
+            }
+        }
+
+        // Tighten uniqueness: name alone -> (name, season_id), so the same
+        // team name can exist fresh in a later season without colliding
+        // with a prior season's row of the same name.
+        $has_old_key = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$teams_table_name}'
+             AND INDEX_NAME = 'name'"
+        );
+        $has_new_key = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$teams_table_name}'
+             AND INDEX_NAME = 'name_season'"
+        );
+
+        if ( $has_old_key && ! $has_new_key ) {
+            $wpdb->query(
+                "ALTER TABLE {$teams_table_name}
+                 DROP INDEX name,
+                 ADD UNIQUE KEY name_season (name, season_id)"
+            );
+        }
+    }
+
+    /**
+     * Schema migration: Add season_id to campaigns, backfilling existing
+     * rows to the current (bootstrap, on first run) season.
+     */
+    private static function migrate_campaigns_season_id( $campaigns_table_name ) {
+        global $wpdb;
+
+        $column_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$campaigns_table_name}'
+             AND COLUMN_NAME = 'season_id'"
+        );
+
+        if ( $column_exists ) {
+            return;
+        }
+
+        $wpdb->query(
+            "ALTER TABLE {$campaigns_table_name}
+             ADD COLUMN season_id mediumint(9) NOT NULL DEFAULT 0 AFTER campaign_date,
+             ADD INDEX season_id (season_id)"
+        );
+
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        if ( $current_season_id ) {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE {$campaigns_table_name} SET season_id = %d WHERE season_id = 0",
+                $current_season_id
+            ) );
+        }
+    }
+
+    /**
+     * Schema migration: Add season_id to orders, backfilling existing rows
+     * to the current (bootstrap, on first run) season.
+     */
+    private static function migrate_orders_season_id( $orders_table_name ) {
+        global $wpdb;
+
+        $column_exists = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$orders_table_name}'
+             AND COLUMN_NAME = 'season_id'"
+        );
+
+        if ( $column_exists ) {
+            return;
+        }
+
+        $wpdb->query(
+            "ALTER TABLE {$orders_table_name}
+             ADD COLUMN season_id mediumint(9) NOT NULL DEFAULT 0 AFTER team_id,
+             ADD INDEX season_id (season_id)"
+        );
+
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        if ( $current_season_id ) {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE {$orders_table_name} SET season_id = %d WHERE season_id = 0",
+                $current_season_id
+            ) );
+        }
+    }
+
     /**
      * Schema migration: Ensure team_campaigns table exists
      */
@@ -688,29 +869,32 @@ class Subsales_Database {
     public static function add_team( $name, $access_code, $description = '', $status = 'active' ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_teams';
-        
-        $existing = $wpdb->get_row( 
+        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
+        $existing = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT id FROM {$table_name} WHERE name = %s OR access_code = %s",
+                "SELECT id FROM {$table_name} WHERE (name = %s AND season_id = %d) OR access_code = %s",
                 $name,
+                $season_id,
                 $access_code
             )
         );
-        
+
         if ( $existing ) {
             error_log( 'Subsales: Team creation failed - name or access code already exists: ' . $name );
             return false;
         }
-        
+
         $result = $wpdb->insert(
             $table_name,
             array(
                 'name' => $name,
                 'access_code' => $access_code,
                 'description' => $description,
-                'status' => $status
+                'status' => $status,
+                'season_id' => $season_id
             ),
-            array( '%s', '%s', '%s', '%s' )
+            array( '%s', '%s', '%s', '%s', '%d' )
         );
         
         if ( $result === false ) {
@@ -2389,10 +2573,15 @@ class Subsales_Database {
     public static function get_or_create_team( $team_name ) {
         global $wpdb;
         $teams_table = $wpdb->prefix . 'ss_teams';
+        $season_id = intval( get_option( 'subsales_current_season_id' ) );
 
+        // Scoped to the current season only - a same-named team from a
+        // prior (now-inactive) season must never be matched here, or a kid
+        // signing up this year would silently get attached to last year's
+        // team instead of a fresh one for the current season.
         $team = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, name FROM {$teams_table} WHERE LOWER(name) = LOWER(%s)",
-            $team_name
+            "SELECT id, name FROM {$teams_table} WHERE LOWER(name) = LOWER(%s) AND season_id = %d",
+            $team_name, $season_id
         ), ARRAY_A );
 
         if ( $team ) {
@@ -2404,7 +2593,8 @@ class Subsales_Database {
             'name'        => $team_name,
             'access_code' => $access_code,
             'status'      => 'active',
-        ), array( '%s', '%s', '%s' ) );
+            'season_id'   => $season_id,
+        ), array( '%s', '%s', '%s', '%d' ) );
 
         return array( 'id' => intval( $wpdb->insert_id ), 'name' => $team_name );
     }
