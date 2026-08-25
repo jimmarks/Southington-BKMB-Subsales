@@ -2524,15 +2524,23 @@ class Subsales_Database {
     // ============================================================
 
     /**
-     * Get-or-create a team member, keyed by phone (unique).
-     * Syncs name (and role, when provided) on an existing member.
+     * Look up a member by phone for the LIVE signup path. Roster-preload
+     * enforcement: this never creates a new member - an unrecognized phone
+     * is a hard rejection, not a fabricated record. On a match, syncs name
+     * (and role, when provided) and reactivates the member (status='active')
+     * so a kid deactivated at the end of a prior season isn't silently
+     * locked out after re-signing-up this season.
+     *
+     * The roster-import admin tool (which IS allowed to insert brand-new
+     * members) has its own separate upsert - this method must stay
+     * rejection-only since it backs a public, unauthenticated REST endpoint.
      *
      * @param string      $name  Member name
      * @param string      $phone 10-digit phone (caller normalizes)
      * @param string|null $role  When set, update role (e.g. 'driver'); null leaves it untouched
-     * @return int|false Member ID, or false on failure
+     * @return int|WP_Error Member ID, or WP_Error if the phone isn't on record
      */
-    public static function get_or_create_member( $name, $phone, $role = null ) {
+    public static function get_active_member_by_phone( $name, $phone, $role = null ) {
         global $wpdb;
         $members_table = $wpdb->prefix . 'ss_team_members';
 
@@ -2541,26 +2549,22 @@ class Subsales_Database {
             $phone
         ), ARRAY_A );
 
-        if ( $member ) {
-            $member_id = intval( $member['id'] );
-            $update = array();
-            $format = array();
-            if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
-            if ( $role !== null && $role !== '' ) { $update['role'] = $role; $format[] = '%s'; }
-            if ( ! empty( $update ) ) {
-                $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
-            }
-            return $member_id;
+        if ( ! $member ) {
+            return new WP_Error(
+                'phone_not_registered',
+                "We couldn't find that phone number. Please contact an admin to be added to the roster.",
+                array( 'status' => 404 )
+            );
         }
 
-        $wpdb->insert( $members_table, array(
-            'name'   => $name,
-            'phone'  => $phone,
-            'role'   => ( $role !== null && $role !== '' ) ? $role : 'member',
-            'status' => 'active',
-        ), array( '%s', '%s', '%s', '%s' ) );
+        $member_id = intval( $member['id'] );
+        $update = array( 'status' => 'active' );
+        $format = array( '%s' );
+        if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
+        if ( $role !== null && $role !== '' ) { $update['role'] = $role; $format[] = '%s'; }
+        $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
 
-        return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
+        return $member_id;
     }
 
     /**
@@ -2663,10 +2667,12 @@ class Subsales_Database {
             return new WP_Error( 'missing_team', 'A team is required.', array( 'status' => 400 ) );
         }
 
-        // Resolve the member (sync role to 'driver' only for driver signups)
-        $user_id = self::get_or_create_member( $name, $phone, $is_driver ? 'driver' : null );
-        if ( ! $user_id ) {
-            return new WP_Error( 'member_failed', 'Could not create the member.', array( 'status' => 500 ) );
+        // Resolve the member (sync role to 'driver' only for driver signups).
+        // Roster-preload enforcement: an unrecognized phone is rejected here,
+        // not silently created - see get_active_member_by_phone().
+        $user_id = self::get_active_member_by_phone( $name, $phone, $is_driver ? 'driver' : null );
+        if ( is_wp_error( $user_id ) ) {
+            return $user_id;
         }
 
         self::link_member_to_team( $user_id, $team_id );
@@ -2674,6 +2680,27 @@ class Subsales_Database {
         $signups_table   = $wpdb->prefix . 'ss_signups';
         $signups_created = 0;
         $skipped         = array();
+
+        // A member can sign up with different teams on different days, but
+        // never two teams for the SAME day. Checked up front, for every
+        // requested campaign at once, before any writes happen below - so a
+        // conflict on one selected day rejects the whole call cleanly
+        // instead of leaving earlier days already written while reporting
+        // total failure.
+        $campaign_id_list = implode( ',', array_map( 'intval', $campaign_ids ) );
+        $cross_team = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$signups_table}
+             WHERE user_id = %d AND team_id != %d AND status = 'active'
+             AND campaign_id IN ({$campaign_id_list})",
+            $user_id, $team_id
+        ) );
+        if ( $cross_team ) {
+            return new WP_Error(
+                'already_signed_up_different_team',
+                "You're already signed up with a different team today — contact your team lead.",
+                array( 'status' => 409 )
+            );
+        }
 
         foreach ( $campaign_ids as $campaign_id ) {
             $existing = $wpdb->get_row( $wpdb->prepare(
