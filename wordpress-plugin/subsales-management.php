@@ -10658,7 +10658,11 @@ function subsales_export_users_teams() {
     fwrite( $output, "# Edit this file and re-import to update your data.\n" );
     fwrite( $output, "#\n" );
     fwrite( $output, "# IMPORTANT NOTES:\n" );
-    fwrite( $output, "# - Import OVERWRITES all data - what you import becomes the new official data\n" );
+    fwrite( $output, "# - Import UPSERTS - nothing is ever deleted. Teams are always created\n" );
+    fwrite( $output, "#   fresh for the current season (even reusing a name from a prior season);\n" );
+    fwrite( $output, "#   members are matched by phone and reactivated if they were inactive.\n" );
+    fwrite( $output, "# - Access code is optional - one is generated automatically for a new team;\n" );
+    fwrite( $output, "#   any value here is ignored.\n" );
     fwrite( $output, "# - Phone numbers must be exactly 10 digits (leading 1 will be auto-stripped)\n" );
     fwrite( $output, "# - Teams in the USERS section must exist in the TEAMS section\n" );
     fwrite( $output, "# - Use 'active' or 'inactive' for status fields\n" );
@@ -10830,10 +10834,10 @@ function subsales_process_import_preview( $file ) {
                 $errors[] = "Line {$line_num}: Team name is required";
                 continue;
             }
-            if ( empty( $access_code ) ) {
-                $errors[] = "Line {$line_num}: Access code is required for team '{$team_name}'";
-                continue;
-            }
+            // Access code is optional - every team import now always gets a
+            // fresh, auto-generated code for the current season (see
+            // subsales_process_import_confirm()), so a blank column here is
+            // fine; any value supplied is simply ignored.
             if ( ! in_array( $status, array( 'active', 'inactive' ) ) ) {
                 $errors[] = "Line {$line_num}: Invalid status '{$status}' for team '{$team_name}' (must be 'active' or 'inactive')";
                 continue;
@@ -10958,75 +10962,123 @@ function subsales_process_import_confirm( $import_data ) {
     $teams_table = $wpdb->prefix . 'ss_teams';
     $members_table = $wpdb->prefix . 'ss_team_members';
     $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-    
+    $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
     // Start transaction
     $wpdb->query( 'START TRANSACTION' );
-    
+
     try {
-        // Clear existing data (complete overwrite as specified)
-        $wpdb->query( "DELETE FROM {$user_teams_table}" );
-        $wpdb->query( "DELETE FROM {$members_table}" );
-        $wpdb->query( "DELETE FROM {$teams_table}" );
-        
-        // Insert teams
-        $team_id_map = array(); // Map team names to IDs
+        // Teams: always fresh under the CURRENT season - a team name is
+        // reusable season to season, but each season's row is a genuinely
+        // new one (never a prior season's row reused). Re-running the same
+        // CSV within the same season updates the existing row in place
+        // rather than duplicating it. Nothing is ever deleted here.
+        $team_id_map = array(); // Sanitized name -> id, for this season only
         foreach ( $import_data['teams'] as $team ) {
             $sanitized_name = subsales_sanitize_team_name( $team['name'] );
-            $wpdb->insert(
-                $teams_table,
-                array(
-                    'name' => $sanitized_name,
-                    'access_code' => subsales_sanitize_team_code( $team['access_code'] ),
-                    'status' => $team['status']
-                ),
-                array( '%s', '%s', '%s' )
-            );
-            // Map using sanitized name so lookups match what's in the database
-            $team_id_map[ $sanitized_name ] = $wpdb->insert_id;
+
+            $existing_id = $wpdb->get_var( $wpdb->prepare(
+                "SELECT id FROM {$teams_table} WHERE name = %s AND season_id = %d",
+                $sanitized_name, $season_id
+            ) );
+
+            if ( $existing_id ) {
+                $wpdb->update( $teams_table,
+                    array( 'status' => $team['status'] ),
+                    array( 'id' => intval( $existing_id ) ),
+                    array( '%s' ), array( '%d' )
+                );
+                $team_id_map[ $sanitized_name ] = intval( $existing_id );
+            } else {
+                // Access code is always auto-generated on creation, same as
+                // get_or_create_team() - any code supplied in the CSV is
+                // ignored, matching the "optional/auto-generated" decision.
+                $access_code = strtoupper( substr( md5( $sanitized_name . $season_id . microtime() ), 0, 6 ) );
+                $wpdb->insert(
+                    $teams_table,
+                    array(
+                        'name'        => $sanitized_name,
+                        'access_code' => $access_code,
+                        'status'      => $team['status'],
+                        'season_id'   => $season_id,
+                    ),
+                    array( '%s', '%s', '%s', '%d' )
+                );
+                $team_id_map[ $sanitized_name ] = intval( $wpdb->insert_id );
+            }
         }
-        
-        // Insert users and their team assignments
+
+        // Members: matched/reactivated by phone - the persistent, cross-season
+        // identity. Never deleted, never re-created if a row already exists
+        // (a returning kid keeps their history intact and simply comes back
+        // active).
         foreach ( $import_data['users'] as $user ) {
-            // Insert user
-            $wpdb->insert(
-                $members_table,
-                array(
-                    'team_id' => 0, // Legacy field, not used in multi-team system
-                    'name' => subsales_sanitize_user_name( $user['name'] ),
-                    'phone' => $user['phone'],
-                    'email' => $user['email'],
-                    'role' => 'member',
-                    'status' => $user['status']
-                ),
-                array( '%d', '%s', '%s', '%s', '%s', '%s' )
-            );
-            $user_id = $wpdb->insert_id;
-            
-            // Insert team assignments
+            $sanitized_name = subsales_sanitize_user_name( $user['name'] );
+
+            $existing_member_id = $wpdb->get_var( $wpdb->prepare(
+                "SELECT id FROM {$members_table} WHERE phone = %s",
+                $user['phone']
+            ) );
+
+            if ( $existing_member_id ) {
+                $user_id = intval( $existing_member_id );
+                $wpdb->update( $members_table,
+                    array(
+                        'name'   => $sanitized_name,
+                        'email'  => $user['email'],
+                        'status' => $user['status'],
+                    ),
+                    array( 'id' => $user_id ),
+                    array( '%s', '%s', '%s' ), array( '%d' )
+                );
+            } else {
+                $wpdb->insert(
+                    $members_table,
+                    array(
+                        'team_id' => 0, // Legacy field, not used in multi-team system
+                        'name'    => $sanitized_name,
+                        'phone'   => $user['phone'],
+                        'email'   => $user['email'],
+                        'role'    => 'member',
+                        'status'  => $user['status'],
+                    ),
+                    array( '%d', '%s', '%s', '%s', '%s', '%s' )
+                );
+                $user_id = intval( $wpdb->insert_id );
+            }
+
+            // Team assignments: insert-if-missing for this season's teams -
+            // a prior season's link is never touched or removed.
             foreach ( $user['teams'] as $team_name ) {
-                // Sanitize team name to match what's in the map
                 $sanitized_team_name = subsales_sanitize_team_name( $team_name );
-                if ( isset( $team_id_map[ $sanitized_team_name ] ) ) {
+                if ( ! isset( $team_id_map[ $sanitized_team_name ] ) ) {
+                    continue;
+                }
+                $team_id = $team_id_map[ $sanitized_team_name ];
+
+                $already_linked = $wpdb->get_var( $wpdb->prepare(
+                    "SELECT id FROM {$user_teams_table} WHERE user_id = %d AND team_id = %d",
+                    $user_id, $team_id
+                ) );
+                if ( ! $already_linked ) {
                     $wpdb->insert(
                         $user_teams_table,
-                        array(
-                            'user_id' => $user_id,
-                            'team_id' => $team_id_map[ $sanitized_team_name ]
-                        ),
+                        array( 'user_id' => $user_id, 'team_id' => $team_id ),
                         array( '%d', '%d' )
                     );
                 }
             }
         }
-        
+
         // Commit transaction
         $wpdb->query( 'COMMIT' );
-        
-        subsales_log( 'INFO', 'import', 'Users and teams imported successfully', array(
+
+        subsales_log( 'INFO', 'import', 'Users and teams imported successfully (upsert, no deletions)', array(
             'teams_count' => count( $import_data['teams'] ),
-            'users_count' => count( $import_data['users'] )
+            'users_count' => count( $import_data['users'] ),
+            'season_id'   => $season_id,
         ), 'admin' );
-        
+
     } catch ( Exception $e ) {
         $wpdb->query( 'ROLLBACK' );
         subsales_log( 'ERROR', 'import', 'Import failed', array( 'error' => $e->getMessage() ), 'admin' );
@@ -11288,7 +11340,7 @@ function ss_teams_page() {
                 <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; margin-bottom: 20px; border-radius: 4px;">
                     <h2 style="margin-top: 0;">📋 Import Preview</h2>
                     <p><strong>Review the changes below before confirming the import.</strong></p>
-                    <p style="color: #d63638;"><strong>⚠️ WARNING:</strong> This will completely replace all existing users and teams with the data shown below.</p>
+                    <p><strong>This is safe to re-run:</strong> nothing is ever deleted. Teams below are created fresh for the current season; members are matched by phone and reactivated if needed. Existing history (orders, signups, prior seasons) is untouched.</p>
                     
                     <h3>Teams to Import (<?php echo count( $import_preview['teams'] ); ?>)</h3>
                     <table class="wp-list-table widefat fixed striped" style="margin-bottom: 20px;">
@@ -11339,7 +11391,7 @@ function ss_teams_page() {
                         <input type="hidden" name="subsales_import_action" value="confirm" />
                         <input type="hidden" name="import_data" value="<?php echo esc_attr( json_encode( $import_preview ) ); ?>" />
                         <p>
-                            <button type="submit" class="button button-primary button-large" onclick="return confirm('Are you sure? This will completely replace all existing users and teams!');">
+                            <button type="submit" class="button button-primary button-large" onclick="return confirm('Import this roster? Existing members/teams will be updated, new ones created - nothing is deleted.');">
                                 ✅ Confirm Import
                             </button>
                             <a href="<?php echo admin_url( 'admin.php?page=subsales-teams' ); ?>" class="button button-large">Cancel</a>
