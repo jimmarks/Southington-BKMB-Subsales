@@ -27,6 +27,14 @@
   function getApiBase() {
     return window.apiBase || '/wp-json/order-manager/v1';
   }
+
+  // Cap auto-recreate attempts so a stale/abandoned tab doesn't hammer
+  // /pwa-session/start in a loop (e.g. left open overnight with a dead session).
+  // 3 minutes: comfortably longer than the 30s heartbeat cadence (so a genuinely
+  // missing session gets one recreate try per several heartbeats, not one per heartbeat),
+  // short enough that a device that comes back online mid-shift recovers quickly.
+  const SESSION_RECREATE_MIN_INTERVAL_MS = 3 * 60 * 1000;
+  let lastSessionRecreateAttempt = 0;
   
   // Start PWA session
   async function startSession(userData = {}) {
@@ -130,31 +138,63 @@
       });
       
       if (!resp.ok) {
-        // If session not found (likely 500 error), try to recreate it
-        if (resp.status === 500 || resp.status === 404) {
-          console.warn('[Session] Heartbeat failed - attempting to recreate session');
-          
-          // Get current user data from localStorage
-          const userData = {
-            userId: localStorage.getItem('userId'),
-            userName: localStorage.getItem('userName') || localStorage.getItem('teamMemberName'),
-            teamId: localStorage.getItem('selectedTeamId') || localStorage.getItem('teamId'),
-            teamName: localStorage.getItem('selectedTeamName') || localStorage.getItem('teamName')
-          };
-          
-          // Try to recreate session
-          const sessionCreated = await startSession(userData);
-          if (sessionCreated) {
-            console.warn('[Session] Session recreated successfully');
-            if (window.PWALogger) {
-              window.PWALogger.log('session', 'Session recreated after heartbeat failure', {
-                session_id: sessionId
-              });
+        // Inspect the error body's code to distinguish "session not found"
+        // (server code 'heartbeat_failed', see class-rest-api.php update_pwa_heartbeat())
+        // from other errors - only that specific case is worth recreating for.
+        let errorCode = null;
+        try {
+          const errorBody = await resp.json();
+          errorCode = errorBody && errorBody.code ? errorBody.code : null;
+        } catch (parseErr) {
+          // Non-JSON error body - fall through to generic failure handling below.
+        }
+
+        if (errorCode === 'heartbeat_failed') {
+          const now = Date.now();
+          if (now - lastSessionRecreateAttempt < SESSION_RECREATE_MIN_INTERVAL_MS) {
+            console.warn('[Session] Heartbeat failed - session not found, but recreated too recently, skipping');
+          } else {
+            lastSessionRecreateAttempt = now;
+            console.warn('[Session] Heartbeat failed - session not found, attempting to recreate session');
+
+            // Get current user data from localStorage
+            const userData = {
+              userId: localStorage.getItem('userId'),
+              userName: localStorage.getItem('userName') || localStorage.getItem('teamMemberName'),
+              teamId: localStorage.getItem('selectedTeamId') || localStorage.getItem('teamId'),
+              teamName: localStorage.getItem('selectedTeamName') || localStorage.getItem('teamName')
+            };
+
+            // Try to recreate session
+            const sessionCreated = await startSession(userData);
+            if (sessionCreated) {
+              console.warn('[Session] Session recreated successfully - retrying original heartbeat');
+              if (window.PWALogger) {
+                window.PWALogger.log('session', 'Session recreated after heartbeat failure', {
+                  session_id: sessionId
+                });
+              }
+
+              // Re-POST the SAME original heartbeat payload once, so the GPS/activity
+              // data it carried isn't silently thrown away now that the session exists again.
+              try {
+                const retryResp = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+                });
+                if (retryResp.ok) {
+                  return; // Retry succeeded - done.
+                }
+                console.warn('[Session] Heartbeat retry after recreate failed - Status:', retryResp.status);
+              } catch (retryErr) {
+                console.error('[Session] Heartbeat retry after recreate error:', retryErr);
+              }
+              // Retry didn't succeed - let it drop, same as any other missed heartbeat.
             }
-            return; // Don't log error if we successfully recreated
           }
         }
-        
+
         console.warn('[Session] Heartbeat failed - Status:', resp.status, 'Session:', sessionId);
         if (window.PWALogger) {
           window.PWALogger.log('session', 'Heartbeat failed', {

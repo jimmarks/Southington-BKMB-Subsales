@@ -1677,8 +1677,19 @@ class Subsales_Database {
         
         // Check if heartbeats table exists before inserting
         $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$heartbeats_table}'" ) === $heartbeats_table;
-        
-        if ( $table_exists ) {
+
+        if ( ! $table_exists ) {
+            // Rate-limit: only log this once per request/process so a persistently-missing
+            // table doesn't spam wp_ss_logs on every single heartbeat.
+            static $missing_table_logged = false;
+            if ( ! $missing_table_logged ) {
+                self::log( 'ERROR', 'pwa', 'PWA heartbeat GPS/activity history skipped - heartbeats table missing', array(
+                    'session_id' => $session_id,
+                    'table' => $heartbeats_table
+                ), 'pwa' );
+                $missing_table_logged = true;
+            }
+        } else {
             // Store heartbeat in history table with GPS data
             $heartbeat_data = array(
                 'session_id' => $session_id,
@@ -1702,6 +1713,12 @@ class Subsales_Database {
             if ( $insert_result === false && ! empty( $wpdb->last_error ) ) {
                 error_log( 'Subsales: PWA heartbeat insert failed: ' . $wpdb->last_error );
                 error_log( 'Subsales: Heartbeat data: ' . wp_json_encode( $heartbeat_data ) );
+
+                self::log( 'ERROR', 'pwa', 'PWA heartbeat insert failed', array(
+                    'session_id' => $session_id,
+                    'db_error' => $wpdb->last_error,
+                    'heartbeat_data' => $heartbeat_data
+                ), 'pwa' );
             }
             
             // Clean up old heartbeats (keep only last 100 per session)
