@@ -1674,6 +1674,28 @@
     alert(status === 'expired' ? 'The QR code expired. Please try again or use Cash/Check.' : 'The digital payment was cancelled.');
   }
 
+  // Stable per-device id, generated once and kept in localStorage.
+  function deviceTag(){
+    let d = null;
+    try { d = localStorage.getItem('bkmb_device_tag'); } catch(e){}
+    if (!d) {
+      d = Math.random().toString(36).slice(2, 8);
+      try { localStorage.setItem('bkmb_device_tag', d); } catch(e){}
+    }
+    return d;
+  }
+
+  // Order ids used to be just 'o-' + Date.now(). Two children saving an order in
+  // the same millisecond then produced the SAME id - and the server treats a
+  // repeat id as an already-synced duplicate, returns 200, and the app deletes
+  // its local copy. The second child's sale vanished silently. Real orders have
+  // landed as little as 3ms apart, so this was luck rather than safety.
+  // The device tag makes two phones unable to collide at all; the random suffix
+  // covers two orders from the same phone in one millisecond.
+  function newOrderId(){
+    return 'o-' + Date.now() + '-' + deviceTag() + '-' + Math.floor(Math.random() * 10000);
+  }
+
   // Builds the exact same order object the cash/check Save path builds (same id pattern, same
   // full field set), for a NEW order. Shared by the Save-button handler and the digital "paid"
   // handler so there is exactly one place that constructs a new order object.
@@ -1693,7 +1715,7 @@
     }
 
     return {
-      id: 'o-' + Date.now(),
+      id: newOrderId(),
       customer: data.customer,
       address: data.address,
       cellNumber: data.cell,
@@ -3304,6 +3326,10 @@
         headers['X-Access-Code'] = localStorage.getItem('teamCode') || '';
       }
       
+      // One order the server rejects must not block every order behind it.
+      // These stay in local storage and are retried on the next sync.
+      let rejected = 0;
+
       for (const order of list) {
         try {
           const url = apiBase ? (apiBase + '/orders') : '/wp-json/order-manager/v1/orders';
@@ -3358,26 +3384,35 @@
             const errorMsg = 'Sync failed for order ' + (order.customer || order.id) + ' - HTTP ' + resp.status + errorDetail;
             console.error('Full error message:', errorMsg);
             syncStatus && (syncStatus.textContent = errorMsg);
-            if (window.smShowSnackbar) {
-              window.smShowSnackbar(errorMsg, { timeout: 10000 });
-            } else {
-              alert(errorMsg);
-            }
-            return; // stop syncing on first error
+            // The server answered and refused THIS order, so the connection is
+            // fine - keep going. Stopping here used to strand every order behind
+            // a single bad one, on every retry, forever.
+            rejected++;
           }
         } catch (err) {
+          // fetch() threw, so this is the connection rather than the order.
+          // Stop here: the rest would fail the same way, and retrying the whole
+          // batch once the signal is back is both faster and quieter.
           console.warn('sync failed for', order.id, err);
-          const errorMsg = 'Sync failed for order ' + (order.customer || order.id) + ': ' + (err.message || err.toString());
+          const errorMsg = 'Sync paused - no connection. Your orders are saved and will send automatically.';
           syncStatus && (syncStatus.textContent = errorMsg);
           if (window.smShowSnackbar) {
             window.smShowSnackbar(errorMsg, { timeout: 10000 });
           } else {
             alert(errorMsg);
           }
+          renderOrders();
           return;
         }
       }
-      syncStatus && (syncStatus.textContent='All queued orders synced');
+
+      if (rejected > 0) {
+        const msg = rejected + ' order' + (rejected === 1 ? '' : 's') + " couldn't be sent and are still saved on this phone. Everything else went through.";
+        syncStatus && (syncStatus.textContent = msg);
+        if (window.smShowSnackbar) { window.smShowSnackbar(msg, { timeout: 10000 }); }
+      } else {
+        syncStatus && (syncStatus.textContent='All queued orders synced');
+      }
       renderOrders();
     }catch(e){ console.warn('trySync error', e); }
   }
