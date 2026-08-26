@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.1] - 2026-08-26
+
+### Fixed
+- **"Use my location" no longer costs money on every tap.** The PWA's 📍 button was reverse-geocoding through a direct, uncached call to the Google Geocoding API each time it was pressed - an action a seller can repeat at every stop, with no throttle or cap. It now resolves to the nearest address in the ZIP data already cached on the device, so it makes no network call and incurs no per-request charge. Note: this is only as accurate as the local address data, so it should be re-checked during field testing - if it fills in the wrong house, the fix is better local data, not restoring the billed lookup.
+
 ## [3.1.0] - 2026-08-25
 
 ### Added

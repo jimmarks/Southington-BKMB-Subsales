@@ -319,6 +319,34 @@
     return dp[m][n];
   }
 
+  // Great-circle distance in feet. Shared by the "Use my location" button and
+  // (planned) GPS tie-breaking between same-name/different-suffix streets.
+  function haversineFeet(lat1, lng1, lat2, lng2){
+    const R = 20902231; // Earth radius in feet
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  // Nearest already-cached address to a GPS fix. Scans only what is already in
+  // memory (ZIP_CACHE) - no network call, no API key, no per-request cost.
+  function nearestCachedAddress(lat, lng){
+    let best = null, bestDist = Infinity;
+    for(const zip of Object.keys(ZIP_CACHE)){
+      for(const rec of (ZIP_CACHE[zip] || [])){
+        const rLat = parseFloat(rec.lat), rLng = parseFloat(rec.lng);
+        if(!isFinite(rLat) || !isFinite(rLng)) continue;
+        const d = haversineFeet(lat, lng, rLat, rLng);
+        if(d < bestDist){ bestDist = d; best = rec; }
+      }
+    }
+    return best ? { item: best, distanceFeet: bestDist } : null;
+  }
+
   function fuzzyScore(q, text){
     if(!q) return 1;
     q = q.toLowerCase(); text = (text||'').toLowerCase();
@@ -804,28 +832,27 @@
           window.PWALogger.log('address', 'GPS coordinates obtained', {lat, lng});
         }
         
-        // Reverse geocode using Google Maps API if available
-        const apiKey = window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.googleMapsApiKey;
-        if(apiKey){
-          try{
-            const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${apiKey}`;
-            const resp = await fetch(url);
-            const data = await resp.json();
-            
-            if(data.results && data.results[0]){
-              const addr = data.results[0].formatted_address;
-              inputEl.value = addr;
+        // CHANGED 2026-08-26: this used to reverse-geocode via a direct call to
+        // maps.googleapis.com on every tap - uncached, unthrottled, and billed
+        // per request on an action a seller can repeat at every single stop.
+        // Now resolved against the ZIP data already cached locally: no network
+        // call, no API key, no cost. Trade-off is that it is only as good as the
+        // local address data, so REVISIT DURING FIELD TESTING - if this fills in
+        // the wrong house, the fix is better local data (or gating one Google
+        // call behind an explicit "none of these are right" tap), not putting
+        // the per-tap billed lookup back.
+        const nearest = nearestCachedAddress(lat, lng);
+        if(nearest){
+          inputEl.value = normalizeAddress(nearest.item);
 
-              if(window.PWALogger && window.PWALogger.debugEnabled){
-                window.PWALogger.log('address', 'Address filled from GPS', {address: addr});
-              }
-            }
-          }catch(e){
-            console.warn('subsalesNearby: reverse geocode failed', e);
-            inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          if(window.PWALogger && window.PWALogger.debugEnabled){
+            window.PWALogger.log('address', 'Address filled from nearest cached record', {
+              address: inputEl.value,
+              distance_feet: Math.round(nearest.distanceFeet)
+            });
           }
         } else {
-          // No API key - just show coordinates
+          // No local ZIP data loaded yet - show coordinates rather than guess.
           inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
         }
         
