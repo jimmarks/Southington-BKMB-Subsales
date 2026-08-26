@@ -249,6 +249,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
             <a href="#tab-branding" class="nav-tab" data-target="#tab-branding">Branding / Look &amp; Feel</a>
             <a href="#tab-products" class="nav-tab" data-target="#tab-products">Products</a>
             <a href="#tab-address_extracts" class="nav-tab" data-target="#tab-address_extracts">Address Management</a>
+            <a href="#tab-sms" class="nav-tab" data-target="#tab-sms">Text Messages</a>
             <a href="#tab-backup_restore" class="nav-tab" data-target="#tab-backup_restore">Backup / Restore</a>
             <a href="#tab-system_info" class="nav-tab" data-target="#tab-system_info">System Info</a>
             <a href="#tab-season_setup" class="nav-tab" data-target="#tab-season_setup">Set Up Season</a>
@@ -914,6 +915,10 @@ if ( ! current_user_can( 'manage_options' ) ) {
                     // Include the modern dashboard
                     include plugin_dir_path( dirname( __FILE__ ) ) . 'admin/address-management-dashboard.php';
                     ?>
+                </div>
+
+                <div id="tab-sms" class="subsales-tab-panel">
+                    <?php include SUBSALES_PLUGIN_PATH . 'admin/partials/sms-settings.php'; ?>
                 </div>
 
                 <div id="tab-backup_restore" class="subsales-tab-panel">

@@ -30,10 +30,8 @@ class Subsales_AJAX_Handlers {
         add_action( 'wp_ajax_subsales_get_active_sessions_count', array( __CLASS__, 'get_active_sessions_count' ) );
         add_action( 'wp_ajax_subsales_test_maps_key', array( __CLASS__, 'test_maps_key' ) );
         add_action( 'wp_ajax_subsales_test_square_credentials', array( __CLASS__, 'test_square_credentials' ) );
+        add_action( 'wp_ajax_subsales_test_twilio_credentials', array( __CLASS__, 'test_twilio_credentials' ) );
         add_action( 'wp_ajax_subsales_run_init', array( __CLASS__, 'run_init' ) );
-        
-        // Address Management
-        
         
         // ZIP Management
         add_action( 'wp_ajax_subsales_refresh_zip_index', array( __CLASS__, 'refresh_zip_index' ) );
@@ -192,6 +190,41 @@ class Subsales_AJAX_Handlers {
             $error_message = $data['errors'][0]['code'];
         }
         wp_send_json_error( array( 'message' => $error_message ) );
+    }
+
+    /**
+     * Test Twilio API credentials.
+     *
+     * Mirrors test_square_credentials(): tests whatever SID/token is currently
+     * typed into the settings form (not necessarily saved yet). Read-only -
+     * no message is sent.
+     */
+    public static function test_twilio_credentials() {
+        check_ajax_referer( 'subsales_test_twilio_credentials', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'Permission denied' ) );
+        }
+
+        $account_sid = isset( $_POST['account_sid'] ) ? sanitize_text_field( $_POST['account_sid'] ) : '';
+        $auth_token  = isset( $_POST['auth_token'] ) ? sanitize_text_field( $_POST['auth_token'] ) : '';
+
+        if ( empty( $account_sid ) || empty( $auth_token ) ) {
+            wp_send_json_error( array( 'message' => 'Account SID and Auth Token are required' ) );
+        }
+
+        $account = Subsales_Twilio_SMS::test_credentials( $account_sid, $auth_token );
+
+        if ( ! $account ) {
+            // The wrapper already logged the exact response from Twilio.
+            wp_send_json_error( array( 'message' => 'Twilio did not accept those details. Check the Account SID and Auth Token, then try again. (The exact reason is in the Logs page.)' ) );
+        }
+
+        $message = 'Details are valid! Connected to: ' . $account['friendly_name'];
+        if ( ! empty( $account['status'] ) && 'active' !== $account['status'] ) {
+            $message .= ' — note this account is currently "' . $account['status'] . '", not active.';
+        }
+        wp_send_json_success( array( 'message' => $message ) );
     }
 
     /**

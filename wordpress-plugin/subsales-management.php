@@ -84,6 +84,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
 // Season setup wizard. Must be loaded here, not only from the Settings partials -
 // admin-ajax.php never loads a Settings page, so the wizard's AJAX handlers would
 // otherwise never be registered.

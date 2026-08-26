@@ -318,6 +318,60 @@ class Subsales_Database {
             KEY campaign_id (campaign_id)
         ) $charset_collate;";
         
+        // SMS contacts - one row per PHONE NUMBER, not per order. A household
+        // orders across seasons and from different children; consent and
+        // opt-out have to survive that, so they live on the number.
+        // assigned_number pins our own sending number to the contact rather
+        // than trusting Twilio's Sticky Sender to remember across a year-long
+        // gap, so a returning customer always sees the same number.
+        $sms_contacts_table_name = $wpdb->prefix . 'ss_sms_contacts';
+        $sms_contacts_sql = "CREATE TABLE $sms_contacts_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            phone varchar(20) NOT NULL,
+            consent_transactional tinyint(1) NOT NULL DEFAULT 0,
+            consent_source varchar(50) NOT NULL DEFAULT '',
+            consent_wording text,
+            consent_at datetime DEFAULT NULL,
+            opted_out_at datetime DEFAULT NULL,
+            assigned_number varchar(20) DEFAULT NULL,
+            last_message_at datetime DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id),
+            UNIQUE KEY phone (phone),
+            KEY idx_opted_out (opted_out_at)
+        ) $charset_collate;";
+
+        // SMS messages - the outbox AND the log, one table.
+        //
+        // UNIQUE KEY one_per_order_type (order_id, message_type) is the receipt
+        // idempotency guarantee: an order can only ever produce one receipt row
+        // however many times the offline-first PWA re-syncs it. MySQL allows
+        // multiple NULLs in a unique key and order_id is nullable, so inbound
+        // rows (order_id NULL) are unaffected by it.
+        $sms_messages_table_name = $wpdb->prefix . 'ss_sms_messages';
+        $sms_messages_sql = "CREATE TABLE $sms_messages_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            direction enum('out','in') NOT NULL,
+            message_type enum('receipt','reply','system') NOT NULL,
+            phone varchar(20) NOT NULL,
+            body text,
+            order_id varchar(255) DEFAULT NULL,
+            status enum('queued','sent','delivered','failed','received','skipped') NOT NULL DEFAULT 'queued',
+            skip_reason varchar(100) DEFAULT NULL,
+            attempts smallint NOT NULL DEFAULT 0,
+            next_attempt_at datetime DEFAULT NULL,
+            last_error text,
+            twilio_sid varchar(64) DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            sent_at datetime DEFAULT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY one_per_order_type (order_id, message_type),
+            KEY idx_status_next (status, next_attempt_at),
+            KEY idx_phone (phone)
+        ) $charset_collate;";
+
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql );
         dbDelta( $teams_sql );
@@ -332,7 +386,9 @@ class Subsales_Database {
         dbDelta( $campaigns_sql );
         dbDelta( $signups_sql );
         dbDelta( $team_campaigns_sql );
-        
+        dbDelta( $sms_contacts_sql );
+        dbDelta( $sms_messages_sql );
+
         // Run schema migrations
         self::migrate_phone_column( $team_members_table_name );
         self::migrate_soft_delete_columns( $table_name );
@@ -352,6 +408,25 @@ class Subsales_Database {
         self::migrate_campaigns_season_unique_key( $campaigns_table_name );
         self::migrate_orders_season_id( $table_name );
         self::migrate_payment_attempts_table();
+    }
+
+    /**
+     * Normalize a phone number to bare 10 digits.
+     *
+     * Same expression the plugin already inlines in ~8 places for MEMBER
+     * phones - the difference is that customer phones (order_data.cellNumber)
+     * are stored exactly as typed, so admin-entered ones carry "(203) 555-1234"
+     * formatting and have to be normalized at READ time. Trailing 10 digits, so
+     * a leading country code ("1-203-555-1234") is dropped rather than
+     * producing an 11-digit string that won't match a stored contact.
+     *
+     * @param string $phone Raw phone as entered.
+     * @return string 10 digits, or '' / a short string if there weren't 10.
+     */
+    public static function normalize_phone( $phone ) {
+        $digits = preg_replace( '/\D/', '', (string) $phone );
+
+        return strlen( $digits ) > 10 ? substr( $digits, -10 ) : $digits;
     }
 
     /**
