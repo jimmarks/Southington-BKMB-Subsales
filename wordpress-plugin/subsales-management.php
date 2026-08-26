@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.0.2
+ * Version: 3.1.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,10 +34,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.0.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.1.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
+
+// ---- Auto-updates via GitHub Releases (Plugin Update Checker) ----
+// Southington-BKMB-Subsales is a PUBLIC repo, so no auth token is needed here
+// (contrast with private-repo setups, which define a token constant in
+// wp-config.php - never in plugin source). Releases are built by
+// .github/workflows/release.yml on every "vX.Y.Z" tag push.
+require_once __DIR__ . '/lib/plugin-update-checker/plugin-update-checker.php';
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+
+$subsalesUpdateChecker = PucFactory::buildUpdateChecker(
+    'https://github.com/jimmarks/Southington-BKMB-Subsales/',
+    __FILE__,
+    'subsales-management'
+);
+$subsalesUpdateChecker->getVcsApi()->enableReleaseAssets();
+$subsalesUpdateChecker->setBranch( 'main' );
 
 // ---- Implementation (merged from legacy bkmb file) ----
 

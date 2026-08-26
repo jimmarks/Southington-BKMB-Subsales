@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-08-25
+
+### Added
+- **Digital payments via Square Checkout.** A third payment option alongside cash/check - the seller shows a QR code, the buyer scans it and pays on their own phone via a Square-hosted checkout page (no account required). Includes a "ready?" confirmation step before the checkout session is created (so the 15-minute link expiry doesn't start until the buyer is actually about to pay), automatic status polling with no manual refresh needed, and a same-shape fallback to cash/check if the seller backs out. Digital sales count toward every sales-total view (the seller's own running total, admin reports, the leaderboard) but are kept separate from the driver's "cash/checks to collect tonight" figure, since nothing physically changes hands for a digital sale.
+- **Season management.** Teams, campaigns, and orders are now scoped to a season; a new "Start New Season" admin action retires the prior season's teams (never deletes anything) so next year's rebuild starts clean. The roster-import tool was rebuilt from a destructive full-replace into a safe upsert.
+- **Auto-updates.** This plugin now checks GitHub Releases for updates (via [plugin-update-checker](https://github.com/YahnisElsts/plugin-update-checker)) instead of requiring a manual file replacement for every release.
+
+### Fixed
+- Driver signup no longer requires the driver's own phone number to be pre-loaded on the roster - only the child's phone (the actual security gate for driver signup) does.
+- A member re-signing up after being deactivated is now reactivated instead of staying silently locked out.
+- A member can no longer be signed up to two different teams for the same sales day.
+- Signup now rejects a phone number that isn't already on the roster instead of silently creating a new member.
+
 ## [3.0.2] - 2026-08-25
 
 ### PWA Heartbeat Reliability Fixes
