@@ -49,12 +49,13 @@ class Subsales_Twilio_SMS {
         ) ) );
 
         return array(
-            'enabled'         => (bool) get_option( 'subsales_sms_enabled', 0 ),
-            'account_sid'     => $account_sid,
-            'auth_token'      => $auth_token,
-            'from_numbers'    => $from_numbers,
-            'rate_per_second' => max( 1, intval( get_option( 'subsales_sms_rate_per_second', 1 ) ) ),
-            'daily_cap'       => max( 0, intval( get_option( 'subsales_sms_daily_cap', 1000 ) ) ),
+            'enabled'               => (bool) get_option( 'subsales_sms_enabled', 0 ),
+            'account_sid'           => $account_sid,
+            'auth_token'            => $auth_token,
+            'from_numbers'          => $from_numbers,
+            'messaging_service_sid' => trim( (string) get_option( 'subsales_twilio_messaging_service_sid', '' ) ),
+            'rate_per_second'       => max( 1, intval( get_option( 'subsales_sms_rate_per_second', 1 ) ) ),
+            'daily_cap'             => max( 0, intval( get_option( 'subsales_sms_daily_cap', 1000 ) ) ),
         );
     }
 
@@ -100,17 +101,28 @@ class Subsales_Twilio_SMS {
             );
         }
 
-        if ( empty( $from ) ) {
-            $from = isset( $settings['from_numbers'][0] ) ? $settings['from_numbers'][0] : '';
-        }
+        // A Messaging Service wins over an individual number. Twilio wants
+        // MessagingServiceSid instead of From once a sender pool is in play,
+        // and the pool is what raises throughput and carries Sticky Sender.
+        // We still pin a number per contact ourselves (see Subsales_SMS_Queue),
+        // so a Messaging Service is an addition here, not a replacement.
+        $messaging_service_sid = ! empty( $settings['messaging_service_sid'] )
+            ? $settings['messaging_service_sid']
+            : '';
 
-        if ( empty( $from ) ) {
-            subsales_log( 'ERROR', 'sms', 'No Twilio sender number configured' );
-            return array(
-                'error_code'  => null,
-                'http_status' => 0,
-                'message'     => 'No Twilio sender number configured',
-            );
+        if ( empty( $messaging_service_sid ) ) {
+            if ( empty( $from ) ) {
+                $from = isset( $settings['from_numbers'][0] ) ? $settings['from_numbers'][0] : '';
+            }
+
+            if ( empty( $from ) ) {
+                subsales_log( 'ERROR', 'sms', 'No Twilio sender configured (need a Messaging Service SID or a From number)' );
+                return array(
+                    'error_code'  => null,
+                    'http_status' => 0,
+                    'message'     => 'No Twilio sender configured - add a Messaging Service SID or a phone number in Settings.',
+                );
+            }
         }
 
         $response = wp_remote_post( self::API_BASE_URL . '/Accounts/' . rawurlencode( $settings['account_sid'] ) . '/Messages.json', array(
@@ -122,11 +134,19 @@ class Subsales_Twilio_SMS {
             // Form-encoded explicitly rather than handing wp_remote_post an
             // array and relying on it to encode - the Content-Type above is
             // set by hand, so the body has to match it by hand too.
-            'body'    => http_build_query( array(
-                'To'   => $to,
-                'From' => $from,
-                'Body' => $body,
-            ) ),
+            'body'    => http_build_query(
+                $messaging_service_sid
+                    ? array(
+                        'To'                  => $to,
+                        'MessagingServiceSid' => $messaging_service_sid,
+                        'Body'                => $body,
+                    )
+                    : array(
+                        'To'   => $to,
+                        'From' => $from,
+                        'Body' => $body,
+                    )
+            ),
         ) );
 
         if ( is_wp_error( $response ) ) {

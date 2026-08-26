@@ -85,6 +85,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-sms-queue.php';
 // Season setup wizard. Must be loaded here, not only from the Settings partials -
 // admin-ajax.php never loads a Settings page, so the wizard's AJAX handlers would
 // otherwise never be registered.
@@ -124,6 +125,10 @@ Subsales_AJAX_Handlers::init();
 // Initialize Payment Attempts (hooks expire_stale_attempts onto the existing
 // hourly cleanup action; Subsales_Square_Payments has no hooks of its own)
 Subsales_Payment_Attempts::init();
+
+// Initialize the SMS outbox (its own one-minute cron event for sending, plus
+// housekeeping on the shared hourly hook, plus the order-created receipt hook)
+Subsales_SMS_Queue::init();
 
 
 // Activation/Deactivation hooks

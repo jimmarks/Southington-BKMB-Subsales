@@ -370,6 +370,24 @@ class Subsales_Orders {
             );
         }
 
+        /**
+         * Fires once per order that was actually inserted.
+         *
+         * Deliberately placed BELOW the duplicate guard above, so a PWA that
+         * re-syncs the same order (which it does routinely) fires this exactly
+         * once, for the one insert that really happened.
+         *
+         * Handlers must not do slow work. The order-sync response returns
+         * immediately after this, and the PWA is waiting on it before it clears
+         * its local copy - the SMS handler only writes one outbox row, and the
+         * sending happens later on cron.
+         *
+         * @param string $order_id        Client-generated order id.
+         * @param int    $new_order_db_id Row id in ss_orders.
+         * @param array  $data            The submitted order payload.
+         */
+        do_action( 'subsales_order_created', $order_id, $new_order_db_id, $data );
+
         return new WP_REST_Response( array( 'message' => 'Order created successfully', 'id' => $new_order_db_id ), 201 );
     }
     

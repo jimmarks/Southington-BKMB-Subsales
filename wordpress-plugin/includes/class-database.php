@@ -357,7 +357,7 @@ class Subsales_Database {
             phone varchar(20) NOT NULL,
             body text,
             order_id varchar(255) DEFAULT NULL,
-            status enum('queued','sent','delivered','failed','received','skipped') NOT NULL DEFAULT 'queued',
+            status enum('queued','sending','sent','delivered','failed','received','skipped') NOT NULL DEFAULT 'queued',
             skip_reason varchar(100) DEFAULT NULL,
             attempts smallint NOT NULL DEFAULT 0,
             next_attempt_at datetime DEFAULT NULL,
@@ -399,6 +399,7 @@ class Subsales_Database {
         self::migrate_address_validation_columns( $table_name );
         self::migrate_geocode_cache_columns();
         self::migrate_address_validation_dismissed_status( $table_name );
+        self::migrate_sms_sending_status( $sms_messages_table_name );
 
         // Season support - must run in this order: seasons table (and its
         // bootstrap row) before the season_id columns that backfill from it.
@@ -1096,7 +1097,49 @@ class Subsales_Database {
         
         subsales_log( 'INFO', 'system', 'Address validation status enum migrated: added dismissed status' );
     }
-    
+
+    /**
+     * Schema migration: Add 'sending' to the SMS message status enum.
+     *
+     * 'sending' is the claim marker the outbox worker sets before it hands a
+     * message to Twilio, so two overlapping runs can't send the same receipt
+     * twice. Sites that installed the tables before the worker existed have the
+     * old enum and would silently drop the claim to '' - hence this migration.
+     *
+     * NOTE: the CREATE TABLE string in create_tables() lists 'sending' too, and
+     * the two MUST stay in step. This plugin has twice been bitten by dbDelta
+     * re-applying a schema string that still declared the old column and quietly
+     * undoing a migration on the next version bump.
+     */
+    private static function migrate_sms_sending_status( $sms_messages_table_name ) {
+        global $wpdb;
+
+        $column_info = $wpdb->get_row(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$sms_messages_table_name}'
+             AND COLUMN_NAME = 'status'",
+            ARRAY_A
+        );
+
+        if ( ! $column_info ) {
+            return; // Table/column not there yet - dbDelta will create it correctly.
+        }
+
+        if ( strpos( $column_info['COLUMN_TYPE'], "'sending'" ) !== false ) {
+            return; // Already migrated.
+        }
+
+        $wpdb->query(
+            "ALTER TABLE {$sms_messages_table_name}
+             MODIFY COLUMN status
+             enum('queued','sending','sent','delivered','failed','received','skipped')
+             NOT NULL DEFAULT 'queued'"
+        );
+
+        subsales_log( 'INFO', 'system', 'SMS message status enum migrated: added sending status' );
+    }
+
     /**
      * Add a new team
      * 

@@ -31,6 +31,7 @@ class Subsales_AJAX_Handlers {
         add_action( 'wp_ajax_subsales_test_maps_key', array( __CLASS__, 'test_maps_key' ) );
         add_action( 'wp_ajax_subsales_test_square_credentials', array( __CLASS__, 'test_square_credentials' ) );
         add_action( 'wp_ajax_subsales_test_twilio_credentials', array( __CLASS__, 'test_twilio_credentials' ) );
+        add_action( 'wp_ajax_subsales_preview_sms_receipt', array( __CLASS__, 'preview_sms_receipt' ) );
         add_action( 'wp_ajax_subsales_run_init', array( __CLASS__, 'run_init' ) );
         
         // ZIP Management
@@ -225,6 +226,54 @@ class Subsales_AJAX_Handlers {
             $message .= ' — note this account is currently "' . $account['status'] . '", not active.';
         }
         wp_send_json_success( array( 'message' => $message ) );
+    }
+
+    /**
+     * Live preview of the SMS receipt template.
+     *
+     * Renders through Subsales_SMS_Queue::render_receipt() - the same function
+     * the real send uses - so the preview cannot drift from what a customer
+     * actually receives, compliance additions included. The template is passed
+     * in rather than read from the option so an unsaved edit can be previewed.
+     */
+    public static function preview_sms_receipt() {
+        check_ajax_referer( 'subsales_preview_sms_receipt', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'Permission denied' ) );
+        }
+
+        $template = isset( $_POST['template'] ) ? sanitize_textarea_field( wp_unslash( $_POST['template'] ) ) : '';
+
+        // A sample order built from the real product list, so the preview
+        // length reflects this fundraiser's actual product names.
+        $products = array();
+        $config   = function_exists( 'order_sync_get_products_config' ) ? (array) order_sync_get_products_config() : array();
+        $qty      = 2;
+        foreach ( array_slice( $config, 0, 2 ) as $p ) {
+            $products[] = array(
+                'id'    => isset( $p['id'] ) ? $p['id'] : '',
+                'name'  => isset( $p['name'] ) ? $p['name'] : '',
+                'qty'   => $qty,
+                'price' => isset( $p['price'] ) ? floatval( $p['price'] ) : 0,
+            );
+            $qty = 1;
+        }
+
+        $body = Subsales_SMS_Queue::render_receipt( array(
+            'customer'       => 'Sample Customer',
+            'products'       => $products,
+            'donationAmount' => 5,
+        ), $template );
+
+        $counts = Subsales_SMS_Queue::segments( $body );
+
+        wp_send_json_success( array(
+            'body'     => $body,
+            'chars'    => $counts['chars'],
+            'segments' => $counts['segments'],
+            'encoding' => $counts['encoding'],
+        ) );
     }
 
     /**
