@@ -229,6 +229,21 @@ class Subsales_SMS_Queue {
             return;
         }
 
+        // Donation-only orders fill the phone field with 0000000000 as a
+        // placeholder, and a mis-key can produce the same shape. Texting it
+        // would fail permanently at Twilio and leave a junk contact behind, so
+        // treat any all-same-digit number as "no real phone".
+        if ( preg_match( '/^(\d)\1{9}$/', $phone ) ) {
+            self::enqueue( array(
+                'order_id'    => $order_id,
+                'phone'       => $phone,
+                'body'        => '',
+                'status'      => 'skipped',
+                'skip_reason' => 'placeholder_phone',
+            ) );
+            return;
+        }
+
         // Consent is recorded whether or not sending is switched on - the
         // customer was shown the wording and gave the number either way, and
         // that record is what an A2P registration or an attorney asks about.

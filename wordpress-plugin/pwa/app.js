@@ -1166,7 +1166,15 @@
       }catch(e){}
     });
     pn.addEventListener('blur', ()=>{
-      try{ const v = pn.value.replace(/\D/g,''); if (v.length !== 10) { try{ pn.reportValidity(); }catch(e){} } }catch(e){}
+      try{
+        const v = pn.value.replace(/\D/g,'');
+        // Only complain about a HALF-typed number. An empty field just means
+        // the seller hasn't got to it yet - they tab out to the address and
+        // back constantly, and popping a validation bubble every time they
+        // leave an untouched field made the form feel broken. Saving still
+        // requires a phone number; that check lives on the Save button.
+        if (v.length > 0 && v.length !== 10) { try{ pn.reportValidity(); }catch(e){} }
+      }catch(e){}
     });
   })();
 
