@@ -11,6 +11,12 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// Two tabs, branched server-side (the Teams page pattern) so only the active
+// tab's queries run: "Seasons" (default) and "Sales Days" (admin/campaigns-page.php).
+$active_tab = ( isset( $_GET['tab'] ) && $_GET['tab'] === 'sales-days' ) ? 'sales-days' : 'seasons';
+
+if ( $active_tab === 'seasons' ) :
+
 $notice  = '';
 $preview = null;
 
@@ -58,10 +64,35 @@ if ( isset( $_POST['subsales_season_action'] ) && $_POST['subsales_season_action
 
 $seasons           = Subsales_Database::get_seasons();
 $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+
+endif; // $active_tab === 'seasons'
 ?>
 
 <div class="wrap subsales-seasons-wrap">
     <h1><?php esc_html_e( 'Seasons', 'subsales-management' ); ?></h1>
+
+    <h2 class="nav-tab-wrapper">
+        <a href="?page=subsales-seasons" class="nav-tab <?php echo $active_tab === 'seasons' ? 'nav-tab-active' : ''; ?>"><?php esc_html_e( 'Seasons', 'subsales-management' ); ?></a>
+        <a href="?page=subsales-seasons&amp;tab=sales-days" class="nav-tab <?php echo $active_tab === 'sales-days' ? 'nav-tab-active' : ''; ?>"><?php esc_html_e( 'Sales Days', 'subsales-management' ); ?></a>
+    </h2>
+
+<?php if ( $active_tab === 'sales-days' ) :
+    // campaigns-page.php opens its own `.wrap` with its own <h1>. Both are
+    // redundant under a tab, so strip them rather than nesting a second .wrap.
+    // Include it exactly once - its jQuery handlers are direct binds.
+    ob_start();
+    include SUBSALES_PLUGIN_PATH . 'admin/campaigns-page.php';
+    $sales_days_html = ob_get_clean();
+    echo preg_replace(
+        '#\A\s*<div class="wrap subsales-campaigns-wrap">\s*<h1>.*?</h1>#s',
+        '<div class="subsales-campaigns-wrap">',
+        $sales_days_html,
+        1
+    ); // phpcs:ignore -- markup produced by the included template
+    ?>
+
+<?php else : ?>
+
     <p><?php esc_html_e( 'Each season is a distinct year of teams and sales days. Starting a new season never deletes anything - it retires the prior season\'s teams and makes everything created from here on belong to the new one.', 'subsales-management' ); ?></p>
 
     <?php echo $notice; // phpcs:ignore -- built entirely from esc_html() calls above ?>
@@ -155,5 +186,7 @@ $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
             </p>
         </form>
 
-    <?php endif; ?>
+    <?php endif; // $preview ?>
+
+<?php endif; // $active_tab ?>
 </div>

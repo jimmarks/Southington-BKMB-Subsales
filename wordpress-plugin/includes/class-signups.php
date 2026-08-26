@@ -118,13 +118,14 @@ class Subsales_Signups {
             'permission_callback' => '__return_true',
         ));
         
-        // Get campaigns
-        register_rest_route( 'order-manager/v1', '/campaigns', array(
-            'methods' => 'GET',
-            'callback' => array( __CLASS__, 'rest_get_campaigns' ),
-            'permission_callback' => '__return_true',
-        ));
-        
+        // NOTE: GET /campaigns is registered in class-rest-api.php against
+        // subsales_rest_get_campaigns(). This class used to register the same
+        // route a second time; whichever loaded last silently won. The version
+        // here selected columns that do not exist on ss_campaigns (name/date
+        // rather than campaign_name/campaign_date), so if load order had ever
+        // flipped, the seller app's sale-day list would have broken outright.
+        // Removed - there is one GET /campaigns and it lives in class-rest-api.php.
+
         // Create campaign
         register_rest_route( 'order-manager/v1', '/campaigns', array(
             'methods' => 'POST',
@@ -386,21 +387,6 @@ class Subsales_Signups {
         ) );
     }
     
-    /**
-     * GET /campaigns - Get all campaigns
-     */
-    public static function rest_get_campaigns( $request ) {
-        global $wpdb;
-        
-        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
-        
-        $campaigns = $wpdb->get_results(
-            "SELECT id, name, date, status FROM {$campaigns_table} ORDER BY date ASC",
-            ARRAY_A
-        );
-        
-        return rest_ensure_response( $campaigns );
-    }
     
     /**
      * POST /campaigns - Create new campaign

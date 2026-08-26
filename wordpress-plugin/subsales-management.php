@@ -84,6 +84,10 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
+// Season setup wizard. Must be loaded here, not only from the Settings partials -
+// admin-ajax.php never loads a Settings page, so the wizard's AJAX handlers would
+// otherwise never be registered.
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-season-setup.php';
 
 // Initialize database
 Subsales_Database::init();
@@ -1247,14 +1251,8 @@ function order_sync_admin_menu() {
         array( 'Subsales_Admin_Pages', 'render_delivery_page' )
     );
     
-    add_submenu_page(
-        'subsales-management',
-        'Campaign Dates',
-        'Campaigns',
-        'manage_options',
-        'subsales-campaigns',
-        array( 'Subsales_Admin_Pages', 'render_campaigns_page' )
-    );
+    // Campaign Dates is no longer a standalone item - it is the "Sales Days"
+    // tab of the Seasons page (admin/seasons-page.php).
 
     add_submenu_page(
         'subsales-management',
@@ -1268,15 +1266,21 @@ function order_sync_admin_menu() {
     // The standalone "Address Extracts" menu is consolidated under
     // Settings → Address Management.
 
+    // Logs also hosts the App Sessions tab, so it carries the live session badge.
+    $active_pwa_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
+    $logs_menu_title  = $active_pwa_count > 0
+        ? sprintf( 'Logs <span class="update-plugins count-%d"><span class="plugin-count">%d</span></span>', $active_pwa_count, $active_pwa_count )
+        : 'Logs';
+
     add_submenu_page(
         'subsales-management',
         'System Logs',
-        'Logs',
+        $logs_menu_title,
         'manage_options',
         'subsales-logs',
         'subsales_logs_page'
     );
-    
+
     // Hidden submenu: Delivery distribution breakdown (accessed from delivery page)
     add_submenu_page(
         null,  // No parent - hidden from menu
@@ -1286,21 +1290,9 @@ function order_sync_admin_menu() {
         'subsales-delivery-breakdown',
         'subsales_delivery_breakdown_page'
     );
-    
-    // Get active PWA sessions count for menu badge
-    $active_pwa_count = count( Subsales_Database::get_active_pwa_sessions( 50 ) );
-    $pwa_menu_title = $active_pwa_count > 0 
-        ? sprintf( 'App Sessions <span class="update-plugins count-%d"><span class="plugin-count">%d</span></span>', $active_pwa_count, $active_pwa_count )
-        : 'App Sessions';
-    
-    add_submenu_page(
-        'subsales-management',
-        'App Sessions',
-        $pwa_menu_title,
-        'manage_options',
-        'subsales-pwa-sessions',
-        'subsales_pwa_sessions_page'
-    );
+
+    // App Sessions is no longer a standalone item - it is the "App Sessions"
+    // tab of the Logs page (subsales_logs_page()).
 }
 
 // AJAX handlers for address search and openaddresses (kept here due to complex logic)
@@ -1894,6 +1886,7 @@ function subsales_ingest_zips( array $zips ) {
         'duplicates' => 0,
         'queued'     => 0,
         'queue_failed' => 0,
+        'retired'    => 0,
         'zips'       => array(),
         'errors'     => array(),
     );
@@ -2063,8 +2056,15 @@ function subsales_ingest_zips( array $zips ) {
         subsales_set_ingest_status( 'running', 70 + intval( 25 * $zip_done / $zip_total ),
             'Writing ' . number_format( count( $rows ) ) . ' addresses for ' . $zip . '...' );
 
+        // Replace only what the state records own. Anything a human added or
+        // corrected by hand (source = 'manual') survives every re-ingest -
+        // otherwise fixing an address would be undone the next time the ZIP was
+        // refreshed, forever. The bulk insert below is INSERT IGNORE against the
+        // (street, house_number, unit, zip) unique key, so a surviving manual row
+        // also wins over the parcel row for the same address: the human
+        // correction is the one that sticks.
         $deleted = $wpdb->query( $wpdb->prepare(
-            "DELETE FROM {$addresses_table} WHERE zip = %s",
+            "DELETE FROM {$addresses_table} WHERE zip = %s AND source <> 'manual'",
             $zip
         ) );
 
@@ -2085,6 +2085,12 @@ function subsales_ingest_zips( array $zips ) {
             'inserted' => intval( $inserted ),
         );
     }
+
+    // Anything flagged on an earlier run that this run has now filed properly
+    // (the classic case: the admin adds the ZIP that was missing and re-ingests)
+    // stops counting as outstanding work. Runs after the writes above so it sees
+    // the addresses this run just inserted.
+    $summary['retired'] = Subsales_Database::retire_resolved_review_rows();
 
     // Refresh the PWA's zip-index.json. The per-ZIP JSON extracts are produced
     // by the unmodified subsales_generate_zip_extracts action - see the note in
@@ -2107,15 +2113,24 @@ function subsales_ingest_zips( array $zips ) {
 
     subsales_log( 'INFO', 'address', 'Parcel ingestion complete', $summary );
 
+    $done_message = sprintf(
+        '%s parcels read, %s addresses written, %s queued for review',
+        number_format( $summary['parcels'] ),
+        number_format( array_sum( wp_list_pluck( $summary['zips'], 'inserted' ) ) ),
+        number_format( $summary['queued'] )
+    );
+
+    if ( $summary['retired'] > 0 ) {
+        $done_message .= sprintf(
+            ', %s previously flagged addresses are now resolved',
+            number_format( $summary['retired'] )
+        );
+    }
+
     subsales_set_ingest_status(
         empty( $summary['errors'] ) ? 'complete' : 'error',
         100,
-        sprintf(
-            '%s parcels read, %s addresses written, %s queued for review',
-            number_format( $summary['parcels'] ),
-            number_format( array_sum( wp_list_pluck( $summary['zips'], 'inserted' ) ) ),
-            number_format( $summary['queued'] )
-        )
+        $done_message
     );
 
     return $summary;
@@ -7150,17 +7165,11 @@ function order_sync_handle_generate_delivery() {
     exit;
 }
 
-// Campaign Dates Admin Page - visual calendar for managing selling dates
-/**
- * Legacy campaigns page function
- * @deprecated 2.2.1.163 Use Subsales_Admin_Pages::render_campaigns_page() instead
- */
-function subsales_campaigns_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
-    }
-    include SUBSALES_PLUGIN_PATH . 'admin/campaigns-page.php';
-}
+// The campaigns calendar is no longer its own admin page - it is included by the
+// Seasons page's "Sales Days" tab and by the season-setup wizard. Two dead
+// wrappers that also included it were removed: campaigns-page.php binds its ~17
+// jQuery handlers directly rather than by delegation, so any second include in
+// the same request double-fires every AJAX call it makes.
 
 // Delivery Distribution Breakdown page - shows how orders are distributed to members
 function subsales_delivery_breakdown_page() {
@@ -7210,13 +7219,36 @@ function subsales_order_entry_distance_page() {
 }
 
 /**
- * Logs Page
+ * Tab bar shared by the Logs page and its App Sessions tab.
+ *
+ * @param string $active 'logs' or 'sessions'.
+ */
+function subsales_logs_nav_tabs( $active ) {
+    ?>
+    <h2 class="nav-tab-wrapper">
+        <a href="?page=subsales-logs" class="nav-tab <?php echo $active === 'logs' ? 'nav-tab-active' : ''; ?>">System Logs</a>
+        <a href="?page=subsales-logs&amp;tab=sessions" class="nav-tab <?php echo $active === 'sessions' ? 'nav-tab-active' : ''; ?>">App Sessions</a>
+    </h2>
+    <?php
+}
+
+/**
+ * Logs Page - two tabs: System Logs (default) and App Sessions.
+ *
+ * Server-side branching (the Teams page pattern) rather than hash tabs: only the
+ * active tab's PHP runs, so the two pages' `paged` params and auto-refresh timers
+ * can never collide.
  */
 function subsales_logs_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
     }
-    
+
+    if ( isset( $_GET['tab'] ) && $_GET['tab'] === 'sessions' ) {
+        subsales_pwa_sessions_page();
+        return;
+    }
+
     global $wpdb;
     $logs_table = $wpdb->prefix . 'ss_logs';
     
@@ -7283,7 +7315,8 @@ function subsales_logs_page() {
     
     // Pagination
     $per_page = 500;
-    $page = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    // Prefixed so it can't collide with the App Sessions tab's own pager.
+    $page = isset( $_GET['logs_paged'] ) ? max( 1, intval( $_GET['logs_paged'] ) ) : 1;
     $offset = ( $page - 1 ) * $per_page;
     
     // Get total count
@@ -7303,7 +7336,8 @@ function subsales_logs_page() {
     ?>
     <div class="wrap subsales-logs-page">
         <h1>System Logs</h1>
-        
+        <?php subsales_logs_nav_tabs( 'logs' ); ?>
+
         <!-- Debug Diagnostics -->
         <?php if ( isset( $_GET['diagnostics'] ) && $_GET['diagnostics'] === '1' ): ?>
         <div class="notice notice-info" style="padding: 20px; margin: 20px 0;">
@@ -7405,7 +7439,8 @@ function subsales_logs_page() {
         <!-- Filters -->
         <form method="get" action="" style="background: #fff; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
             <input type="hidden" name="page" value="subsales-logs">
-            
+            <input type="hidden" name="tab" value="logs">
+
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 10px;">
                 <div>
                     <label>Log Level:</label>
@@ -7530,7 +7565,7 @@ function subsales_logs_page() {
                     <div class="tablenav-pages">
                         <?php
                         $page_links = paginate_links( array(
-                            'base' => add_query_arg( 'paged', '%#%' ),
+                            'base' => add_query_arg( 'logs_paged', '%#%' ),
                             'format' => '',
                             'prev_text' => '&laquo; Previous',
                             'next_text' => 'Next &raquo;',
@@ -7692,31 +7727,27 @@ function subsales_logs_page() {
 }
 
 /**
- * PWA Sessions Admin Page
- * Shows active and historical PWA client sessions with real-time monitoring
+ * PWA Sessions - the "App Sessions" tab of the Logs page (?page=subsales-logs&tab=sessions).
+ * Shows active and historical PWA client sessions with real-time monitoring.
+ * Rendered by subsales_logs_page(); no longer a menu callback of its own.
  */
 function subsales_pwa_sessions_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
         wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
     }
-    
+
     // Get active sessions
     $active_sessions = Subsales_Database::get_active_pwa_sessions( 50 );
     $active_count = count( $active_sessions );
-    
-    // DEBUG: Output raw query result for troubleshooting
-    if ( current_user_can( 'manage_options' ) ) {
-        error_log( 'PWA Sessions Debug - Active Sessions Count: ' . $active_count );
-        error_log( 'PWA Sessions Debug - Active Sessions Data: ' . print_r( $active_sessions, true ) );
-    }
-    
+
     // Get filter parameters
     $status_filter = isset( $_GET['status'] ) ? sanitize_text_field( $_GET['status'] ) : 'active';
     $team_filter = isset( $_GET['team_id'] ) ? intval( $_GET['team_id'] ) : null;
     
     // Get all sessions with pagination
     $per_page = 50;
-    $page = isset( $_GET['paged'] ) ? max( 1, intval( $_GET['paged'] ) ) : 1;
+    // Prefixed so it can't collide with the System Logs tab's own pager.
+    $page = isset( $_GET['sessions_paged'] ) ? max( 1, intval( $_GET['sessions_paged'] ) ) : 1;
     $offset = ( $page - 1 ) * $per_page;
     
     // Get more sessions than needed since we'll filter by real-time status
@@ -7770,7 +7801,8 @@ function subsales_pwa_sessions_page() {
             <span class="dashicons dashicons-smartphone" style="font-size: 32px; width: 32px; height: 32px;"></span>
             App Client Sessions
         </h1>
-        
+        <?php subsales_logs_nav_tabs( 'sessions' ); ?>
+
         <?php if ( isset( $_GET['debug'] ) && $_GET['debug'] === '1' ): ?>
         <div class="notice notice-info" style="padding: 15px; margin: 20px 0;">
             <h3>Database Debug Information</h3>
@@ -7826,9 +7858,10 @@ function subsales_pwa_sessions_page() {
         </div>
         
         <!-- Filters -->
-        <form method="get" action="" style="background: #fff; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
-            <input type="hidden" name="page" value="subsales-pwa-sessions">
-            
+        <form method="get" action="" id="pwa-sessions-filters" style="background: #fff; padding: 15px; border: 1px solid #ddd; margin-bottom: 20px;">
+            <input type="hidden" name="page" value="subsales-logs">
+            <input type="hidden" name="tab" value="sessions">
+
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
                 <div>
                     <label>Status:</label>
@@ -7854,7 +7887,7 @@ function subsales_pwa_sessions_page() {
                 
                 <div style="display: flex; gap: 10px; align-items: flex-end;">
                     <button type="submit" class="button button-primary">Apply Filters</button>
-                    <a href="?page=subsales-pwa-sessions" class="button">Reset</a>
+                    <a href="?page=subsales-logs&amp;tab=sessions" class="button">Reset</a>
                 </div>
             </div>
         </form>
@@ -7957,8 +7990,10 @@ function subsales_pwa_sessions_page() {
             location.reload();
         });
         
-        // Stop auto-refresh when user interacts with filters
-        $('select, input').on('focus', function() {
+        // Stop auto-refresh when user interacts with this tab's filters.
+        // Scoped to the sessions filter form - an unscoped 'select, input' would
+        // also catch anything else rendered on the page.
+        $('#pwa-sessions-filters').find('select, input').on('focus', function() {
             clearInterval(autoRefreshInterval);
             console.log('Auto-refresh paused while editing filters');
         });
@@ -12215,13 +12250,15 @@ function subsales_ajax_delete_campaign() {
         wp_send_json_error( array( 'message' => 'Missing campaign ID' ) );
     }
     
+    // true on success, otherwise the reason it was refused - show that verbatim
+    // rather than guessing at "has signups", which was only ever one of three.
     $result = Subsales_Database::delete_campaign( $campaign_id );
-    
-    if ( $result ) {
+
+    if ( true === $result ) {
         subsales_log( 'INFO', 'campaigns', 'Campaign deleted: ID ' . $campaign_id, array(), 'admin' );
         wp_send_json_success( array( 'message' => 'Campaign deleted' ) );
     } else {
-        wp_send_json_error( array( 'message' => 'Cannot delete campaign with signups' ) );
+        wp_send_json_error( array( 'message' => $result ) );
     }
 }
 
@@ -12881,10 +12918,24 @@ function subsales_rest_get_campaigns( $request ) {
         return rest_ensure_response( array() );
     }
     
-    $campaigns = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, campaign_date as date, campaign_name as name, status FROM {$table} WHERE status = %s ORDER BY campaign_date ASC",
-        'active'
-    ), ARRAY_A );
+    // Scope to the current season. Without this the seller app would list last
+    // season's sale days alongside this season's for as long as they stayed
+    // 'active' - the kids' own screen, so the most visible place to get it wrong.
+    $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
+    if ( $season_id ) {
+        $campaigns = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, campaign_date as date, campaign_name as name, status
+             FROM {$table} WHERE status = %s AND season_id = %d ORDER BY campaign_date ASC",
+            'active',
+            $season_id
+        ), ARRAY_A );
+    } else {
+        $campaigns = $wpdb->get_results( $wpdb->prepare(
+            "SELECT id, campaign_date as date, campaign_name as name, status FROM {$table} WHERE status = %s ORDER BY campaign_date ASC",
+            'active'
+        ), ARRAY_A );
+    }
     
     // Check for database errors
     if ( $wpdb->last_error ) {

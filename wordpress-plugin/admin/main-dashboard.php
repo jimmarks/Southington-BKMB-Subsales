@@ -497,9 +497,9 @@ $zip_array = $served_zips;
             });
         }
         
-        // Active users - click to view App Sessions page
+        // Active users - click to view the App Sessions tab of the Logs page
         $('#activeUserCount').on('click', function() {
-            window.location.href = 'admin.php?page=subsales-pwa-sessions';
+            window.location.href = 'admin.php?page=subsales-logs&tab=sessions';
         });
         
         // Update active user count with real data

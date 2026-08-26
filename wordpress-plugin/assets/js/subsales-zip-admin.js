@@ -68,6 +68,9 @@
       html += '<li>' + num(summary.parcels) + ' properties read from the state records.</li>';
       html += '<li>' + num(summary.duplicates) + ' repeat listings (condos, apartments) combined into one address each.</li>';
       html += '<li>' + num(summary.queued) + ' sent to <strong>Needs Review</strong> below.</li>';
+      if (summary.retired) {
+        html += '<li>' + num(summary.retired) + ' address(es) that were waiting for review are now sorted out, and have been cleared off that list.</li>';
+      }
       html += '</ul>';
 
       if (summary.errors && summary.errors.length) {

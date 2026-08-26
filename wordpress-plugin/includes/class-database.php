@@ -95,7 +95,6 @@ class Subsales_Database {
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY  (id),
-            UNIQUE KEY name (name),
             UNIQUE KEY access_code (access_code)
         ) $charset_collate;";
         
@@ -278,7 +277,6 @@ class Subsales_Database {
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY  (id),
-            UNIQUE KEY campaign_date (campaign_date),
             KEY status (status)
         ) $charset_collate;";
         
@@ -351,6 +349,7 @@ class Subsales_Database {
         self::migrate_seasons_table();
         self::migrate_teams_season_id( $teams_table_name );
         self::migrate_campaigns_season_id( $campaigns_table_name );
+        self::migrate_campaigns_season_unique_key( $campaigns_table_name );
         self::migrate_orders_season_id( $table_name );
         self::migrate_payment_attempts_table();
     }
@@ -454,12 +453,23 @@ class Subsales_Database {
              AND INDEX_NAME = 'name_season'"
         );
 
-        if ( $has_old_key && ! $has_new_key ) {
+        // Must be checked independently, not as "old && !new". dbDelta re-adds
+        // any index the CREATE TABLE string still declares, so it resurrected
+        // UNIQUE KEY name after this migration had dropped it - leaving both
+        // keys live and silently restoring the very constraint seasons exist to
+        // remove (a team name could still never repeat in a later season).
+        // The declaration has been removed from the schema above; this repairs
+        // installs that already have the stale key.
+        if ( ! $has_new_key ) {
             $wpdb->query(
                 "ALTER TABLE {$teams_table_name}
-                 DROP INDEX name,
                  ADD UNIQUE KEY name_season (name, season_id)"
             );
+        }
+
+        if ( $has_old_key ) {
+            $wpdb->query( "ALTER TABLE {$teams_table_name} DROP INDEX name" );
+            subsales_log( 'INFO', 'system', 'Dropped stale UNIQUE KEY name on teams; (name, season_id) is authoritative' );
         }
     }
 
@@ -494,6 +504,67 @@ class Subsales_Database {
                 $current_season_id
             ) );
         }
+    }
+
+    /**
+     * Schema migration: campaign_date was UNIQUE on its own, so a given date
+     * could only ever exist once across every season. Teams were tightened to
+     * (name, season_id) when seasons were introduced; campaigns were missed.
+     *
+     * Any season_id = 0 rows are adopted into the current season first -
+     * otherwise they could collide with a real row and fail the ALTER.
+     */
+    private static function migrate_campaigns_season_unique_key( $campaigns_table_name ) {
+        global $wpdb;
+
+        $has_old_key = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$campaigns_table_name}'
+             AND INDEX_NAME = 'campaign_date'"
+        );
+        $has_new_key = $wpdb->get_var(
+            "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$campaigns_table_name}'
+             AND INDEX_NAME = 'campaign_date_season'"
+        );
+
+        if ( ! $has_old_key && $has_new_key ) {
+            return;
+        }
+
+        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        if ( $current_season_id ) {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE {$campaigns_table_name} SET season_id = %d WHERE season_id = 0",
+                $current_season_id
+            ) );
+        }
+
+        // Checked independently rather than as one ALTER, for the same reason as
+        // the teams key above: dbDelta re-adds anything the CREATE TABLE string
+        // still declares, so these two states drift apart and the migration has
+        // to be able to repair either one on its own.
+        if ( ! $has_new_key ) {
+            $result = $wpdb->query(
+                "ALTER TABLE {$campaigns_table_name}
+                 ADD UNIQUE KEY campaign_date_season (campaign_date, season_id)"
+            );
+
+            if ( false === $result ) {
+                subsales_log( 'ERROR', 'system', 'Campaigns unique-key migration failed', array(
+                    'error' => $wpdb->last_error,
+                ) );
+                return;
+            }
+        }
+
+        if ( $has_old_key ) {
+            $wpdb->query( "ALTER TABLE {$campaigns_table_name} DROP INDEX campaign_date" );
+        }
+
+        subsales_log( 'INFO', 'system', 'Campaigns unique key is now (campaign_date, season_id)' );
     }
 
     /**
@@ -2061,20 +2132,37 @@ class Subsales_Database {
      * @param string $status Filter by status (active, inactive, completed, or 'all')
      * @return array Campaign records
      */
-    public static function get_campaigns( $status = 'all' ) {
+    /**
+     * @param string          $status    'all' or a status value.
+     * @param int|null|string $season_id Defaults to the current season. Pass
+     *                                   'all' for every season (history views).
+     */
+    public static function get_campaigns( $status = 'all', $season_id = null ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_campaigns';
-        
-        $where = '1=1';
+
+        $where = array( '1=1' );
+
         if ( $status !== 'all' ) {
-            $where = $wpdb->prepare( 'status = %s', $status );
+            $where[] = $wpdb->prepare( 'status = %s', $status );
         }
-        
+
+        // Sales days belong to a season. Without this the campaigns list showed
+        // every season's dates forever.
+        if ( 'all' !== $season_id ) {
+            $season_id = ( null === $season_id )
+                ? intval( get_option( 'subsales_current_season_id' ) )
+                : intval( $season_id );
+            if ( $season_id ) {
+                $where[] = $wpdb->prepare( 'season_id = %d', $season_id );
+            }
+        }
+
         $campaigns = $wpdb->get_results(
-            "SELECT * FROM {$table_name} WHERE {$where} ORDER BY campaign_date ASC",
+            "SELECT * FROM {$table_name} WHERE " . implode( ' AND ', $where ) . " ORDER BY campaign_date ASC",
             ARRAY_A
         );
-        
+
         return $campaigns ? $campaigns : array();
     }
     
@@ -2124,54 +2212,92 @@ class Subsales_Database {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_campaigns';
         
+        // season_id was missing here entirely, so every sales day created from the
+        // calendar landed at season_id = 0 - invisible to get_season_counts() and
+        // never scoped to the season it belongs to.
+        $season_id = isset( $data['season_id'] )
+            ? intval( $data['season_id'] )
+            : intval( get_option( 'subsales_current_season_id' ) );
+
         $campaign_data = array(
             'campaign_date' => $data['campaign_date'],
             'campaign_name' => isset( $data['campaign_name'] ) ? $data['campaign_name'] : '',
             'notes' => isset( $data['notes'] ) ? $data['notes'] : '',
             'status' => isset( $data['status'] ) ? $data['status'] : 'active',
+            'season_id' => $season_id,
         );
-        
+
         if ( isset( $data['id'] ) && $data['id'] > 0 ) {
             // Update existing campaign
             $result = $wpdb->update(
                 $table_name,
                 $campaign_data,
                 array( 'id' => $data['id'] ),
-                array( '%s', '%s', '%s', '%s' ),
+                array( '%s', '%s', '%s', '%s', '%d' ),
                 array( '%d' )
             );
-            
+
             return $result !== false ? $data['id'] : false;
         } else {
             // Create new campaign
-            $result = $wpdb->insert( $table_name, $campaign_data, array( '%s', '%s', '%s', '%s' ) );
+            $result = $wpdb->insert( $table_name, $campaign_data, array( '%s', '%s', '%s', '%s', '%d' ) );
             return $result ? $wpdb->insert_id : false;
         }
     }
     
     /**
      * Delete campaign
-     * 
+     *
+     * Refuses while anything still points at the sale day. Signups were the only
+     * thing checked here, so deleting from the Sales Days tab could orphan driver
+     * assignments (ss_team_campaigns) and Square checkout attempts
+     * (ss_payment_attempts) - both carry a campaign_id. ss_orders does not link to
+     * a sale day at all (orders hang off teams), so there is nothing to check there.
+     *
      * @param int $campaign_id Campaign ID
-     * @return bool Success
+     * @return true|string True on success, otherwise the plain-language reason it
+     *                     was refused (safe to show a volunteer parent as-is)
      */
     public static function delete_campaign( $campaign_id ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_campaigns';
-        
-        // Check if campaign has signups
-        $signups_table = $wpdb->prefix . 'ss_signups';
-        $signup_count = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$signups_table} WHERE campaign_id = %d",
-            $campaign_id
-        ) );
-        
-        if ( $signup_count > 0 ) {
-            return false; // Cannot delete campaign with signups
+        $campaign_id = intval( $campaign_id );
+
+        // Each row: table, plain-language reason. First hit wins - the admin only
+        // needs one thing to go fix, not all three.
+        $blockers = array(
+            array(
+                'table'  => $wpdb->prefix . 'ss_signups',
+                'reason' => '%d seller(s) are already signed up for this sale day.',
+            ),
+            array(
+                'table'  => $wpdb->prefix . 'ss_team_campaigns',
+                'reason' => '%d team(s) already have a driver set for this sale day.',
+            ),
+            array(
+                'table'  => $wpdb->prefix . 'ss_payment_attempts',
+                'reason' => '%d card payment(s) are attached to this sale day.',
+            ),
+        );
+
+        foreach ( $blockers as $blocker ) {
+            $count = (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$blocker['table']} WHERE campaign_id = %d",
+                $campaign_id
+            ) );
+
+            if ( $count > 0 ) {
+                return sprintf( $blocker['reason'], $count );
+            }
         }
-        
+
         $result = $wpdb->delete( $table_name, array( 'id' => $campaign_id ), array( '%d' ) );
-        return $result !== false;
+
+        if ( false === $result ) {
+            return 'This sale day could not be deleted. Please try again.';
+        }
+
+        return true;
     }
     
     /**
@@ -3288,6 +3414,71 @@ class Subsales_Database {
     }
 
     /**
+     * Retire pending rows whose address has since landed in ss_addresses.
+     *
+     * The queue only ever grew: queue_address_for_review() upserts on
+     * address_hash and nothing marked a row done when the address arrived by
+     * another route - the admin adds the ZIP that was missing, the next ingest
+     * files the address properly, and the flag stays pending forever. So the
+     * Needs Review count overstates the outstanding work and drifts further
+     * every run.
+     *
+     * One set-based UPDATE ... JOIN: a few hundred queue rows against ~18k
+     * addresses is a single pass, not a row-by-row PHP loop. Matching is on
+     * house number + street only (case-insensitive, trimmed - same comparison
+     * style as Subsales_Address_Helper::lookup_in_database()), because the ZIP
+     * is exactly what was unknown when the row was queued.
+     *
+     * 'dismissed' rows are never touched - the admin dismissed those on purpose.
+     *
+     * @return int Number of rows retired
+     * @since 3.3.0
+     */
+    public static function retire_resolved_review_rows() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+        $addresses_table = $wpdb->prefix . 'ss_addresses';
+
+        // MIN(id) so an address listed under more than one ZIP still resolves to
+        // a single, stable address id rather than whichever row MySQL saw first.
+        // No user input in this statement, so nothing to prepare().
+        $retired = $wpdb->query(
+            "UPDATE {$table} q
+             INNER JOIN (
+                 SELECT LOWER(TRIM(house_number)) AS house_key,
+                        LOWER(TRIM(street)) AS street_key,
+                        MIN(id) AS address_id
+                 FROM {$addresses_table}
+                 GROUP BY house_key, street_key
+             ) a
+                ON a.house_key = LOWER(TRIM(q.house_number))
+               AND a.street_key = LOWER(TRIM(q.street))
+             SET q.status = 'resolved',
+                 q.resolved_address_id = a.address_id,
+                 q.resolved_at = NOW()
+             WHERE q.status = 'pending'
+               AND TRIM(q.house_number) <> ''
+               AND TRIM(q.street) <> ''"
+        );
+
+        if ( false === $retired ) {
+            subsales_log( 'ERROR', 'address', 'Review queue reconciliation failed', array(
+                'error' => $wpdb->last_error
+            ) );
+            return 0;
+        }
+
+        if ( $retired > 0 ) {
+            subsales_log( 'INFO', 'address', 'Review queue rows retired as already resolved', array(
+                'retired' => intval( $retired )
+            ) );
+        }
+
+        return intval( $retired );
+    }
+
+    /**
      * Producer B: flag orders whose address doesn't resolve against ss_addresses.
      *
      * Read-only. It adds a line to a list and does nothing else - no geocoding,
@@ -3368,14 +3559,19 @@ class Subsales_Database {
 
         update_option( 'subsales_address_scan_watermark', current_time( 'mysql' ), false );
 
+        // Same pass in reverse: anything already fixed elsewhere stops counting
+        // as outstanding, so the list self-heals between ingests too.
+        $retired = self::retire_resolved_review_rows();
+
         if ( $scanned > 0 ) {
             subsales_log( 'INFO', 'address', 'Order address scan complete', array(
                 'scanned' => $scanned,
-                'queued'  => $queued
+                'queued'  => $queued,
+                'retired' => $retired
             ), 'cron' );
         }
 
-        return array( 'scanned' => $scanned, 'queued' => $queued );
+        return array( 'scanned' => $scanned, 'queued' => $queued, 'retired' => $retired );
     }
 
     /**

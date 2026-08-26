@@ -123,9 +123,11 @@ $review_rows = $review_pending > 0
             </form>
 
             <div style="margin-top:6px; padding:12px; background:#fcf3cd; border-left:3px solid #f0b849; border-radius:3px; font-size:13px; line-height:1.6;">
-                <strong>Heads up:</strong> ingesting a ZIP code <strong>replaces</strong> every address already stored
-                for that ZIP with a fresh copy from the state. That's on purpose &mdash; it's how old, wrong addresses
-                get cleaned out. Orders that sellers already took are not affected.
+                <strong>Heads up:</strong> ingesting a ZIP code <strong>replaces</strong> the addresses that came from
+                the state records with a fresh copy. That's on purpose &mdash; it's how old, wrong addresses get cleaned
+                out. Two things are never touched: <strong>addresses you fixed or added by hand are kept</strong> (and
+                they win over the state's version of the same address), and orders your sellers already took are not
+                affected at all.
             </div>
 
             <!-- Progress -->
@@ -279,9 +281,11 @@ $review_rows = $review_pending > 0
                         </td>
                         <td style="color:#646970; font-size:12px;"><?php echo esc_html( $row['created_at'] ); ?></td>
                         <td>
-                            <button type="button" class="button button-small subsales-review-toggle">Fix it</button>
-                            <button type="button" class="button button-small subsales-review-geocode" style="margin-top:4px;" title="Ask Google where this address is. Costs a small amount each time.">Look up</button>
-                            <button type="button" class="button button-small subsales-review-dismiss" style="margin-top:4px;" title="Hide this from the list without adding it.">Ignore</button>
+                            <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:flex-start;">
+                                <button type="button" class="button button-small subsales-review-toggle">Fix it</button>
+                                <button type="button" class="button button-small subsales-review-geocode" title="Ask Google where this address is. Costs a small amount each time.">Look up</button>
+                                <button type="button" class="button button-small subsales-review-dismiss" title="Hide this from the list without adding it.">Ignore</button>
+                            </div>
                         </td>
                     </tr>
                     <tr class="subsales-review-editor" data-id="<?php echo esc_attr( $rid ); ?>" style="display:none;">
