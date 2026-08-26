@@ -229,17 +229,33 @@ class Subsales_SMS_Queue {
             return;
         }
 
-        // Donation-only orders fill the phone field with 0000000000 as a
-        // placeholder, and a mis-key can produce the same shape. Texting it
-        // would fail permanently at Twilio and leave a junk contact behind, so
-        // treat any all-same-digit number as "no real phone".
+        // A donation with nobody to text: someone hands a child $10 at the door
+        // and closes it. There is no customer to send a receipt to, so this is
+        // recorded as its own reason rather than looking like a data problem.
+        if ( ! empty( $data['donationOnly'] ) ) {
+            self::enqueue( array(
+                'order_id'    => $order_id,
+                'phone'       => $phone,
+                'body'        => '',
+                'status'      => 'skipped',
+                'skip_reason' => 'donation_only',
+            ) );
+            return;
+        }
+
+        // Separately: a real sale to a named customer who would not give a
+        // number. Sellers type all-zeros for this, and a mis-key can produce
+        // the same shape. Texting it would fail permanently at Twilio and leave
+        // a junk contact behind. Kept distinct from donation_only on purpose -
+        // last season 549 orders had a placeholder number but only ~361 were
+        // donations, so roughly 190 were customers who simply declined.
         if ( preg_match( '/^(\d)\1{9}$/', $phone ) ) {
             self::enqueue( array(
                 'order_id'    => $order_id,
                 'phone'       => $phone,
                 'body'        => '',
                 'status'      => 'skipped',
-                'skip_reason' => 'placeholder_phone',
+                'skip_reason' => 'no_phone_given',
             ) );
             return;
         }

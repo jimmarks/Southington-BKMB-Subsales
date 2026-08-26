@@ -1730,6 +1730,7 @@
       products: data.products,
       price_snapshot: data.priceSnapshot,
       donationAmount: data.donation,
+      donationOnly: !!data.donationOnly,
       paymentMethod,
       checkNumber: data.chkNumber || '',
       notes: data.notes,
@@ -3148,9 +3149,16 @@
       }
     } else {
       // Creating new order — shared with the digital-payment "paid" handler via buildNewOrderObject()
+      // Record donation-only explicitly rather than leaving it to be inferred
+      // later from the placeholder phone number. Both cases exist and they are
+      // not the same thing: a donation (nobody to text) versus a normal sale
+      // where the customer would not give a number.
+      const donationOnly = !!(qs('#donationOnly') && qs('#donationOnly').checked);
+
       order = await buildNewOrderObject(paymentMethod, {
         customer, address, cell, products, priceSnapshot, donation, chkNumber, notes,
-        subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode
+        subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode,
+        donationOnly
       });
     }
     
@@ -3362,6 +3370,7 @@
             products: order.products || [],
             price_snapshot: order.price_snapshot || {},
             donationAmount: order.donationAmount,
+            donationOnly: !!order.donationOnly,
             paymentMethod: order.paymentMethod,
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,
