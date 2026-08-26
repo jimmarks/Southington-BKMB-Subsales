@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2026-08-26
+
+### Fixed — orders could be silently lost
+- **Two children saving an order in the same instant could wipe one of the sales.** Every order got an id built from the clock alone, so two phones saving in the same millisecond produced the same id. The server saw the second one as a repeat of the first, said "already saved", and the app then deleted it from the child's phone. No error appeared anywhere — the sale simply vanished. Looking at last season's real orders, the closest two landed **3 milliseconds apart**, with 38 pairs inside the same second. Order ids now include a per-phone marker, so two phones can't collide at all.
+- **One rejected order no longer blocks every order behind it.** If the server refused a single order, syncing stopped dead there — and did so again on every retry, so the rest never went up. Now a rejected order is set aside and reported at the end while everything else sends; if the phone simply has no signal, syncing pauses with one clear message instead of an alert per order. Nothing is ever deleted from the phone until the server confirms it.
+
+### Added
+- **"Set Up Season" walkthrough** (Settings → Set Up Season). One button opens a step-by-step guide covering everything a new season needs — naming the season, picking the sale days, updating the roster, checking pricing, confirming team vs individual mode, refreshing addresses, and opening sales. Each step shows where things currently stand, so it's just as useful mid-season to check nothing was missed. Sale days are picked with a simple date picker and list.
+
+### Fixed — seasons
+- **Sale days weren't really tied to a season.** Dates created from the calendar were filed under no season at all, every season's dates showed in the list forever, and a given date could only ever exist once across all years. All three are fixed, and the seller app no longer shows last season's sale days to children.
+- **A fix that had quietly undone itself.** Team names were supposed to be reusable in a new season; a WordPress schema step kept restoring the old restriction behind the scenes. Both that and the equivalent for sale days are now repaired properly.
+- **The "Needs Review" address list now clears itself.** Addresses sorted out by adding a missing ZIP code and re-ingesting stayed on the list as though still outstanding — 153 of them. They're now retired automatically after an ingest and hourly.
+- **Deleting a sale day gives the real reason.** It previously only checked for sign-ups, ignored driver assignments and card payments, and always said "cannot delete — signups" whatever the actual cause.
+
+### Changed
+- **Menu trimmed from 10 items to 8.** Campaign Dates moved under Seasons as a "Sales Days" tab, and App Sessions moved under Logs. Nothing was removed — both are one click from where they were.
+
 ## [3.2.1] - 2026-08-26
 
 ### Fixed
