@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.2.0
+ * Version: 3.2.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.2.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.2.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -124,6 +124,34 @@ Subsales_Payment_Attempts::init();
 // Activation/Deactivation hooks
 register_activation_hook( __FILE__, 'subsales_activate' );
 register_deactivation_hook( __FILE__, 'subsales_deactivate' );
+
+/**
+ * Run schema migrations after a plugin UPDATE, not just on activation.
+ *
+ * register_activation_hook() does NOT fire when a plugin is updated in place,
+ * so any table added in a new version simply never got created on an existing
+ * site - the admin had to know to deactivate and reactivate. That is exactly
+ * how 3.2.0 shipped without wp_ss_address_review_queue: ingestion ran, found
+ * addresses it couldn't place, and had nowhere to put them.
+ *
+ * create_tables() is idempotent (INFORMATION_SCHEMA checks + dbDelta), so
+ * running it again whenever the stored version differs is safe and cheap.
+ */
+add_action( 'admin_init', 'subsales_maybe_upgrade_db' );
+function subsales_maybe_upgrade_db() {
+    if ( get_option( 'subsales_db_version' ) === SUBSALES_VERSION ) {
+        return;
+    }
+
+    Subsales_Database::create_tables();
+    update_option( 'subsales_db_version', SUBSALES_VERSION );
+
+    if ( function_exists( 'subsales_log' ) ) {
+        subsales_log( 'INFO', 'system', 'Database schema checked after version change', array(
+            'version' => SUBSALES_VERSION,
+        ) );
+    }
+}
 
 function subsales_activate() {
     // Check WordPress version
@@ -1865,6 +1893,7 @@ function subsales_ingest_zips( array $zips ) {
         'skipped'    => 0,
         'duplicates' => 0,
         'queued'     => 0,
+        'queue_failed' => 0,
         'zips'       => array(),
         'errors'     => array(),
     );
@@ -1950,7 +1979,7 @@ function subsales_ingest_zips( array $zips ) {
             if ( null === $zip ) {
                 // Zero matches or more than one. Queue it - never guess. A bad
                 // parcel must not abort the run.
-                Subsales_Database::queue_address_for_review( array(
+                $queued_ok = Subsales_Database::queue_address_for_review( array(
                     'reason'         => 'zip_undetermined',
                     'source_context' => 'ingestion',
                     'raw_address'    => $location,
@@ -1961,7 +1990,15 @@ function subsales_ingest_zips( array $zips ) {
                     'lat'            => $centroid['lat'],
                     'lng'            => $centroid['lng'],
                 ) );
-                $summary['queued']++;
+
+                // Only count what actually landed. Reporting "238 sent to Needs
+                // Review" while every insert silently failed (missing table) is
+                // worse than reporting nothing.
+                if ( $queued_ok ) {
+                    $summary['queued']++;
+                } else {
+                    $summary['queue_failed']++;
+                }
                 continue;
             }
 
@@ -2055,6 +2092,18 @@ function subsales_ingest_zips( array $zips ) {
     subsales_update_zip_index();
 
     $summary['duration'] = round( microtime( true ) - $start_time, 2 );
+
+    // A failed queue write means those addresses were silently dropped - say so
+    // loudly rather than reporting them as filed.
+    if ( $summary['queue_failed'] > 0 ) {
+        $summary['errors'][] = sprintf(
+            '%s address(es) could not be saved to the review list. The review table may be missing - reload an admin page to run the schema check, then ingest again.',
+            number_format( $summary['queue_failed'] )
+        );
+        subsales_log( 'ERROR', 'address', 'Review-queue writes failed during ingestion', array(
+            'queue_failed' => $summary['queue_failed'],
+        ) );
+    }
 
     subsales_log( 'INFO', 'address', 'Parcel ingestion complete', $summary );
 

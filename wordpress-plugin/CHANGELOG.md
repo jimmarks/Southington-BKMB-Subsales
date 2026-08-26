@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-08-26
+
+### Fixed
+- **New database tables are now created when the plugin updates, not only when it's activated.** WordPress doesn't run a plugin's activation step during an update, so the "Needs Review" table added in 3.2.0 was never created on sites that updated normally. The first ingestion then reported addresses as sent to the review list when they had actually been discarded. The schema check now runs automatically after any version change, and this applies to every future update too.
+- **The ingestion summary no longer counts addresses it failed to save.** It counts only what actually landed and reports a clear error for the rest, instead of quietly overstating what was filed.
+
 ## [3.2.0] - 2026-08-26
 
 ### The address book was rebuilt from scratch
