@@ -29,12 +29,18 @@ class Subsales_Database {
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_old_logs' ) );
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'check_debug_timeout' ) );
         add_action( 'subsales_log_cleanup', array( __CLASS__, 'cleanup_stale_pwa_sessions' ) );
-        
-        // Schedule nightly address validation (2 AM daily)
-        if ( ! wp_next_scheduled( 'subsales_nightly_address_validation' ) ) {
-            wp_schedule_event( strtotime( '02:00:00' ), 'daily', 'subsales_nightly_address_validation' );
+        // Read-only flagging of order addresses missing from ss_addresses.
+        // Stacked on the existing hourly hook rather than its own schedule.
+        add_action( 'subsales_log_cleanup', array( __CLASS__, 'scan_unmatched_order_addresses' ) );
+
+        // The old nightly address-validation job (geocode every new order, then
+        // make an admin approve each one by hand) was removed - it stalled after
+        // about a month of real use. Sites upgrading from an older version still
+        // have the event scheduled, so clear it rather than leaving it firing
+        // into a handler that no longer exists.
+        if ( wp_next_scheduled( 'subsales_nightly_address_validation' ) ) {
+            wp_clear_scheduled_hook( 'subsales_nightly_address_validation' );
         }
-        add_action( 'subsales_nightly_address_validation', array( __CLASS__, 'run_address_validation' ) );
     }
     
     /**
@@ -232,6 +238,35 @@ class Subsales_Database {
             KEY idx_coordinates (lat, lng)
         ) $charset_collate;";
         
+        // Address Review Queue for addresses the pipeline could not resolve on its own.
+        // Nothing unresolved is ever written to ss_addresses - it lands here instead and
+        // waits for an admin, so a half-resolved address can never reach the PWA.
+        $address_review_queue_table_name = $wpdb->prefix . 'ss_address_review_queue';
+        $address_review_queue_sql = "CREATE TABLE $address_review_queue_table_name (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            reason enum('zip_undetermined','not_in_database') NOT NULL,
+            source_context enum('ingestion','order_entry') NOT NULL,
+            raw_address varchar(500) NOT NULL,
+            house_number varchar(20) DEFAULT '',
+            street varchar(255) DEFAULT '',
+            city varchar(100) DEFAULT 'Southington',
+            candidate_zips_json text DEFAULT NULL,
+            lat decimal(10, 8) DEFAULT NULL,
+            lng decimal(11, 8) DEFAULT NULL,
+            order_id bigint(20) unsigned DEFAULT NULL,
+            address_hash varchar(64) NOT NULL,
+            status enum('pending','resolved','dismissed') NOT NULL DEFAULT 'pending',
+            resolution_note text DEFAULT NULL,
+            resolved_address_id bigint(20) unsigned DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            resolved_at datetime DEFAULT NULL,
+            PRIMARY KEY  (id),
+            UNIQUE KEY address_hash (address_hash),
+            KEY idx_status (status),
+            KEY idx_order_id (order_id)
+        ) $charset_collate;";
+
         // Campaign Dates table for managing selling dates
         $campaigns_table_name = $wpdb->prefix . 'ss_campaigns';
         $campaigns_sql = "CREATE TABLE $campaigns_table_name (
@@ -295,6 +330,7 @@ class Subsales_Database {
         dbDelta( $pwa_sessions_sql );
         dbDelta( $pwa_heartbeats_sql );
         dbDelta( $addresses_sql );
+        dbDelta( $address_review_queue_sql );
         dbDelta( $campaigns_sql );
         dbDelta( $signups_sql );
         dbDelta( $team_campaigns_sql );
@@ -2411,292 +2447,9 @@ class Subsales_Database {
         return $grouped;
     }
     
-    /**
-     * Run nightly address validation for orders
-     * Validates addresses that need checking, skips already-validated unless address changed
-     */
-    public static function run_address_validation() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'ss_orders';
-        
-        // Find orders that need validation:
-        // 1. Status = 'pending' (never validated)
-        // 2. Address changed (address_hash doesn't match current address)
-        // 3. All orders (including tallied/delivered) - use dismiss button to filter out unwanted addresses
-        $orders = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, order_id, order_data, address, address_hash, address_validation_status, tallied
-             FROM {$table}
-             WHERE deleted = 0
-             AND season_id = %d
-             AND address_validation_status != 'dismissed'
-             AND (
-                 address_validation_status = 'pending'
-                 OR address_hash != MD5(LOWER(TRIM(COALESCE(address, ''))))
-                 OR address_validation_date IS NULL
-             )
-             ORDER BY created_at DESC",
-            intval( get_option( 'subsales_current_season_id' ) )
-        ), ARRAY_A );
-
-        if ( empty( $orders ) ) {
-            subsales_log( 'INFO', 'system', 'Address validation: No orders need validation' );
-            return;
-        }
-        
-        subsales_log( 'INFO', 'system', 'Address validation: Starting validation for ' . count( $orders ) . ' orders' );
-        
-        $validated_count = 0;
-        $valid_count = 0;
-        $failed_count = 0;
-        
-        // Load delivery class for parse/geocode functions
-        require_once SUBSALES_PLUGIN_PATH . 'includes/class-delivery.php';
-        
-        foreach ( $orders as $order ) {
-            // Extract address from order_data if not in address column
-            $address = $order['address'];
-            if ( empty( $address ) ) {
-                $order_data = json_decode( $order['order_data'], true );
-                $address = ! empty( $order_data['address'] ) ? $order_data['address'] : '';
-                
-                // Update address column while we're at it
-                if ( ! empty( $address ) ) {
-                    $wpdb->update(
-                        $table,
-                        array( 'address' => $address ),
-                        array( 'id' => $order['id'] ),
-                        array( '%s' ),
-                        array( '%d' )
-                    );
-                }
-            }
-            
-            if ( empty( $address ) ) {
-                // No address to validate
-                $wpdb->update(
-                    $table,
-                    array(
-                        'address_validation_status' => 'format_invalid',
-                        'address_validation_date' => current_time( 'mysql' ),
-                        'address_validation_data' => json_encode( array( 'error' => 'No address provided' ) )
-                    ),
-                    array( 'id' => $order['id'] ),
-                    array( '%s', '%s', '%s' ),
-                    array( '%d' )
-                );
-                $failed_count++;
-                continue;
-            }
-            
-            // Parse address
-            $parsed = Subsales_Delivery::parse_address( $address );
-            if ( ! $parsed || empty( $parsed['house_number'] ) || empty( $parsed['street'] ) ) {
-                // Can't parse - format invalid
-                $wpdb->update(
-                    $table,
-                    array(
-                        'address_validation_status' => 'format_invalid',
-                        'address_validation_date' => current_time( 'mysql' ),
-                        'address_validation_data' => json_encode( array( 'error' => 'Could not parse address', 'address' => $address ) ),
-                        'address_hash' => md5( strtolower( trim( $address ) ) )
-                    ),
-                    array( 'id' => $order['id'] ),
-                    array( '%s', '%s', '%s', '%s' ),
-                    array( '%d' )
-                );
-                $failed_count++;
-                continue;
-            }
-            
-            // Check if address exists in wp_ss_addresses
-            $address_table = $wpdb->prefix . 'ss_addresses';
-            $query = "SELECT lat, lng FROM {$address_table} 
-                      WHERE LOWER(TRIM(street)) = %s 
-                      AND LOWER(TRIM(house_number)) = %s";
-            $params = array(
-                strtolower( trim( $parsed['street'] ) ),
-                strtolower( trim( $parsed['house_number'] ) )
-            );
-            
-            // Add unit if specified
-            if ( ! empty( $parsed['unit'] ) ) {
-                $query .= " AND LOWER(TRIM(unit)) = %s";
-                $params[] = strtolower( trim( $parsed['unit'] ) );
-            }
-            
-            $query .= " LIMIT 1";
-            
-            $address_row = $wpdb->get_row( $wpdb->prepare( $query, $params ), ARRAY_A );
-            
-            if ( $address_row && ! empty( $address_row['lat'] ) && ! empty( $address_row['lng'] ) ) {
-                // Found in database - valid!
-                $wpdb->update(
-                    $table,
-                    array(
-                        'address_validation_status' => 'valid',
-                        'address_validation_date' => current_time( 'mysql' ),
-                        'address_validation_data' => json_encode( array( 
-                            'source' => 'database',
-                            'parsed' => $parsed,
-                            'coordinates' => $address_row
-                        ) ),
-                        'address_hash' => md5( strtolower( trim( $address ) ) )
-                    ),
-                    array( 'id' => $order['id'] ),
-                    array( '%s', '%s', '%s', '%s' ),
-                    array( '%d' )
-                );
-                $valid_count++;
-                $validated_count++;
-                continue;
-            }
-            
-            // Not in database - try geocoding
-            $coords = Subsales_Delivery::geocode_address( $address );
-            if ( $coords && ! empty( $coords['lat'] ) && ! empty( $coords['lng'] ) ) {
-                // Geocoded successfully
-                // If Google returned a formatted_address, parse that instead of user input
-                // This corrects typos like "walkers crosing" → "Walkers Crossing"
-                $corrected_parsed = $parsed; // Default to original parse
-                $corrected_address = $address;
-                
-                if ( ! empty( $coords['formatted_address'] ) ) {
-                    $corrected_address = $coords['formatted_address'];
-                    $temp_parsed = Subsales_Delivery::parse_address( $coords['formatted_address'] );
-                    
-                    // Only use corrected parse if it has required fields
-                    if ( $temp_parsed && ! empty( $temp_parsed['house_number'] ) && ! empty( $temp_parsed['street'] ) ) {
-                        $corrected_parsed = $temp_parsed;
-                    }
-                }
-                
-                $validation_data = array( 
-                    'source' => 'geocoded',
-                    'original_address' => $address, // User's input with typo
-                    'corrected_address' => $corrected_address, // Google's formatted address
-                    'parsed' => $corrected_parsed, // Parse of corrected address
-                    'coordinates' => array( 'lat' => $coords['lat'], 'lng' => $coords['lng'] ),
-                    'location_type' => ! empty( $coords['location_type'] ) ? $coords['location_type'] : 'APPROXIMATE',
-                    'needs_approval' => true
-                );
-                
-                // Mark as valid (needs approval for database entry)
-                $wpdb->update(
-                    $table,
-                    array(
-                        'address_validation_status' => 'valid',
-                        'address_validation_date' => current_time( 'mysql' ),
-                        'address_validation_data' => json_encode( $validation_data ),
-                        'address_hash' => md5( strtolower( trim( $address ) ) )
-                    ),
-                    array( 'id' => $order['id'] ),
-                    array( '%s', '%s', '%s', '%s' ),
-                    array( '%d' )
-                );
-                $valid_count++;
-                $validated_count++;
-            } else {
-                // Geocoding failed
-                $wpdb->update(
-                    $table,
-                    array(
-                        'address_validation_status' => 'geocode_failed',
-                        'address_validation_date' => current_time( 'mysql' ),
-                        'address_validation_data' => json_encode( array( 
-                            'error' => 'Geocoding failed',
-                            'address' => $address,
-                            'parsed' => $parsed
-                        ) ),
-                        'address_hash' => md5( strtolower( trim( $address ) ) )
-                    ),
-                    array( 'id' => $order['id'] ),
-                    array( '%s', '%s', '%s', '%s' ),
-                    array( '%d' )
-                );
-                $failed_count++;
-                $validated_count++;
-            }
-        }
-        
-        subsales_log( 'INFO', 'system', "Address validation complete: {$validated_count} validated, {$valid_count} valid, {$failed_count} failed" );
-    }
     
-    /**
-     * Get count of orders with address validation issues
-     * 
-     * @return int Count of orders needing attention
-     */
-    public static function get_address_validation_issues_count() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'ss_orders';
-
-        $count = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table}
-             WHERE deleted = 0
-             AND season_id = %d
-             AND tallied = 0
-             AND address_validation_status IN ('geocode_failed', 'format_invalid')",
-            intval( get_option( 'subsales_current_season_id' ) )
-        ) );
-
-        return intval( $count );
-    }
     
-    /**
-     * Check if address validation has ever been run
-     * 
-     * Returns true if at least one order has been validated (has address_validation_date)
-     * 
-     * @return bool True if validation has run at least once
-     * @since 2.4.54
-     */
-    public static function has_address_validation_run() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'ss_orders';
-        
-        // Check if the column exists first
-        $column_exists = $wpdb->get_var(
-            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
-             WHERE TABLE_SCHEMA = DATABASE() 
-             AND TABLE_NAME = '{$table}' 
-             AND COLUMN_NAME = 'address_validation_date'"
-        );
-        
-        if ( ! $column_exists ) {
-            return false;
-        }
-        
-        // Check if any order has been validated
-        $has_validated = $wpdb->get_var(
-            "SELECT COUNT(*) FROM {$table}
-             WHERE address_validation_date IS NOT NULL
-             AND deleted = 0"
-        );
-        
-        return intval( $has_validated ) > 0;
-    }
     
-    /**
-     * Get count of orders pending validation
-     * 
-     * @return int Count of orders with pending validation status
-     * @since 2.4.54
-     */
-    public static function get_address_validation_pending_count() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'ss_orders';
-
-        $count = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(*) FROM {$table}
-             WHERE deleted = 0
-             AND season_id = %d
-             AND tallied = 0
-             AND (address_validation_status = 'pending' OR address_validation_status IS NULL)",
-            intval( get_option( 'subsales_current_season_id' ) )
-        ) );
-
-        return intval( $count );
-    }
 
     // ============================================================
     // Canonical Member / Roster Access (single source of truth)
@@ -3425,5 +3178,479 @@ class Subsales_Database {
         unset( $m );
 
         return $members;
+    }
+
+    // ============================================================
+    // ADDRESS REVIEW QUEUE
+    // ============================================================
+    //
+    // Anything the address pipeline cannot resolve on its own lands here, and
+    // an admin works it at their own pace. This queue takes no action and
+    // blocks nothing - the old flow forced a nightly geocode plus a manual
+    // approve gate and stalled after about a month of real use.
+
+    /**
+     * Canonical hash for a queue row.
+     *
+     * Both producers (parcel ingestion and the order-entry scan) use the same
+     * formula so the same physical address is one queue entry no matter which
+     * one found it first. Falls back to the raw string when the address is too
+     * mangled to parse into parts.
+     *
+     * @param string $house_number House number
+     * @param string $street Street name (canonical suffix)
+     * @param string $raw_address Original string, used when parts are empty
+     * @return string 32-char md5
+     * @since 3.2.0
+     */
+    public static function review_queue_hash( $house_number, $street, $raw_address = '' ) {
+        $key = trim( trim( (string) $house_number ) . ' ' . trim( (string) $street ) );
+
+        if ( '' === $key ) {
+            $key = trim( (string) $raw_address );
+        }
+
+        return md5( strtolower( $key ) );
+    }
+
+    /**
+     * Upsert a row into the review queue.
+     *
+     * Idempotent via the address_hash unique key - re-running ingestion or the
+     * order scan touches updated_at instead of piling up duplicates.
+     *
+     * @param array $args reason, source_context, raw_address (required);
+     *                    house_number, street, city, candidate_zips (array),
+     *                    lat, lng, order_id (optional)
+     * @return bool True on success
+     * @since 3.2.0
+     */
+    public static function queue_address_for_review( $args ) {
+        global $wpdb;
+
+        $args = wp_parse_args( $args, array(
+            'reason'          => 'zip_undetermined',
+            'source_context'  => 'ingestion',
+            'raw_address'     => '',
+            'house_number'    => '',
+            'street'          => '',
+            'city'            => 'Southington',
+            'candidate_zips'  => array(),
+            'lat'             => null,
+            'lng'             => null,
+            'order_id'        => null,
+        ) );
+
+        if ( '' === trim( (string) $args['raw_address'] ) ) {
+            return false;
+        }
+
+        if ( ! in_array( $args['reason'], array( 'zip_undetermined', 'not_in_database' ), true ) ) {
+            return false;
+        }
+        if ( ! in_array( $args['source_context'], array( 'ingestion', 'order_entry' ), true ) ) {
+            return false;
+        }
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+
+        $hash = self::review_queue_hash( $args['house_number'], $args['street'], $args['raw_address'] );
+
+        $candidates = ( is_array( $args['candidate_zips'] ) && ! empty( $args['candidate_zips'] ) )
+            ? wp_json_encode( array_values( $args['candidate_zips'] ) )
+            : '';
+
+        // NULLIF(%s,'') on the nullable columns because $wpdb->prepare() coerces
+        // a PHP null to an empty string, which would land as 0 in lat/lng.
+        //
+        // ON DUPLICATE KEY UPDATE rather than $wpdb->insert() so repeat scans
+        // are a no-op touch - same upsert-by-hash idiom as ss_orders.address_hash.
+        $sql = $wpdb->prepare(
+            "INSERT INTO {$table}
+                ( reason, source_context, raw_address, house_number, street, city,
+                  candidate_zips_json, lat, lng, order_id, address_hash, status, created_at, updated_at )
+             VALUES ( %s, %s, %s, %s, %s, %s, NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), NULLIF(%s,''), %s, 'pending', NOW(), NOW() )
+             ON DUPLICATE KEY UPDATE updated_at = NOW()",
+            $args['reason'],
+            $args['source_context'],
+            substr( trim( (string) $args['raw_address'] ), 0, 500 ),
+            substr( trim( (string) $args['house_number'] ), 0, 20 ),
+            substr( trim( (string) $args['street'] ), 0, 255 ),
+            substr( trim( (string) $args['city'] ), 0, 100 ),
+            $candidates,
+            ( null === $args['lat'] || '' === $args['lat'] ) ? '' : (string) floatval( $args['lat'] ),
+            ( null === $args['lng'] || '' === $args['lng'] ) ? '' : (string) floatval( $args['lng'] ),
+            ( null === $args['order_id'] || '' === $args['order_id'] ) ? '' : (string) intval( $args['order_id'] ),
+            $hash
+        );
+
+        return false !== $wpdb->query( $sql );
+    }
+
+    /**
+     * Producer B: flag orders whose address doesn't resolve against ss_addresses.
+     *
+     * Read-only. It adds a line to a list and does nothing else - no geocoding,
+     * no order mutation, no approval gate. Stacked on the existing hourly cron.
+     *
+     * Only orders touched since the last scan are examined, so the hourly run
+     * stays cheap and edited addresses still get re-checked.
+     *
+     * @return array Summary: scanned, queued
+     * @since 3.2.0
+     */
+    public static function scan_unmatched_order_addresses() {
+        global $wpdb;
+
+        $orders_table = $wpdb->prefix . 'ss_orders';
+        $watermark = get_option( 'subsales_address_scan_watermark', '' );
+
+        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
+        if ( ! empty( $watermark ) ) {
+            $orders = $wpdb->get_results( $wpdb->prepare(
+                "SELECT id, order_id, order_data, address
+                 FROM {$orders_table}
+                 WHERE deleted = 0 AND season_id = %d AND updated_at > %s
+                 ORDER BY updated_at ASC",
+                $season_id,
+                $watermark
+            ), ARRAY_A );
+        } else {
+            // First run: the whole current season, older seasons stay out of the
+            // queue rather than dumping years of history on the admin.
+            $orders = $wpdb->get_results( $wpdb->prepare(
+                "SELECT id, order_id, order_data, address
+                 FROM {$orders_table}
+                 WHERE deleted = 0 AND season_id = %d
+                 ORDER BY updated_at ASC",
+                $season_id
+            ), ARRAY_A );
+        }
+
+        $scanned = 0;
+        $queued = 0;
+
+        foreach ( $orders as $order ) {
+            $address = ! empty( $order['address'] ) ? $order['address'] : '';
+
+            if ( empty( $address ) ) {
+                $order_data = json_decode( $order['order_data'], true );
+                $address = ! empty( $order_data['address'] ) ? $order_data['address'] : '';
+            }
+
+            if ( empty( trim( $address ) ) ) {
+                continue;
+            }
+
+            $scanned++;
+
+            if ( Subsales_Address_Helper::lookup_in_database( $address, false ) ) {
+                continue; // Resolves fine, nothing to flag.
+            }
+
+            $parsed = Subsales_Delivery::parse_address( $address );
+
+            $ok = self::queue_address_for_review( array(
+                'reason'         => 'not_in_database',
+                'source_context' => 'order_entry',
+                'raw_address'    => $address,
+                'house_number'   => $parsed ? $parsed['house_number'] : '',
+                'street'         => $parsed ? $parsed['street'] : '',
+                'city'           => ( $parsed && ! empty( $parsed['city'] ) ) ? $parsed['city'] : 'Southington',
+                'order_id'       => intval( $order['id'] ),
+            ) );
+
+            if ( $ok ) {
+                $queued++;
+            }
+        }
+
+        update_option( 'subsales_address_scan_watermark', current_time( 'mysql' ), false );
+
+        if ( $scanned > 0 ) {
+            subsales_log( 'INFO', 'address', 'Order address scan complete', array(
+                'scanned' => $scanned,
+                'queued'  => $queued
+            ), 'cron' );
+        }
+
+        return array( 'scanned' => $scanned, 'queued' => $queued );
+    }
+
+    /**
+     * Pending review rows, newest first.
+     *
+     * @param int $limit Rows per page
+     * @param int $offset Offset
+     * @param string $status Queue status to fetch
+     * @return array Rows as associative arrays
+     * @since 3.2.0
+     */
+    public static function get_review_queue_rows( $limit = 50, $offset = 0, $status = 'pending' ) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+
+        if ( ! in_array( $status, array( 'pending', 'resolved', 'dismissed' ), true ) ) {
+            $status = 'pending';
+        }
+
+        return $wpdb->get_results( $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE status = %s ORDER BY created_at DESC LIMIT %d OFFSET %d",
+            $status,
+            max( 1, intval( $limit ) ),
+            max( 0, intval( $offset ) )
+        ), ARRAY_A );
+    }
+
+    /**
+     * Count queue rows in a given status (defaults to the pending badge count).
+     *
+     * @param string $status Queue status
+     * @return int Row count
+     * @since 3.2.0
+     */
+    public static function count_review_queue_rows( $status = 'pending' ) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+
+        if ( ! in_array( $status, array( 'pending', 'resolved', 'dismissed' ), true ) ) {
+            $status = 'pending';
+        }
+
+        return intval( $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table} WHERE status = %s",
+            $status
+        ) ) );
+    }
+
+    /**
+     * Fetch a single queue row.
+     *
+     * @param int $id Queue row id
+     * @return array|null Row or null
+     * @since 3.2.0
+     */
+    public static function get_review_queue_row( $id ) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+
+        return $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE id = %d",
+            intval( $id )
+        ), ARRAY_A );
+    }
+
+    /**
+     * Resolve a queue row by committing the address to ss_addresses.
+     *
+     * Uses the same insert path as parcel ingestion so a hand-resolved address
+     * is indistinguishable from an ingested one.
+     *
+     * @param int $id Queue row id
+     * @param array $args zip, lat, lng (required); house_number, street, city,
+     *                    state, source, confidence, note (optional)
+     * @return array|WP_Error ['address_id' => int] or WP_Error
+     * @since 3.2.0
+     */
+    public static function resolve_review_queue_row( $id, $args ) {
+        global $wpdb;
+
+        $row = self::get_review_queue_row( $id );
+        if ( ! $row ) {
+            return new WP_Error( 'not_found', 'Review queue row not found.' );
+        }
+
+        $args = wp_parse_args( $args, array(
+            'house_number' => $row['house_number'],
+            'street'       => $row['street'],
+            'city'         => ! empty( $row['city'] ) ? $row['city'] : 'Southington',
+            'state'        => 'CT',
+            'zip'          => '',
+            'lat'          => $row['lat'],
+            'lng'          => $row['lng'],
+            'source'       => 'manual',
+            'confidence'   => 'medium',
+            'note'         => '',
+        ) );
+
+        if ( empty( $args['house_number'] ) || empty( $args['street'] ) ) {
+            return new WP_Error( 'incomplete', 'House number and street are required to resolve an address.' );
+        }
+        if ( ! preg_match( '/^\d{5}$/', (string) $args['zip'] ) ) {
+            return new WP_Error( 'invalid_zip', 'A 5-digit ZIP code is required to resolve an address.' );
+        }
+        if ( ! is_numeric( $args['lat'] ) || ! is_numeric( $args['lng'] ) ) {
+            return new WP_Error( 'no_coordinates', 'Coordinates are required. Geocode the row first.' );
+        }
+
+        $address_row = array(
+            'house_number' => $args['house_number'],
+            'street'       => $args['street'],
+            'unit'         => '', // Units are typed by the seller, never stored here.
+            'city'         => $args['city'],
+            'state'        => $args['state'],
+            'zip'          => $args['zip'],
+            'lat'          => $args['lat'],
+            'lng'          => $args['lng'],
+            'source'       => $args['source'],
+            'confidence'   => $args['confidence'],
+            'type'         => 'residential',
+        );
+
+        if ( ! self::insert_addresses( array( $address_row ) ) ) {
+            // INSERT IGNORE swallows an already-present row; that still counts
+            // as resolved, so fall through to the lookup below.
+            subsales_log( 'DEBUG', 'address', 'Review queue resolve inserted no new address row', array(
+                'queue_id' => intval( $id )
+            ) );
+        }
+
+        $existing = Subsales_Address_Helper::lookup_in_database( array(
+            'house_number' => $args['house_number'],
+            'street'       => $args['street'],
+            'zip'          => $args['zip'],
+        ), false );
+
+        if ( ! $existing ) {
+            return new WP_Error( 'insert_failed', 'Address could not be written to the address database.' );
+        }
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+        $wpdb->update(
+            $table,
+            array(
+                'status'              => 'resolved',
+                'resolved_address_id' => intval( $existing['id'] ),
+                'resolution_note'     => $args['note'],
+                'resolved_at'         => current_time( 'mysql' ),
+            ),
+            array( 'id' => intval( $id ) ),
+            array( '%s', '%d', '%s', '%s' ),
+            array( '%d' )
+        );
+
+        subsales_log( 'INFO', 'address', 'Review queue row resolved', array(
+            'queue_id'   => intval( $id ),
+            'address_id' => intval( $existing['id'] ),
+            'zip'        => $args['zip']
+        ) );
+
+        return array( 'address_id' => intval( $existing['id'] ) );
+    }
+
+    /**
+     * Dismiss a queue row (junk, duplicate, or not worth chasing).
+     *
+     * @param int $id Queue row id
+     * @param string $note Optional reason
+     * @return bool True on success
+     * @since 3.2.0
+     */
+    public static function dismiss_review_queue_row( $id, $note = '' ) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'ss_address_review_queue';
+
+        $updated = $wpdb->update(
+            $table,
+            array(
+                'status'          => 'dismissed',
+                'resolution_note' => $note,
+                'resolved_at'     => current_time( 'mysql' ),
+            ),
+            array( 'id' => intval( $id ) ),
+            array( '%s', '%s', '%s' ),
+            array( '%d' )
+        );
+
+        return false !== $updated;
+    }
+
+    /**
+     * Bulk-insert address rows into ss_addresses.
+     *
+     * The single write path into that table for the whole rebuilt pipeline -
+     * parcel ingestion passes thousands of rows, a queue resolve passes one.
+     * INSERT IGNORE so a duplicate against unique_address skips instead of
+     * aborting the batch.
+     *
+     * @param array $rows Each with house_number, street, unit, city, state, zip,
+     *                    lat, lng, source, confidence, type
+     * @return int Number of rows inserted
+     * @since 3.2.0
+     */
+    public static function insert_addresses( $rows ) {
+        global $wpdb;
+
+        if ( empty( $rows ) ) {
+            return 0;
+        }
+
+        $table = $wpdb->prefix . 'ss_addresses';
+        $inserted = 0;
+
+        // Batched so an 18k-parcel ingest isn't 18k round trips.
+        foreach ( array_chunk( array_values( $rows ), 200 ) as $chunk ) {
+            $placeholders = array();
+            $values = array();
+
+            foreach ( $chunk as $row ) {
+                $row = wp_parse_args( $row, array(
+                    'house_number' => '',
+                    'street'       => '',
+                    'unit'         => '',
+                    'city'         => 'Southington',
+                    'state'        => 'CT',
+                    'zip'          => '',
+                    'lat'          => 0,
+                    'lng'          => 0,
+                    'source'       => 'manual',
+                    'confidence'   => 'medium',
+                    'type'         => 'residential',
+                    'full_address' => '',
+                ) );
+
+                if ( '' === $row['full_address'] ) {
+                    $row['full_address'] = trim( $row['house_number'] . ' ' . $row['street'] )
+                        . ', ' . $row['city'] . ', ' . $row['state'] . ' ' . $row['zip'];
+                }
+
+                $placeholders[] = '(%s, %s, %s, %s, %s, %s, %f, %f, %s, %s, %s, %s)';
+
+                $values[] = substr( (string) $row['house_number'], 0, 20 );
+                $values[] = substr( (string) $row['street'], 0, 255 );
+                $values[] = substr( (string) $row['unit'], 0, 20 );
+                $values[] = substr( (string) $row['city'], 0, 100 );
+                $values[] = substr( (string) $row['state'], 0, 2 );
+                $values[] = substr( (string) $row['zip'], 0, 10 );
+                $values[] = floatval( $row['lat'] );
+                $values[] = floatval( $row['lng'] );
+                $values[] = (string) $row['source'];
+                $values[] = (string) $row['confidence'];
+                $values[] = (string) $row['type'];
+                $values[] = (string) $row['full_address'];
+            }
+
+            $sql = "INSERT IGNORE INTO {$table}
+                        ( house_number, street, unit, city, state, zip, lat, lng, source, confidence, type, full_address )
+                    VALUES " . implode( ', ', $placeholders );
+
+            $result = $wpdb->query( $wpdb->prepare( $sql, $values ) );
+
+            if ( false === $result ) {
+                subsales_log( 'ERROR', 'address', 'Address batch insert failed: ' . $wpdb->last_error, array(
+                    'batch_size' => count( $chunk )
+                ) );
+                continue;
+            }
+
+            $inserted += intval( $result );
+        }
+
+        return $inserted;
     }
 }

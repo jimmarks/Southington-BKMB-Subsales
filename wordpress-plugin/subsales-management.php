@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.1.1
+ * Version: 3.2.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.1.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.2.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -75,7 +75,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-signups.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-driver-signup.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
-require_once SUBSALES_PLUGIN_PATH . 'includes/class-census-boundaries.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-zip-boundary.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-delivery.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-backup-restore.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-address-helper.php';
@@ -84,15 +84,11 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
-require_once SUBSALES_PLUGIN_PATH . 'includes/shapefile-parser.php';
-require_once SUBSALES_PLUGIN_PATH . 'includes/overpass-matcher.php';
-require_once SUBSALES_PLUGIN_PATH . 'includes/class-background-matcher.php';
 
 // Initialize database
 Subsales_Database::init();
 
 // Initialize background matcher
-Subsales_Background_Matcher::init();
 
 // Initialize REST API
 Subsales_REST_API::init();
@@ -119,7 +115,6 @@ Subsales_Admin_Pages::init();
 Subsales_AJAX_Handlers::init();
 
 // Initialize Census Boundaries
-Subsales_Census_Boundaries::init();
 
 // Initialize Payment Attempts (hooks expire_stale_attempts onto the existing
 // hourly cleanup action; Subsales_Square_Payments has no hooks of its own)
@@ -1195,16 +1190,6 @@ function order_sync_admin_menu() {
         'subsales_address_coverage_page'
     );
     
-    // Address Validation Report - Hidden page (accessed via Dashboard card and Reports index)
-    add_submenu_page(
-        null,
-        'Address Validation',
-        'Address Validation',
-        'manage_options',
-        'subsales-address-validation',
-        'subsales_address_validation_page'
-    );
-    
     // GPS Proximity Search - Hidden page (accessed via Reports index)
     add_submenu_page(
         null,
@@ -1252,16 +1237,9 @@ function order_sync_admin_menu() {
         array( 'Subsales_Admin_Pages', 'render_seasons_page' )
     );
 
-    // REMOVED: Standalone "Address Extracts" menu - now consolidated under Settings → Address Management
-    // add_submenu_page(
-    //     'subsales-management',
-    //     'Address Extracts',
-    //     'Address Extracts',
-    //     'manage_options',
-    //     'subsales-address-extracts',
-    //     'subsales_address_extracts_page'
-    // );
-    
+    // The standalone "Address Extracts" menu is consolidated under
+    // Settings → Address Management.
+
     add_submenu_page(
         'subsales-management',
         'System Logs',
@@ -1299,8 +1277,6 @@ function order_sync_admin_menu() {
 
 // AJAX handlers for address search and openaddresses (kept here due to complex logic)
 add_action( 'wp_ajax_subsales_search_address', 'subsales_search_address_preview' );
-add_action( 'wp_ajax_subsales_extract_openaddresses_zips', 'subsales_extract_openaddresses_zips' );
-add_action( 'wp_ajax_subsales_download_openaddresses', 'subsales_download_openaddresses' );
 
 // AJAX handlers for campaign management
 add_action( 'wp_ajax_subsales_toggle_campaign', 'subsales_ajax_toggle_campaign' );
@@ -1313,210 +1289,21 @@ add_action( 'wp_ajax_subsales_update_team_driver', 'subsales_ajax_update_team_dr
 add_action( 'wp_ajax_subsales_search_members', 'subsales_ajax_search_members' );
 add_action( 'wp_ajax_subsales_create_user_quick', 'subsales_ajax_create_user_quick' );
 
-// NOTE: The following AJAX hooks are now registered in Subsales_AJAX_Handlers::init():
-// - subsales_toggle_debug
-// - subsales_get_active_sessions_count
-// - subsales_match_addresses_batch
-// - subsales_bg_match_* (start/stop/resume/status/reset)
-// - subsales_refresh_zip_index
-// - subsales_update_sales_mode
+// NOTE: subsales_toggle_debug, subsales_get_active_sessions_count,
+// subsales_refresh_zip_index and subsales_update_sales_mode are registered in
+// Subsales_AJAX_Handlers::init().
 
 // Import/Export handlers for users and teams
 add_action( 'admin_post_subsales_export_users_teams', 'subsales_export_users_teams' );
 add_action( 'admin_post_subsales_import_users_teams', 'subsales_import_users_teams' );
 
-// AJAX handler for batch address matching with auto-resume
-// NOTE: The following AJAX handler functions have been moved to Subsales_AJAX_Handlers class:
-// - subsales_match_addresses_batch_ajax()
-// - subsales_bg_match_start_ajax()
-// - subsales_bg_match_stop_ajax()
-// - subsales_bg_match_resume_ajax()
-// - subsales_bg_match_status_ajax()
-// - subsales_bg_match_reset_ajax()
+// NOTE: these handlers live in the Subsales_AJAX_Handlers class:
 // - subsales_get_active_sessions_count_ajax()
 // - subsales_toggle_debug_ajax()
 // - subsales_refresh_zip_index_ajax()
 // - subsales_update_sales_mode_ajax()
 
-function subsales_download_openaddresses() {
-    check_ajax_referer( 'subsales_zip_generate', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Permission denied' );
 
-    $state = isset( $_POST['state'] ) ? strtolower( sanitize_text_field( $_POST['state'] ) ) : 'ct';
-    if ( ! preg_match( '/^[a-z]{2}$/', $state ) ) {
-        wp_send_json_error( 'Invalid state code. Use 2-letter code like ct, ny, ca, etc.' );
-    }
-
-    update_option( 'subsales_openaddresses_state', $state );
-
-    // OpenAddresses.io public S3 bucket - no authentication required
-    // Try multiple possible URL patterns
-    $urls = array(
-        'https://s3.amazonaws.com/data.openaddresses.io/openaddr-collected-us_' . $state . '.zip',
-        'https://s3.amazonaws.com/data.openaddresses.io/us/' . $state . '/statewide.csv',
-        'https://openaddresses.io/download/us/' . $state . '/statewide',
-    );
-    
-    $upload = wp_upload_dir();
-    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
-    if ( ! is_dir( $base_dir ) ) {
-        wp_mkdir_p( $base_dir );
-    }
-    
-    $dest_path = trailingslashit( $base_dir ) . 'openaddresses-full.csv';
-    $temp_zip = trailingslashit( $base_dir ) . 'temp-openaddresses.zip';
-
-    // Try each URL
-    $downloaded = false;
-    $tried_urls = array();
-    
-    foreach ( $urls as $url ) {
-        $tried_urls[] = $url;
-        
-        // Determine if it's a ZIP file
-        $is_zip = strpos( $url, '.zip' ) !== false;
-        $target_file = $is_zip ? $temp_zip : $dest_path;
-        
-        $response = wp_remote_get( $url, array(
-            'timeout' => 300,
-            'stream' => true,
-            'filename' => $target_file
-        ) );
-
-        if ( is_wp_error( $response ) ) {
-            continue;
-        }
-
-        $code = wp_remote_retrieve_response_code( $response );
-        if ( $code === 200 && file_exists( $target_file ) ) {
-            // If ZIP, extract it
-            if ( $is_zip ) {
-                WP_Filesystem();
-                global $wp_filesystem;
-                
-                $unzip_result = unzip_file( $temp_zip, $base_dir );
-                
-                if ( is_wp_error( $unzip_result ) ) {
-                    @unlink( $temp_zip );
-                    continue;
-                }
-                
-                // Find the CSV file in extracted contents
-                $files = glob( $base_dir . '/*.csv' );
-                if ( empty( $files ) ) {
-                    @unlink( $temp_zip );
-                    continue;
-                }
-                
-                // Rename first CSV to our standard name
-                rename( $files[0], $dest_path );
-                
-                // Clean up
-                @unlink( $temp_zip );
-                foreach ( $files as $f ) {
-                    if ( $f !== $dest_path ) @unlink( $f );
-                }
-            }
-            
-            $downloaded = true;
-            break;
-        }
-    }
-
-    if ( ! $downloaded ) {
-        wp_send_json_error( 'Could not download from OpenAddresses.io. Tried URLs: ' . implode( ', ', $tried_urls ) . '. Please use manual upload instead.' );
-    }
-
-    if ( ! file_exists( $dest_path ) ) {
-        wp_send_json_error( 'Download completed but file not found at destination' );
-    }
-
-    $size = filesize( $dest_path );
-    wp_send_json_success( array(
-        'message' => 'Downloaded ' . strtoupper( $state ) . ' data successfully',
-        'file_size' => size_format( $size ),
-        'state' => strtoupper( $state ),
-        'path' => $dest_path
-    ) );
-}
-
-function subsales_extract_openaddresses_zips() {
-    check_ajax_referer( 'subsales_zip_generate', 'nonce' );
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Permission denied' );
-
-    $served_zips = get_option( 'subsales_served_zips', array() );
-    if ( empty( $served_zips ) ) {
-        wp_send_json_error( 'No ZIP codes configured. Save your ZIP list first.' );
-    }
-
-    $upload = wp_upload_dir();
-    $full_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses-full.csv';
-    $filtered_path = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata/openaddresses.csv';
-
-    if ( ! file_exists( $full_path ) ) {
-        wp_send_json_error( 'Full state file not found at: ' . $full_path );
-    }
-
-    $handle_in = fopen( $full_path, 'r' );
-    if ( $handle_in === false ) {
-        wp_send_json_error( 'Could not open full Connecticut file' );
-    }
-
-    $handle_out = fopen( $filtered_path, 'w' );
-    if ( $handle_out === false ) {
-        fclose( $handle_in );
-        wp_send_json_error( 'Could not create filtered file' );
-    }
-
-    // Read and write header
-    $header = fgetcsv( $handle_in );
-    if ( ! $header ) {
-        fclose( $handle_in );
-        fclose( $handle_out );
-        wp_send_json_error( 'Invalid CSV format - no header row' );
-    }
-    fputcsv( $handle_out, $header );
-
-    // Find postcode column
-    $postcode_idx = array_search( 'POSTCODE', $header );
-    if ( $postcode_idx === false ) {
-        fclose( $handle_in );
-        fclose( $handle_out );
-        wp_send_json_error( 'POSTCODE column not found in CSV' );
-    }
-
-    // Filter rows by ZIP codes
-    $count = 0;
-    $total_rows = 0;
-    while ( ( $row = fgetcsv( $handle_in ) ) !== false ) {
-        $total_rows++;
-        if ( ! isset( $row[ $postcode_idx ] ) ) continue;
-        
-        $postcode = trim( $row[ $postcode_idx ] );
-        if ( in_array( $postcode, $served_zips ) ) {
-            fputcsv( $handle_out, $row );
-            $count++;
-        }
-    }
-
-    fclose( $handle_in );
-    fclose( $handle_out );
-
-    // Save metadata
-    update_option( 'subsales_oa_filter_meta', array(
-        'zips' => $served_zips,
-        'count' => $count,
-        'total_rows' => $total_rows,
-        'date' => current_time( 'mysql' )
-    ) );
-
-    wp_send_json_success( array(
-        'message' => 'Extracted ' . number_format( $count ) . ' addresses for ' . count( $served_zips ) . ' ZIP code(s)',
-        'count' => $count,
-        'zips' => $served_zips,
-        'file_size' => size_format( filesize( $filtered_path ) )
-    ) );
-}
 function subsales_search_address_preview() {
     check_ajax_referer( 'subsales_address_search', 'nonce' );
     if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Permission denied' );
@@ -1743,18 +1530,26 @@ function subsales_get_served_zips() {
     return $zips;
 }
 
-// AJAX handler to generate per-ZIP JSON extracts from database (no API calls needed)
-add_action( 'wp_ajax_subsales_generate_zip_extracts', 'subsales_generate_zip_extracts' );
-function subsales_generate_zip_extracts() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Permission denied' );
-    check_ajax_referer( 'subsales_zip_generate', 'nonce' );
-
+// Generate per-ZIP JSON extracts from the database (no API calls needed).
+// This is the single producer of the PWA's {ZIP}.json files - keep it that way.
+// Split out from the AJAX handler below so the ingestion pipeline can regenerate
+// extracts in-process the moment it finishes writing addresses, instead of the
+// browser having to fire a second request to do it.
+// Returns array( 'ok' => bool, 'error' => string|null, 'results' => array, 'summary' => array ).
+function subsales_generate_zip_extracts_core( $zips = null ) {
     global $wpdb;
     $table_name = $wpdb->prefix . 'ss_addresses';
-    
-    $zips = subsales_get_served_zips();
+
+    if ( $zips === null ) {
+        $zips = subsales_get_served_zips();
+    }
     if ( ! is_array( $zips ) || empty( $zips ) ) {
-        wp_send_json_error( 'No ZIPs configured. Please add ZIP codes in Settings → Overall → ZIP Codes first.' );
+        return array(
+            'ok'      => false,
+            'error'   => 'No ZIPs configured. Please add ZIP codes in Settings → Overall → ZIP Codes first.',
+            'results' => array(),
+            'summary' => array(),
+        );
     }
 
     $upload = wp_upload_dir(); 
@@ -1888,569 +1683,36 @@ function subsales_generate_zip_extracts() {
         'duration_seconds' => $total_duration
     ), 'admin', $user->ID, $user->display_name );
 
-    wp_send_json_success( $results );
+    return array(
+        'ok'      => true,
+        'error'   => null,
+        'results' => $results,
+        'summary' => $log_entry['summary'],
+    );
 }
 
-// AJAX handler to upload and process ZIP boundaries shapefile (Census ZCTA)
-add_action( 'wp_ajax_subsales_upload_zip_boundaries', 'subsales_upload_zip_boundaries_ajax' );
-function subsales_upload_zip_boundaries_ajax() {
-    // Increase PHP limits for large Census Bureau files
-    @ini_set( 'memory_limit', '512M' );
-    @ini_set( 'max_execution_time', '300' );
-    @ini_set( 'upload_max_filesize', '600M' );
-    @ini_set( 'post_max_size', '600M' );
-    
-    // Check permissions
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied', 403 );
-        return;
+// AJAX handler wrapping the generator above.
+add_action( 'wp_ajax_subsales_generate_zip_extracts', 'subsales_generate_zip_extracts' );
+function subsales_generate_zip_extracts() {
+    if ( ! current_user_can( 'manage_options' ) ) wp_die( 'Permission denied' );
+    check_ajax_referer( 'subsales_zip_generate', 'nonce' );
+
+    $out = subsales_generate_zip_extracts_core();
+    if ( empty( $out['ok'] ) ) {
+        wp_send_json_error( $out['error'] );
     }
-    
-    // Verify nonce
-    if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'subsales_upload_address' ) ) {
-        wp_send_json_error( 'Invalid security token. Please refresh the page and try again.', 403 );
-        return;
-    }
-    
-    // Check file upload
-    if ( ! isset( $_FILES['boundaries_file'] ) || $_FILES['boundaries_file']['error'] !== UPLOAD_ERR_OK ) {
-        $error_msg = 'File upload failed';
-        if ( isset( $_FILES['boundaries_file']['error'] ) ) {
-            switch ( $_FILES['boundaries_file']['error'] ) {
-                case UPLOAD_ERR_INI_SIZE:
-                case UPLOAD_ERR_FORM_SIZE:
-                    $error_msg = 'File is too large';
-                    break;
-                case UPLOAD_ERR_PARTIAL:
-                    $error_msg = 'File was only partially uploaded';
-                    break;
-                case UPLOAD_ERR_NO_FILE:
-                    $error_msg = 'No file was uploaded';
-                    break;
-                default:
-                    $error_msg = 'File upload failed (error code: ' . $_FILES['boundaries_file']['error'] . ')';
-            }
-        }
-        wp_send_json_error( $error_msg, 400 );
-        return;
-    }
-    
-    $file = $_FILES['boundaries_file'];
-    $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
-    
-    if ( $file_ext !== 'zip' ) {
-        wp_send_json_error( 'Invalid file type. Please upload a ZIP file containing ZCTA shapefile.', 400 );
-        return;
-    }
-    
-    // Parse ZCTA shapefile and extract polygons for configured ZIPs
-    $result = subsales_parse_zcta_shapefile( $file['tmp_name'] );
-    
-    if ( is_wp_error( $result ) ) {
-        wp_send_json_error( $result->get_error_message(), 400 );
-        return;
-    }
-    
-    // Log the operation
-    subsales_log( 'INFO', 'zip', 'ZIP boundaries uploaded', array(
-        'zip_count' => $result['zip_count'],
-        'zips' => $result['zips'],
-        'missing_zips' => $result['missing_zips']
-    ), 'admin' );
-    
-    wp_send_json_success( $result );
+    wp_send_json_success( $out['results'] );
 }
 
 // Parse Census ZCTA shapefile and cache ZIP polygons
-function subsales_parse_zcta_shapefile( $zip_file_path ) {
-    // Get configured ZIPs
-    $configured_zips = subsales_get_served_zips();
-    
-    if ( empty( $configured_zips ) ) {
-        return new WP_Error( 'no_zips', 'No ZIP codes configured. Please configure ZIP codes first.' );
-    }
-    
-    // Create temporary extraction directory
-    $upload_dir = wp_upload_dir();
-    $temp_dir = trailingslashit( $upload_dir['basedir'] ) . 'subsales-temp-zcta-' . time();
-    
-    if ( ! wp_mkdir_p( $temp_dir ) ) {
-        return new WP_Error( 'mkdir_failed', 'Could not create temporary directory' );
-    }
-    
-    // Extract ZIP file
-    $zip = new ZipArchive();
-    if ( $zip->open( $zip_file_path ) !== true ) {
-        subsales_cleanup_temp_dir( $temp_dir );
-        return new WP_Error( 'zip_open_failed', 'Could not open ZIP file' );
-    }
-    
-    $zip->extractTo( $temp_dir );
-    $zip->close();
-    
-    // Find shapefile base name
-    $files = scandir( $temp_dir );
-    $base_name = null;
-    
-    foreach ( $files as $file ) {
-        if ( pathinfo( $file, PATHINFO_EXTENSION ) === 'shp' ) {
-            $base_name = pathinfo( $file, PATHINFO_FILENAME );
-            break;
-        }
-    }
-    
-    if ( ! $base_name ) {
-        subsales_cleanup_temp_dir( $temp_dir );
-        return new WP_Error( 'no_shp_file', 'No .shp file found in ZIP archive' );
-    }
-    
-    $dbf_file = $temp_dir . '/' . $base_name . '.dbf';
-    $shp_file = $temp_dir . '/' . $base_name . '.shp';
-    
-    if ( ! file_exists( $dbf_file ) || ! file_exists( $shp_file ) ) {
-        subsales_cleanup_temp_dir( $temp_dir );
-        return new WP_Error( 'missing_files', 'Missing required .dbf or .shp files' );
-    }
-    
-    // Parse ZCTA shapefile
-    $result = subsales_extract_zip_polygons( $dbf_file, $shp_file, $configured_zips );
-    
-    // Cleanup
-    subsales_cleanup_temp_dir( $temp_dir );
-    
-    if ( is_wp_error( $result ) ) {
-        return $result;
-    }
-    
-    // Cache the polygons
-    update_option( 'subsales_zip_polygons', $result['polygons'], false );
-    
-    // Check for missing ZIPs
-    $missing_zips = array_diff( $configured_zips, array_keys( $result['polygons'] ) );
-    
-    return array(
-        'zip_count' => count( $result['polygons'] ),
-        'zips' => array_keys( $result['polygons'] ),
-        'missing_zips' => $missing_zips,
-        'message' => 'Successfully loaded ' . count( $result['polygons'] ) . ' ZIP boundary polygons'
-    );
-}
 
 // Extract ZIP polygons from ZCTA shapefile for configured ZIPs only
-function subsales_extract_zip_polygons( $dbf_file, $shp_file, $target_zips ) {
-    // Parse DBF to get ZIP codes
-    $dbf_data = Subsales_Shapefile_Parser::parse_dbf( $dbf_file );
-    if ( is_wp_error( $dbf_data ) ) {
-        return $dbf_data;
-    }
-    
-    // Parse SHP to get polygon geometries
-    $geometries = subsales_parse_zcta_geometries( $shp_file );
-    if ( is_wp_error( $geometries ) ) {
-        return $geometries;
-    }
-    
-    // Match records with geometries and extract only target ZIPs
-    $polygons = array();
-    $count = min( count( $dbf_data ), count( $geometries ) );
-    
-    for ( $i = 0; $i < $count; $i++ ) {
-        $record = $dbf_data[ $i ];
-        
-        // Try different possible field names for ZIP code
-        $zip = null;
-        foreach ( array( 'ZCTA5CE20', 'ZCTA5CE10', 'ZCTA5', 'ZIPCODE', 'ZIP', 'GEOID' ) as $field ) {
-            if ( isset( $record[ $field ] ) && ! empty( $record[ $field ] ) ) {
-                $zip = trim( $record[ $field ] );
-                // Extract 5-digit ZIP if it's longer (like GEOID)
-                if ( strlen( $zip ) > 5 ) {
-                    $zip = substr( $zip, -5 );
-                }
-                break;
-            }
-        }
-        
-        if ( ! $zip || ! in_array( $zip, $target_zips ) ) {
-            continue; // Skip if not one of our configured ZIPs
-        }
-        
-        // Store polygon for this ZIP
-        $polygons[ $zip ] = $geometries[ $i ];
-    }
-    
-    return array(
-        'polygons' => $polygons,
-        'total_processed' => $count
-    );
-}
 
 // Parse ZCTA shapefile geometries (simplified polygon extraction)
-function subsales_parse_zcta_geometries( $shp_file ) {
-    $fh = fopen( $shp_file, 'rb' );
-    if ( ! $fh ) {
-        return new WP_Error( 'shp_open_failed', 'Could not open SHP file' );
-    }
-    
-    // Read SHP header
-    fseek( $fh, 0 );
-    $header = fread( $fh, 100 );
-    
-    // Verify file code
-    $file_code = unpack( 'N', substr( $header, 0, 4 ) )[1];
-    if ( $file_code !== 9994 ) {
-        fclose( $fh );
-        return new WP_Error( 'invalid_shp', 'Invalid SHP file header' );
-    }
-    
-    // Read all polygon records
-    $geometries = array();
-    fseek( $fh, 100 ); // Skip header
-    
-    while ( ! feof( $fh ) ) {
-        $record_header = fread( $fh, 8 );
-        if ( strlen( $record_header ) < 8 ) break;
-        
-        $content_length = unpack( 'N', substr( $record_header, 4, 4 ) )[1];
-        $content = fread( $fh, $content_length * 2 );
-        
-        if ( strlen( $content ) < 4 ) break;
-        
-        $shape_type = unpack( 'V', substr( $content, 0, 4 ) )[1];
-        
-        // Extract bounding box and representative points for polygon (type 5)
-        if ( $shape_type === 5 && strlen( $content ) >= 44 ) {
-            // Extract bounding box (min/max coordinates)
-            $bbox = unpack( 'd4', substr( $content, 4, 32 ) );
-            
-            $geometries[] = array(
-                'type' => 'polygon',
-                'bbox' => array(
-                    'min_x' => $bbox[1],
-                    'min_y' => $bbox[2],
-                    'max_x' => $bbox[3],
-                    'max_y' => $bbox[4]
-                ),
-                'center_x' => ( $bbox[1] + $bbox[3] ) / 2,
-                'center_y' => ( $bbox[2] + $bbox[4] ) / 2
-            );
-        }
-    }
-    
-    fclose( $fh );
-    
-    return $geometries;
-}
 
-// AJAX handler to upload and process address files
-add_action( 'wp_ajax_subsales_upload_address_file', 'subsales_upload_address_file_ajax' );
-function subsales_upload_address_file_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    check_ajax_referer( 'subsales_upload_address', 'nonce' );
-    
-    if ( ! isset( $_FILES['address_file'] ) || $_FILES['address_file']['error'] !== UPLOAD_ERR_OK ) {
-        wp_send_json_error( 'File upload failed. Please try again.' );
-    }
-    
-    $file = $_FILES['address_file'];
-    $file_ext = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
-    
-    // Initialize upload job status
-    update_option( 'subsales_upload_status', array(
-        'status' => 'uploading',
-        'percent' => 30,
-        'message' => 'File uploaded, detecting type...',
-        'complete' => false,
-        'success' => false
-    ), false );
-    
-    // Detect file type
-    if ( $file_ext === 'zip' ) {
-        // Check if it's a shapefile (contains .shp, .dbf, .prj)
-        $zip = new ZipArchive();
-        if ( $zip->open( $file['tmp_name'] ) === true ) {
-            $has_shp = false;
-            $has_dbf = false;
-            $has_prj = false;
-            
-            for ( $i = 0; $i < $zip->numFiles; $i++ ) {
-                $filename = $zip->getNameIndex( $i );
-                $ext = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
-                if ( $ext === 'shp' ) $has_shp = true;
-                if ( $ext === 'dbf' ) $has_dbf = true;
-                if ( $ext === 'prj' ) $has_prj = true;
-            }
-            
-            $zip->close();
-            
-            if ( $has_shp && $has_dbf && $has_prj ) {
-                // Process shapefile in background
-                subsales_process_shapefile_upload( $file['tmp_name'] );
-                wp_send_json_success( array( 'message' => 'Shapefile detected, processing started' ) );
-            } else {
-                update_option( 'subsales_upload_status', array(
-                    'status' => 'error',
-                    'percent' => 0,
-                    'message' => 'Invalid shapefile. Must contain .shp, .dbf, and .prj files.',
-                    'complete' => true,
-                    'success' => false
-                ), false );
-                wp_send_json_error( 'Invalid shapefile. Must contain .shp, .dbf, and .prj files.' );
-            }
-        } else {
-            update_option( 'subsales_upload_status', array(
-                'status' => 'error',
-                'percent' => 0,
-                'message' => 'Could not open ZIP file.',
-                'complete' => true,
-                'success' => false
-            ), false );
-            wp_send_json_error( 'Could not open ZIP file.' );
-        }
-    } elseif ( $file_ext === 'csv' ) {
-        update_option( 'subsales_upload_status', array(
-            'status' => 'error',
-            'percent' => 0,
-            'message' => 'CSV parsing not yet implemented. Coming in Phase 8!',
-            'complete' => true,
-            'success' => false
-        ), false );
-        wp_send_json_error( 'CSV parsing not yet implemented. Coming in Phase 8!' );
-    } else {
-        update_option( 'subsales_upload_status', array(
-            'status' => 'error',
-            'percent' => 0,
-            'message' => 'Invalid file type. Please upload a .zip (shapefile) or .csv file.',
-            'complete' => true,
-            'success' => false
-        ), false );
-        wp_send_json_error( 'Invalid file type. Please upload a .zip (shapefile) or .csv file.' );
-    }
-}
-
-// Process shapefile upload with progress tracking
-function subsales_process_shapefile_upload( $file_path ) {
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Update status: parsing
-    update_option( 'subsales_upload_status', array(
-        'status' => 'parsing',
-        'percent' => 40,
-        'status_text' => 'Parsing shapefile...',
-        'message' => 'Parsing shapefile data...',
-        'complete' => false,
-        'success' => false
-    ), false );
-    
-    // Parse shapefile
-    $result = Subsales_Shapefile_Parser::parse_shapefile( $file_path );
-    
-    if ( is_wp_error( $result ) ) {
-        update_option( 'subsales_upload_status', array(
-            'status' => 'error',
-            'percent' => 0,
-            'status_text' => 'Parsing failed',
-            'message' => 'Shapefile parsing failed: ' . $result->get_error_message(),
-            'complete' => true,
-            'success' => false
-        ), false );
-        return;
-    }
-    
-    $addresses_parsed = $result;
-    $count = count( $addresses_parsed );
-    
-    // Update status: assigning ZIP codes via border-based lookup
-    update_option( 'subsales_upload_status', array(
-        'status' => 'assigning_zips',
-        'percent' => 50,
-        'status_text' => 'Assigning ZIP codes...',
-        'message' => "Parsed {$count} addresses, assigning ZIP codes via spatial query (fast method)...",
-        'complete' => false,
-        'success' => false
-    ), false );
-    
-    // Assign ZIP codes using border-based spatial lookup (100x faster than individual API calls)
-    $addresses_with_zips = subsales_assign_zips_by_borders( $addresses_parsed );
-    
-    // Update status: inserting
-    update_option( 'subsales_upload_status', array(
-        'status' => 'inserting',
-        'percent' => 60,
-        'status_text' => 'Inserting addresses...',
-        'message' => "ZIP codes assigned, inserting {$count} addresses into database...",
-        'complete' => false,
-        'success' => false
-    ), false );
-    
-    // Store addresses in database
-    $inserted = 0;
-    $skipped = 0;
-    
-    // Suppress duplicate key errors
-    $wpdb->suppress_errors( true );
-    
-    foreach ( $addresses_with_zips as $index => $addr ) {
-        // Update progress every 100 addresses
-        if ( $index % 100 === 0 && $index > 0 ) {
-            $progress = 60 + ( ( $index / $count ) * 30 ); // 60-90%
-            update_option( 'subsales_upload_status', array(
-                'status' => 'inserting',
-                'percent' => round( $progress ),
-                'status_text' => 'Inserting addresses...',
-                'message' => "Inserted {$index} of {$count} addresses (skipped {$skipped} duplicates)...",
-                'complete' => false,
-                'success' => false
-            ), false );
-        }
-        
-        // Check for duplicates BEFORE insert (more efficient)
-        // UNIQUE constraint is on (street, house_number, unit, zip)
-        $existing = $wpdb->get_var( $wpdb->prepare(
-            "SELECT id FROM {$addresses_table} WHERE street = %s AND house_number = %s AND unit = %s AND zip = %s LIMIT 1",
-            $addr['street'],
-            $addr['house_number'],
-            $addr['unit'] ?: '',
-            $addr['zip']
-        ) );
-        
-        if ( $existing ) {
-            // Duplicate found - skip insert
-            $skipped++;
-            continue;
-        }
-        
-        // Insert into database
-        $insert_result = $wpdb->insert(
-            $addresses_table,
-            array(
-                'street' => $addr['street'],
-                'house_number' => $addr['house_number'],
-                'unit' => $addr['unit'],
-                'city' => $addr['city'],
-                'state' => $addr['state'],
-                'zip' => $addr['zip'], // Border-based ZIP assignment
-                'lat' => $addr['lat'],
-                'lng' => $addr['lng'],
-                'source' => $addr['source'],
-                'confidence' => $addr['confidence'],
-                'matched' => $addr['matched'],
-                'type' => $addr['type'],
-                'full_address' => $addr['full_address']
-            ),
-            array( '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s', '%d', '%s', '%s' )
-        );
-        
-        if ( $insert_result ) {
-            $inserted++;
-        } else {
-            // Should rarely happen now that we check duplicates first
-            error_log( 'Address insert failed: ' . $wpdb->last_error );
-        }
-    }
-    
-    // Re-enable error reporting
-    $wpdb->suppress_errors( false );
-    
-    // Complete
-    update_option( 'subsales_upload_status', array(
-        'status' => 'complete',
-        'percent' => 100,
-        'status_text' => 'Processing complete',
-        'message' => "Successfully processed! Parsed {$count} addresses, inserted {$inserted} new records, skipped {$skipped} duplicates.",
-        'complete' => true,
-        'success' => true,
-        'parsed' => $count,
-        'inserted' => $inserted,
-        'skipped' => $skipped
-    ), false );
-}
 
 // Border-based ZIP assignment (IMPROVED: Uses polygon matching when available, falls back to sampling)
 // Checks for cached ZIP polygons first, uses precise point-in-polygon if available
-function subsales_assign_zips_by_borders( $addresses ) {
-    // Get configured ZIP codes
-    $served_zips = subsales_get_served_zips();
-    
-    if ( empty( $served_zips ) ) {
-        // No ZIPs configured - cannot assign
-        foreach ( $addresses as &$addr ) {
-            $addr['zip'] = '';
-            $addr['confidence'] = 'none';
-        }
-        return $addresses;
-    }
-    
-    // PRIORITY 1: Check if we have ZIP polygons loaded (from ZCTA shapefile)
-    $zip_polygons = get_option( 'subsales_zip_polygons', array() );
-    
-    if ( ! empty( $zip_polygons ) ) {
-        // Use polygon-based assignment (most accurate, zero API calls)
-        subsales_log( 'INFO', 'zip', 'Using polygon-based ZIP assignment', array(
-            'polygon_count' => count( $zip_polygons ),
-            'address_count' => count( $addresses )
-        ), 'system' );
-        
-        foreach ( $addresses as &$addr ) {
-            $lat = floatval( $addr['lat'] );
-            $lng = floatval( $addr['lng'] );
-            
-            $matched_zip = subsales_find_zip_by_polygon( $lat, $lng, $zip_polygons );
-            
-            if ( $matched_zip ) {
-                $addr['zip'] = $matched_zip;
-                $addr['confidence'] = 'high';
-            } else {
-                // Point not in any polygon - find nearest
-                $addr['zip'] = subsales_find_nearest_zip_polygon_center( $lat, $lng, $zip_polygons );
-                $addr['confidence'] = 'medium';
-            }
-        }
-        
-        return $addresses;
-    }
-    
-    // PRIORITY 2: Check if we have boundary boxes from previous sampling
-    $zip_boundaries = subsales_get_zip_boundaries( $served_zips );
-    
-    if ( empty( $zip_boundaries ) ) {
-        // First time - build boundaries from reverse geocoding a sample
-        subsales_log( 'INFO', 'zip', 'No boundaries available, building from sample', array(
-            'address_count' => count( $addresses ),
-            'configured_zips' => $served_zips
-        ), 'system' );
-        
-        $zip_boundaries = subsales_build_zip_boundaries_from_sample( $addresses, $served_zips );
-    }
-    
-    // PRIORITY 3: Use boundary box matching (less accurate but fast)
-    foreach ( $addresses as &$addr ) {
-        $lat = floatval( $addr['lat'] );
-        $lng = floatval( $addr['lng'] );
-        
-        // Check which ZIP boundary contains this point
-        $matched_zip = null;
-        foreach ( $zip_boundaries as $zip => $bounds ) {
-            if ( subsales_point_in_bounds( $lat, $lng, $bounds ) ) {
-                $matched_zip = $zip;
-                break;
-            }
-        }
-        
-        if ( $matched_zip ) {
-            $addr['zip'] = $matched_zip;
-            $addr['confidence'] = 'high';
-        } else {
-            // Fallback: find nearest ZIP boundary
-            $addr['zip'] = subsales_find_nearest_zip( $lat, $lng, $zip_boundaries );
-            $addr['confidence'] = 'medium';
-        }
-    }
-    
-    return $addresses;
-}
 
 // Get or build ZIP boundaries (bounding boxes for fast spatial queries)
 function subsales_get_zip_boundaries( $zips ) {
@@ -2476,211 +1738,533 @@ function subsales_get_zip_boundaries( $zips ) {
 }
 
 // Build ZIP boundaries from a sample of addresses (IMPROVED with randomization and validation)
-function subsales_build_zip_boundaries_from_sample( $addresses, $served_zips ) {
-    $boundaries = array();
-    $total_count = count( $addresses );
-    
-    // Use larger sample size: 5% of addresses or minimum 200, max 500
-    $sample_size = min( 500, max( 200, intval( $total_count * 0.05 ) ) );
-    $sample_size = min( $sample_size, $total_count );
-    
-    subsales_log( 'INFO', 'zip', 'Building ZIP boundaries from sample', array(
-        'total_addresses' => $total_count,
-        'sample_size' => $sample_size,
-        'configured_zips' => $served_zips
-    ), 'system' );
-    
-    // RANDOMIZED sampling instead of sequential
-    $sample_indices = array();
-    if ( $total_count <= $sample_size ) {
-        // Use all addresses if small dataset
-        $sample_indices = range( 0, $total_count - 1 );
-    } else {
-        // Random sampling across entire dataset
-        $sample_indices = array_rand( array_flip( range( 0, $total_count - 1 ) ), $sample_size );
-    }
-    
-    $samples = array();
-    foreach ( $sample_indices as $idx ) {
-        if ( isset( $addresses[ $idx ] ) ) {
-            $samples[] = $addresses[ $idx ];
-        }
-    }
-    
-    // Reverse geocode sample to get initial ZIP assignments
-    $zip_points = array();
-    $api_calls = 0;
-    $api_failures = 0;
-    
-    foreach ( $samples as $addr ) {
-        $lat = floatval( $addr['lat'] );
-        $lng = floatval( $addr['lng'] );
-        
-        if ( function_exists( 'order_sync_reverse_geocode' ) ) {
-            $zip = order_sync_reverse_geocode( $lat, $lng );
-            $api_calls++;
-            
-            if ( $zip ) {
-                // Accept ANY valid ZIP, not just configured ones (we'll validate later)
-                if ( ! isset( $zip_points[ $zip ] ) ) {
-                    $zip_points[ $zip ] = array();
-                }
-                $zip_points[ $zip ][] = array( 'lat' => $lat, 'lng' => $lng );
-            } else {
-                $api_failures++;
-            }
-            
-            // Rate limiting: 20 requests/second
-            usleep( 50000 );
-        }
-    }
-    
-    // Calculate bounding boxes for each ZIP found
-    foreach ( $zip_points as $zip => $points ) {
-        if ( count( $points ) < 3 ) continue; // Need at least 3 points for reliable boundary
-        
-        $lats = array_column( $points, 'lat' );
-        $lngs = array_column( $points, 'lng' );
-        
-        // Use smaller buffer (0.005 degrees ~0.55 km instead of 1.1 km)
-        $boundaries[ $zip ] = array(
-            'min_lat' => min( $lats ) - 0.005,
-            'max_lat' => max( $lats ) + 0.005,
-            'min_lng' => min( $lngs ) - 0.005,
-            'max_lng' => max( $lngs ) + 0.005,
-            'center_lat' => array_sum( $lats ) / count( $lats ),
-            'center_lng' => array_sum( $lngs ) / count( $lngs ),
-            'sample_points' => count( $points )
-        );
-    }
-    
-    // VALIDATION: Check coverage of configured ZIPs
-    $missing_zips = array_diff( $served_zips, array_keys( $boundaries ) );
-    $extra_zips = array_diff( array_keys( $boundaries ), $served_zips );
-    
-    $validation_warnings = array();
-    if ( ! empty( $missing_zips ) ) {
-        $validation_warnings[] = 'Missing boundaries for configured ZIPs: ' . implode( ', ', $missing_zips );
-    }
-    if ( ! empty( $extra_zips ) ) {
-        $validation_warnings[] = 'Found unexpected ZIPs in data: ' . implode( ', ', $extra_zips );
-    }
-    
-    subsales_log( 'INFO', 'zip', 'ZIP boundary building complete', array(
-        'boundaries_created' => count( $boundaries ),
-        'api_calls' => $api_calls,
-        'api_failures' => $api_failures,
-        'zips_found' => array_keys( $boundaries ),
-        'missing_zips' => $missing_zips,
-        'warnings' => $validation_warnings
-    ), 'system' );
-    
-    // Save for future use with metadata
-    $boundary_data = array(
-        'boundaries' => $boundaries,
-        'created_at' => current_time( 'mysql' ),
-        'sample_size' => $sample_size,
-        'total_addresses' => $total_count,
-        'warnings' => $validation_warnings
-    );
-    
-    update_option( 'subsales_zip_boundaries', $boundary_data, false );
-    
-    // If missing boundaries for configured ZIPs, trigger warning
-    if ( ! empty( $missing_zips ) ) {
-        update_option( 'subsales_zip_boundary_warning', array(
-            'message' => 'Boundary building incomplete. Missing ZIPs: ' . implode( ', ', $missing_zips ),
-            'missing_zips' => $missing_zips,
-            'timestamp' => current_time( 'mysql' )
-        ), false );
-    } else {
-        delete_option( 'subsales_zip_boundary_warning' );
-    }
-    
-    return $boundaries;
-}
 
 // Check if a point is within bounding box
-function subsales_point_in_bounds( $lat, $lng, $bounds ) {
-    return $lat >= $bounds['min_lat'] && $lat <= $bounds['max_lat'] &&
-           $lng >= $bounds['min_lng'] && $lng <= $bounds['max_lng'];
-}
 
 // Find nearest ZIP boundary center (fallback for edge cases)
-function subsales_find_nearest_zip( $lat, $lng, $boundaries ) {
-    $nearest_zip = null;
-    $min_distance = PHP_FLOAT_MAX;
-    
-    foreach ( $boundaries as $zip => $bounds ) {
-        // Calculate distance to center of ZIP boundary
-        $distance = sqrt(
-            pow( $lat - $bounds['center_lat'], 2 ) +
-            pow( $lng - $bounds['center_lng'], 2 )
-        );
-        
-        if ( $distance < $min_distance ) {
-            $min_distance = $distance;
-            $nearest_zip = $zip;
-        }
-    }
-    
-    return $nearest_zip ?: '06479'; // Default to Southington if nothing found
-}
 
 // ===================================================================
 // POLYGON-BASED ZIP MATCHING (Using Census ZCTA data)
 // ===================================================================
 
 // Find ZIP code by checking if point is inside any loaded polygon
-function subsales_find_zip_by_polygon( $lat, $lng, $polygons ) {
-    foreach ( $polygons as $zip => $polygon ) {
-        if ( subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) ) {
-            return $zip;
-        }
-    }
-    
-    return null;
-}
 
 // Check if a point is inside a polygon's bounding box (simplified for performance)
 // Uses bounding box check - fast approximation suitable for ZIP codes
-function subsales_point_in_polygon_bbox( $lat, $lng, $polygon ) {
-    $bbox = $polygon['bbox'];
-    
-    // Check if point is within bounding box
-    // Note: Shapefile coordinates are in projected system, need to handle accordingly
-    // For simplicity, we're using bounding box which is very fast
-    return ( $lat >= $bbox['min_y'] && $lat <= $bbox['max_y'] &&
-             $lng >= $bbox['min_x'] && $lng <= $bbox['max_x'] );
-}
 
 // Find nearest ZIP polygon center (fallback when point not in any polygon)
-function subsales_find_nearest_zip_polygon_center( $lat, $lng, $polygons ) {
-    $nearest_zip = null;
-    $min_distance = PHP_FLOAT_MAX;
-    
-    foreach ( $polygons as $zip => $polygon ) {
-        $center_lat = $polygon['center_y'];
-        $center_lng = $polygon['center_x'];
-        
-        // Calculate distance to polygon center
-        $distance = sqrt(
-            pow( $lat - $center_lat, 2 ) +
-            pow( $lng - $center_lng, 2 )
-        );
-        
-        if ( $distance < $min_distance ) {
-            $min_distance = $distance;
-            $nearest_zip = $zip;
-        }
-    }
-    
-    return $nearest_zip;
-}
 
 // ===================================================================
 // END POLYGON-BASED ZIP MATCHING
 // ===================================================================
+
+// ===================================================================
+// CT PARCEL INGESTION
+// ===================================================================
+//
+// Pulls addresses straight from Connecticut's statewide parcel ArcGIS service
+// (free, government-maintained) and assigns each one a ZIP by real
+// point-in-polygon against Census ZCTA boundaries. Replaces the shapefile
+// upload / Overpass / OpenAddresses sourcing paths.
+//
+// Two hard rules, both from the Buckland St data-corruption bug:
+//   - A parcel whose ZIP isn't unambiguous goes to the review queue. Never a
+//     default ZIP, never the nearest one, never the first one.
+//   - Each ZIP is replaced wholesale, not merged, so a re-ingest can't leave
+//     stale wrong-ZIP rows behind.
+
+// CT statewide parcel layer. outSR=4326 makes the service hand back WGS84
+// lat/lng directly, which is why this plugin has no reprojection code.
+define( 'SUBSALES_PARCEL_SERVICE_URL', 'https://services3.arcgis.com/3FL1kr7L4LvwA2Kb/ArcGIS/rest/services/Connecticut_State_Parcel_Layer_2023/FeatureServer/0/query' );
+
+// The service caps a page at 2000; 1000 keeps each response comfortably small.
+define( 'SUBSALES_PARCEL_PAGE_SIZE', 1000 );
+
+/**
+ * Fetch one page of parcels for a town.
+ *
+ * @param string $town Town name as stored in Town_Name (upper case)
+ * @param int $offset resultOffset
+ * @param int $limit resultRecordCount
+ * @return array|WP_Error Feature array, or WP_Error on failure
+ */
+function subsales_fetch_parcel_page( $town, $offset, $limit ) {
+    $url = SUBSALES_PARCEL_SERVICE_URL . '?' . http_build_query( array(
+        'where'             => "Town_Name='" . str_replace( "'", "''", $town ) . "'",
+        'outFields'         => 'Town_Name,Location',
+        'returnGeometry'    => 'true',
+        'outSR'             => '4326',
+        'f'                 => 'json',
+        'resultOffset'      => intval( $offset ),
+        'resultRecordCount' => intval( $limit ),
+    ) );
+
+    $response = wp_remote_get( $url, array( 'timeout' => 60 ) );
+
+    if ( is_wp_error( $response ) ) {
+        return new WP_Error( 'parcel_request_failed', 'Parcel request failed: ' . $response->get_error_message() );
+    }
+
+    $data = json_decode( wp_remote_retrieve_body( $response ), true );
+
+    if ( ! empty( $data['error'] ) ) {
+        $message = isset( $data['error']['message'] ) ? $data['error']['message'] : 'unknown error';
+        return new WP_Error( 'parcel_service_error', 'Parcel service error: ' . $message );
+    }
+
+    if ( ! isset( $data['features'] ) || ! is_array( $data['features'] ) ) {
+        return new WP_Error( 'parcel_bad_response', 'Parcel service returned no feature array.' );
+    }
+
+    return $data['features'];
+}
+
+/**
+ * Write ingestion progress so the admin dashboard can poll it.
+ *
+ * @param string $status running|complete|error
+ * @param int $percent 0-100
+ * @param string $message Human-readable progress line
+ * @return void
+ */
+function subsales_set_ingest_status( $status, $percent, $message ) {
+    update_option( 'subsales_ingest_status', array(
+        'status'   => $status,
+        'percent'  => max( 0, min( 100, intval( $percent ) ) ),
+        'message'  => $message,
+        'complete' => ( 'running' !== $status ),
+        'success'  => ( 'complete' === $status ),
+        'updated'  => current_time( 'mysql' ),
+    ), false );
+}
+
+/**
+ * Ingest every parcel address for the configured town and file it under one of
+ * the given ZIPs.
+ *
+ * @param array $zips ZIP codes to populate
+ * @return array Summary: town, parcels, skipped, queued, zips (per-ZIP counts), errors
+ * @since 3.2.0
+ */
+function subsales_ingest_zips( array $zips ) {
+    global $wpdb;
+
+    @set_time_limit( 0 );
+    @ini_set( 'memory_limit', '512M' );
+
+    $start_time = microtime( true );
+
+    // One town covers all served ZIPs, so a single town name is enough.
+    // ZIP -> town resolution is deliberately NOT built: add it only if the
+    // fundraiser ever sells across a town line.
+    $town = strtoupper( trim( get_option( 'subsales_parcel_town_name', 'SOUTHINGTON' ) ) );
+
+    $summary = array(
+        'town'       => $town,
+        'parcels'    => 0,
+        'skipped'    => 0,
+        'duplicates' => 0,
+        'queued'     => 0,
+        'zips'       => array(),
+        'errors'     => array(),
+    );
+
+    if ( empty( $zips ) ) {
+        $summary['errors'][] = 'No ZIP codes supplied.';
+        return $summary;
+    }
+
+    subsales_set_ingest_status( 'running', 2, 'Fetching ZIP boundaries...' );
+
+    // Fetched fresh, held in memory only, never cached in wp_options.
+    $boundaries = Subsales_Zip_Boundary::fetch_boundaries( $zips );
+
+    if ( empty( $boundaries ) ) {
+        $summary['errors'][] = 'Could not fetch ZIP boundaries. Nothing was changed.';
+        subsales_set_ingest_status( 'error', 0, 'Could not fetch ZIP boundaries.' );
+        subsales_log( 'ERROR', 'address', 'Parcel ingestion aborted: no ZIP boundaries', array( 'zips' => $zips ) );
+        return $summary;
+    }
+
+    subsales_log( 'INFO', 'address', 'Parcel ingestion started', array(
+        'town' => $town,
+        'zips' => array_keys( $boundaries )
+    ) );
+
+    $by_zip = array();  // zip => rows ready for insert
+    $seen = array();    // house|street keys already taken (condo collapse)
+    $offset = 0;
+    $fetch_failed = false;
+
+    while ( true ) {
+        subsales_set_ingest_status( 'running', min( 70, 5 + intval( $offset / 400 ) ),
+            'Reading parcels ' . number_format( $offset ) . '+ for ' . $town . '...' );
+
+        $features = subsales_fetch_parcel_page( $town, $offset, SUBSALES_PARCEL_PAGE_SIZE );
+
+        if ( is_wp_error( $features ) ) {
+            // A partial read must never reach the replace step - deleting a ZIP
+            // and re-inserting half its parcels is worse than doing nothing.
+            $fetch_failed = true;
+            $summary['errors'][] = $features->get_error_message();
+            subsales_log( 'ERROR', 'address', 'Parcel page fetch failed', array(
+                'offset' => $offset,
+                'error'  => $features->get_error_message()
+            ) );
+            break;
+        }
+
+        $page_count = count( $features );
+
+        foreach ( $features as $feature ) {
+            $summary['parcels']++;
+
+            // Location is the property's own street address. Mailing_Address is
+            // the OWNER's mailing address - frequently a different property or a
+            // PO box - and must never be used here.
+            $location = isset( $feature['attributes']['Location'] ) ? trim( $feature['attributes']['Location'] ) : '';
+            $rings = isset( $feature['geometry']['rings'] ) ? $feature['geometry']['rings'] : array();
+
+            if ( '' === $location || empty( $rings ) ) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $parsed = Subsales_Delivery::parse_address( $location );
+
+            // parse_address() normalizes the suffix to the canonical abbreviation
+            // (ST/DR/AV/...) which is what the PWA autocomplete expects to see.
+            if ( ! $parsed || empty( $parsed['house_number'] ) || empty( $parsed['street'] ) ) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $centroid = Subsales_Zip_Boundary::centroid_of_rings( $rings );
+            if ( ! $centroid ) {
+                $summary['skipped']++;
+                continue;
+            }
+
+            $zip = Subsales_Zip_Boundary::determine_zip( $centroid['lat'], $centroid['lng'], $boundaries );
+
+            if ( null === $zip ) {
+                // Zero matches or more than one. Queue it - never guess. A bad
+                // parcel must not abort the run.
+                Subsales_Database::queue_address_for_review( array(
+                    'reason'         => 'zip_undetermined',
+                    'source_context' => 'ingestion',
+                    'raw_address'    => $location,
+                    'house_number'   => $parsed['house_number'],
+                    'street'         => $parsed['street'],
+                    'city'           => ucwords( strtolower( $town ) ),
+                    'candidate_zips' => Subsales_Zip_Boundary::matching_zips( $centroid['lat'], $centroid['lng'], $boundaries ),
+                    'lat'            => $centroid['lat'],
+                    'lng'            => $centroid['lng'],
+                ) );
+                $summary['queued']++;
+                continue;
+            }
+
+            // Collapse condo/multi-unit parcels to one base address. Units are
+            // hand-typed by the seller into the PWA's Unit field and must never
+            // be enumerated in autocomplete data. Done after ZIP resolution so an
+            // unresolvable duplicate can't block the parcel that does resolve.
+            $key = strtoupper( trim( $parsed['house_number'] ) ) . '|' . strtoupper( trim( $parsed['street'] ) );
+            if ( isset( $seen[ $key ] ) ) {
+                $summary['duplicates']++;
+                continue;
+            }
+            $seen[ $key ] = true;
+
+            $city = ucwords( strtolower( $town ) );
+
+            $by_zip[ $zip ][] = array(
+                'house_number' => $parsed['house_number'],
+                'street'       => $parsed['street'],
+                'unit'         => '',
+                'city'         => $city,
+                'state'        => 'CT',
+                'zip'          => $zip,
+                'lat'          => $centroid['lat'],
+                'lng'          => $centroid['lng'],
+                'source'       => 'parcel',
+                'confidence'   => 'high',
+                'type'         => 'residential',
+                'full_address' => trim( $parsed['house_number'] . ' ' . $parsed['street'] ) . ', ' . $city . ', CT ' . $zip,
+            );
+        }
+
+        if ( $page_count < SUBSALES_PARCEL_PAGE_SIZE ) {
+            break; // Short page = last page.
+        }
+
+        $offset += SUBSALES_PARCEL_PAGE_SIZE;
+
+        // Southington has ~18.4k parcels; this only trips if the service starts
+        // ignoring resultOffset and paging forever.
+        if ( $offset > 250000 ) {
+            $fetch_failed = true;
+            $summary['errors'][] = 'Pagination safety cap hit at ' . $offset . ' records.';
+            break;
+        }
+    }
+
+    if ( $fetch_failed ) {
+        subsales_set_ingest_status( 'error', 0, 'Parcel read failed part-way through. No addresses were changed.' );
+        subsales_log( 'ERROR', 'address', 'Parcel ingestion aborted before write', $summary );
+        return $summary;
+    }
+
+    // Replace, don't merge - and do it per ZIP so one ZIP failing cannot wipe
+    // another. Safe because ss_orders.address is free text, not a foreign key.
+    $addresses_table = $wpdb->prefix . 'ss_addresses';
+    $zip_total = max( 1, count( $by_zip ) );
+    $zip_done = 0;
+
+    foreach ( $by_zip as $zip => $rows ) {
+        $zip_done++;
+        subsales_set_ingest_status( 'running', 70 + intval( 25 * $zip_done / $zip_total ),
+            'Writing ' . number_format( count( $rows ) ) . ' addresses for ' . $zip . '...' );
+
+        $deleted = $wpdb->query( $wpdb->prepare(
+            "DELETE FROM {$addresses_table} WHERE zip = %s",
+            $zip
+        ) );
+
+        if ( false === $deleted ) {
+            $summary['errors'][] = 'ZIP ' . $zip . ': could not clear existing rows, left untouched.';
+            subsales_log( 'ERROR', 'address', 'Parcel ingestion could not clear ZIP', array(
+                'zip'   => $zip,
+                'error' => $wpdb->last_error
+            ) );
+            continue;
+        }
+
+        $inserted = Subsales_Database::insert_addresses( $rows );
+
+        $summary['zips'][ $zip ] = array(
+            'resolved' => count( $rows ),
+            'deleted'  => intval( $deleted ),
+            'inserted' => intval( $inserted ),
+        );
+    }
+
+    // Refresh the PWA's zip-index.json. The per-ZIP JSON extracts are produced
+    // by the unmodified subsales_generate_zip_extracts action - see the note in
+    // subsales_ingest_zips_ajax().
+    subsales_update_zip_index();
+
+    $summary['duration'] = round( microtime( true ) - $start_time, 2 );
+
+    subsales_log( 'INFO', 'address', 'Parcel ingestion complete', $summary );
+
+    subsales_set_ingest_status(
+        empty( $summary['errors'] ) ? 'complete' : 'error',
+        100,
+        sprintf(
+            '%s parcels read, %s addresses written, %s queued for review',
+            number_format( $summary['parcels'] ),
+            number_format( array_sum( wp_list_pluck( $summary['zips'], 'inserted' ) ) ),
+            number_format( $summary['queued'] )
+        )
+    );
+
+    return $summary;
+}
+
+// AJAX handler to ingest parcel addresses for the configured ZIPs
+add_action( 'wp_ajax_subsales_ingest_zips', 'subsales_ingest_zips_ajax' );
+function subsales_ingest_zips_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_ingest_zips', 'nonce' );
+
+    // Explicit ZIP list from the form, otherwise everything configured.
+    $zips = array();
+    if ( ! empty( $_POST['zips'] ) ) {
+        $raw = is_array( $_POST['zips'] ) ? $_POST['zips'] : explode( ',', sanitize_text_field( wp_unslash( $_POST['zips'] ) ) );
+        foreach ( $raw as $zip ) {
+            if ( ! is_scalar( $zip ) ) {
+                continue;
+            }
+            $zip = preg_replace( '/[^0-9]/', '', (string) $zip );
+            if ( strlen( $zip ) === 5 ) {
+                $zips[] = $zip;
+            }
+        }
+        $zips = array_values( array_unique( $zips ) );
+    }
+
+    if ( empty( $zips ) ) {
+        $zips = subsales_get_served_zips();
+    }
+
+    if ( empty( $zips ) ) {
+        wp_send_json_error( 'No ZIPs configured. Add ZIP codes in Settings → Overall → ZIP Codes first.' );
+    }
+
+    // Optional town override, persisted so the next run reuses it. Letters,
+    // spaces and hyphens only - it goes into the service's WHERE clause.
+    if ( ! empty( $_POST['town'] ) ) {
+        $town = preg_replace( '/[^A-Za-z \-]/', '', sanitize_text_field( wp_unslash( $_POST['town'] ) ) );
+        if ( '' !== trim( $town ) ) {
+            update_option( 'subsales_parcel_town_name', strtoupper( trim( $town ) ) );
+        }
+    }
+
+    $summary = subsales_ingest_zips( $zips );
+
+    if ( empty( $summary['zips'] ) ) {
+        wp_send_json_error( array(
+            'message' => 'Ingestion produced no addresses. ' . implode( ' ', $summary['errors'] ),
+            'summary' => $summary,
+        ) );
+    }
+
+    // Regenerate the PWA's per-ZIP JSON in the same request, so a successful
+    // ingest always leaves the seller-facing data in sync with ss_addresses.
+    // Only the ZIPs we just ingested are regenerated.
+    $extracts = subsales_generate_zip_extracts_core( array_keys( $summary['zips'] ) );
+
+    wp_send_json_success( array(
+        'summary'  => $summary,
+        'extracts' => $extracts,
+    ) );
+}
+
+// AJAX handler to poll ingestion progress
+add_action( 'wp_ajax_subsales_ingest_status', 'subsales_ingest_status_ajax' );
+function subsales_ingest_status_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_ingest_zips', 'nonce' );
+
+    wp_send_json_success( get_option( 'subsales_ingest_status', array(
+        'status'   => 'idle',
+        'percent'  => 0,
+        'message'  => 'No ingestion in progress',
+        'complete' => true,
+        'success'  => false,
+    ) ) );
+}
+
+// ===================================================================
+// ADDRESS REVIEW QUEUE - AJAX
+// ===================================================================
+//
+// Admin-paced. Nothing here runs on a timer and nothing is bulk.
+
+// AJAX handler to resolve one review-queue row into the address database
+add_action( 'wp_ajax_subsales_review_queue_resolve', 'subsales_review_queue_resolve_ajax' );
+function subsales_review_queue_resolve_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_address_review', 'nonce' );
+
+    $id = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
+    if ( ! $id ) {
+        wp_send_json_error( 'Missing review queue row id' );
+    }
+
+    $args = array();
+    foreach ( array( 'house_number', 'street', 'city', 'zip', 'note' ) as $field ) {
+        if ( isset( $_POST[ $field ] ) ) {
+            $args[ $field ] = sanitize_text_field( wp_unslash( $_POST[ $field ] ) );
+        }
+    }
+    if ( isset( $_POST['lat'] ) && '' !== $_POST['lat'] ) {
+        $args['lat'] = floatval( $_POST['lat'] );
+    }
+    if ( isset( $_POST['lng'] ) && '' !== $_POST['lng'] ) {
+        $args['lng'] = floatval( $_POST['lng'] );
+    }
+
+    $result = Subsales_Database::resolve_review_queue_row( $id, $args );
+
+    if ( is_wp_error( $result ) ) {
+        wp_send_json_error( $result->get_error_message() );
+    }
+
+    wp_send_json_success( array(
+        'address_id'    => $result['address_id'],
+        'pending_count' => Subsales_Database::count_review_queue_rows( 'pending' ),
+    ) );
+}
+
+// AJAX handler to dismiss one review-queue row
+add_action( 'wp_ajax_subsales_review_queue_dismiss', 'subsales_review_queue_dismiss_ajax' );
+function subsales_review_queue_dismiss_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_address_review', 'nonce' );
+
+    $id = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
+    if ( ! $id ) {
+        wp_send_json_error( 'Missing review queue row id' );
+    }
+
+    $note = isset( $_POST['note'] ) ? sanitize_text_field( wp_unslash( $_POST['note'] ) ) : '';
+
+    if ( ! Subsales_Database::dismiss_review_queue_row( $id, $note ) ) {
+        wp_send_json_error( 'Could not dismiss that row' );
+    }
+
+    wp_send_json_success( array(
+        'pending_count' => Subsales_Database::count_review_queue_rows( 'pending' ),
+    ) );
+}
+
+// AJAX handler to geocode ONE review-queue row via Google.
+//
+// This is the only Google Geocoding call in the entire address pipeline: one
+// row, one click, triggered by an admin. Never bulk, never automatic - Google
+// pricing is a hard constraint for this fundraiser.
+add_action( 'wp_ajax_subsales_review_queue_geocode', 'subsales_review_queue_geocode_ajax' );
+function subsales_review_queue_geocode_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_address_review', 'nonce' );
+
+    $id = isset( $_POST['id'] ) ? intval( $_POST['id'] ) : 0;
+    $row = $id ? Subsales_Database::get_review_queue_row( $id ) : null;
+
+    if ( ! $row ) {
+        wp_send_json_error( 'Review queue row not found' );
+    }
+
+    $query = trim( $row['house_number'] . ' ' . $row['street'] );
+    if ( '' === $query ) {
+        $query = $row['raw_address'];
+    }
+    $query .= ', ' . ( ! empty( $row['city'] ) ? $row['city'] : 'Southington' ) . ', CT';
+
+    // Already transient/table-cached inside geocode_address().
+    $geo = Subsales_Delivery::geocode_address( $query );
+
+    if ( ! $geo ) {
+        wp_send_json_error( 'Google could not geocode that address' );
+    }
+
+    // Coordinates only - the ZIP still comes from point-in-polygon, never from
+    // Google's formatted string.
+    $zip = null;
+    $boundaries = Subsales_Zip_Boundary::fetch_boundaries( subsales_get_served_zips() );
+    if ( ! empty( $boundaries ) ) {
+        $zip = Subsales_Zip_Boundary::determine_zip( $geo['lat'], $geo['lng'], $boundaries );
+    }
+
+    wp_send_json_success( array(
+        'lat'               => $geo['lat'],
+        'lng'               => $geo['lng'],
+        'formatted_address' => isset( $geo['formatted_address'] ) ? $geo['formatted_address'] : '',
+        'zip'               => $zip,
+    ) );
+}
 
 // AJAX handler to get upload status
 add_action( 'wp_ajax_subsales_upload_status', 'subsales_upload_status_ajax' );
@@ -2700,151 +2284,6 @@ function subsales_upload_status_ajax() {
     ) );
     
     wp_send_json_success( $status );
-}
-
-// AJAX handler to re-run ZIP assignment for all addresses using PROPER reverse geocoding
-add_action( 'wp_ajax_subsales_reassign_zips', 'subsales_reassign_zips_ajax' );
-function subsales_reassign_zips_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    check_ajax_referer( 'subsales_reassign_zips', 'nonce' );
-    
-    // Check if we have Google Maps API key
-    $api_key = get_option( 'order_sync_google_maps_api_key', '' );
-    if ( empty( $api_key ) ) {
-        wp_send_json_error( 'Google Maps API key required. Configure in Settings first.' );
-    }
-    
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Initialize progress tracking
-    $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 50;
-    $offset = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
-    
-    // Get total count on first batch
-    $total = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE lat IS NOT NULL AND lng IS NOT NULL" );
-    
-    // Get batch of addresses
-    $addresses = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, lat, lng, street, house_number, zip FROM {$addresses_table} 
-         WHERE lat IS NOT NULL AND lng IS NOT NULL 
-         ORDER BY id 
-         LIMIT %d OFFSET %d",
-        $batch_size,
-        $offset
-    ), ARRAY_A );
-    
-    if ( empty( $addresses ) ) {
-        // All done - clear cached boundaries to force rebuild
-        delete_option( 'subsales_zip_boundaries' );
-        
-        wp_send_json_success( array(
-            'complete' => true,
-            'message' => 'ZIP reassignment complete! Cached boundaries cleared.',
-            'total' => $total,
-            'processed' => $offset
-        ) );
-    }
-    
-    // Process batch with rate limiting (Google Maps allows 50 QPS)
-    $updated = 0;
-    $failed = 0;
-    $sleep_ms = 50; // 20 requests/second to be safe
-    
-    foreach ( $addresses as $addr ) {
-        $zip = order_sync_reverse_geocode( $addr['lat'], $addr['lng'] );
-        
-        if ( $zip ) {
-            $result = $wpdb->update(
-                $addresses_table,
-                array( 'zip' => $zip ),
-                array( 'id' => $addr['id'] ),
-                array( '%s' ),
-                array( '%d' )
-            );
-            
-            if ( $result !== false ) {
-                $updated++;
-            } else {
-                $failed++;
-            }
-        } else {
-            $failed++;
-        }
-        
-        // Rate limiting
-        usleep( $sleep_ms * 1000 );
-    }
-    
-    $processed = $offset + count( $addresses );
-    $progress = round( ( $processed / $total ) * 100 );
-    
-    wp_send_json_success( array(
-        'complete' => false,
-        'progress' => $progress,
-        'processed' => $processed,
-        'total' => $total,
-        'updated' => $updated,
-        'failed' => $failed,
-        'message' => "Processing batch: {$processed} of {$total} ({$progress}%)"
-    ) );
-}
-
-// LEGACY handler - keeping for backwards compatibility but marked deprecated
-add_action( 'wp_ajax_subsales_reassign_zips_legacy', 'subsales_reassign_zips_legacy_ajax' );
-function subsales_reassign_zips_legacy_ajax() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_send_json_error( 'Permission denied' );
-    }
-    check_ajax_referer( 'subsales_reassign_zips', 'nonce' );
-    
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Get all addresses with coordinates
-    $addresses = $wpdb->get_results(
-        "SELECT * FROM {$addresses_table} WHERE lat IS NOT NULL AND lng IS NOT NULL",
-        ARRAY_A
-    );
-    
-    if ( empty( $addresses ) ) {
-        wp_send_json_error( 'No addresses with coordinates found.' );
-    }
-    
-    // Re-assign ZIP codes using border-based lookup
-    $addresses_with_zips = subsales_assign_zips_by_borders( $addresses );
-    
-    // Update addresses in database
-    $updated = 0;
-    $failed = 0;
-    
-    foreach ( $addresses_with_zips as $addr ) {
-        $result = $wpdb->update(
-            $addresses_table,
-            array(
-                'zip' => $addr['zip'],
-                'confidence' => $addr['confidence']
-            ),
-            array( 'id' => $addr['id'] ),
-            array( '%s', '%s' ),
-            array( '%d' )
-        );
-        
-        if ( $result !== false ) {
-            $updated++;
-        } else {
-            $failed++;
-        }
-    }
-    
-    wp_send_json_success( array(
-        'message' => "ZIP codes reassigned successfully!",
-        'total' => count( $addresses ),
-        'updated' => $updated,
-        'failed' => $failed
-    ) );
 }
 
 // Helper: generate a single ZIP file by querying Overpass API for nodes/ways with addr:postcode and addr:housenumber
@@ -3234,91 +2673,6 @@ function subsales_get_generation_logs( $limit = 10 ) {
  * @param array $zip_codes Array of ZIP codes to generate
  * @return array Results with counts per ZIP
  */
-function subsales_generate_zip_json_from_database( $zip_codes = null ) {
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Use configured ZIPs if none provided
-    if ( $zip_codes === null ) {
-        $zip_codes = get_option( 'subsales_served_zips', array() );
-        if ( ! is_array( $zip_codes ) ) {
-            $zip_codes = array_filter( array_map( 'trim', explode( ',', $zip_codes ) ) );
-        }
-    }
-    
-    if ( empty( $zip_codes ) ) {
-        return array( 'error' => 'No ZIP codes configured' );
-    }
-    
-    $upload = wp_upload_dir();
-    $base_dir = trailingslashit( $upload['basedir'] ) . 'subsales-zipdata';
-    
-    // Ensure directory exists
-    if ( ! is_dir( $base_dir ) ) {
-        wp_mkdir_p( $base_dir );
-    }
-    
-    $results = array();
-    
-    foreach ( $zip_codes as $zip ) {
-        // Query RESIDENTIAL addresses only for this ZIP
-        $addresses = $wpdb->get_results( $wpdb->prepare(
-            "SELECT * FROM {$addresses_table} 
-             WHERE zip = %s 
-             AND type = 'residential'
-             ORDER BY street, house_number",
-            $zip
-        ), ARRAY_A );
-        
-        // Format for PWA compatibility
-        $formatted = array();
-        foreach ( $addresses as $addr ) {
-            $label_parts = array( $addr['house_number'] . ' ' . $addr['street'] );
-            if ( ! empty( $addr['unit'] ) ) {
-                $label_parts[0] .= ' Unit ' . $addr['unit'];
-            }
-            if ( ! empty( $addr['city'] ) ) {
-                $label_parts[] = $addr['city'];
-            }
-            if ( ! empty( $addr['state'] ) ) {
-                $label_parts[] = $addr['state'];
-            }
-            $label_parts[] = $addr['zip'];
-            
-            $formatted[] = array(
-                'id' => 'db-' . $addr['id'],
-                'label' => implode( ', ', $label_parts ),
-                'street' => $addr['street'],
-                'housenumber' => $addr['house_number'],
-                'unit' => $addr['unit'],
-                'floor' => '',
-                'door' => '',
-                'housename' => '',
-                'city' => $addr['city'],
-                'state' => $addr['state'],
-                'zip' => $addr['zip'],
-                'lat' => (float) $addr['lat'],
-                'lng' => (float) $addr['lng']
-            );
-        }
-        
-        // Write JSON file
-        $file_path = trailingslashit( $base_dir ) . $zip . '.json';
-        $written = file_put_contents( $file_path, wp_json_encode( $formatted, JSON_PRETTY_PRINT ) );
-        
-        $results[ $zip ] = array(
-            'count' => count( $formatted ),
-            'file' => $file_path,
-            'bytes' => $written,
-            'source' => 'database'
-        );
-    }
-    
-    // Update zip-index.json
-    subsales_update_zip_index();
-    
-    return $results;
-}
 
 // Enqueue admin assets for settings page (media uploader for header image)
 add_action( 'admin_enqueue_scripts', 'order_sync_admin_assets' );
@@ -3347,10 +2701,6 @@ function order_sync_admin_assets( $hook ) {
         'deleteNonce' => wp_create_nonce( 'subsales_zip_delete' ),
         'searchNonce' => wp_create_nonce( 'subsales_address_search' ),
         'refreshIndexNonce' => wp_create_nonce( 'subsales_refresh_index' ),
-        'matchNonce' => wp_create_nonce( 'subsales_match_addresses' ),
-        'bgMatchNonce' => wp_create_nonce( 'subsales_bg_match' ),
-        'uploadNonce' => wp_create_nonce( 'subsales_upload_address' ),
-        'reassignZipsNonce' => wp_create_nonce( 'subsales_reassign_zips' ),
     ) );
 }
 
@@ -7300,292 +6650,6 @@ function order_sync_reverse_geocode( $lat, $lng ) {
 }
 
 // Address Extracts admin page
-function subsales_address_extracts_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( 'You do not have sufficient permissions to access this page.' );
-    }
-    
-    global $wpdb;
-    $addresses_table = $wpdb->prefix . 'ss_addresses';
-    
-    // Handle Overpass matching request
-    $matching_result = null;
-    if ( isset( $_POST['run_overpass_matching'] ) && check_admin_referer( 'subsales_overpass_matching' ) ) {
-        $limit = isset( $_POST['match_limit'] ) ? intval( $_POST['match_limit'] ) : 100;
-        $matching_result = Subsales_Overpass_Matcher::match_addresses( $limit );
-    }
-    
-    // Get database statistics
-    $total_addresses = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table}" );
-    $residential_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE type = 'residential'" );
-    $commercial_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE type = 'commercial'" );
-    $matched_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE matched = 1" );
-    $high_confidence_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table} WHERE confidence = 'high'" );
-    
-    // Get ZIP breakdown
-    $zip_breakdown = $wpdb->get_results(
-        "SELECT zip, COUNT(*) as count FROM {$addresses_table} GROUP BY zip ORDER BY count DESC",
-        ARRAY_A
-    );
-    
-    // Get source breakdown
-    $source_breakdown = $wpdb->get_results(
-        "SELECT source, COUNT(*) as count FROM {$addresses_table} GROUP BY source ORDER BY count DESC",
-        ARRAY_A
-    );
-    
-    ?>
-    <div class="wrap">
-        <h1>Address Extracts</h1>
-        <p class="description">Upload shapefiles or CSV files to populate the address database for PWA autocomplete.</p>
-        
-        <!-- Overpass Matching Results -->
-        <?php if ( $matching_result ) : ?>
-            <div class="notice notice-<?php echo $matching_result['success'] ? 'success' : 'error'; ?>" style="margin-top: 20px;">
-                <p><strong><?php echo esc_html( $matching_result['message'] ); ?></strong></p>
-                <?php if ( $matching_result['success'] && $matching_result['total'] > 0 ) : ?>
-                    <ul style="margin: 10px 0;">
-                        <li>✅ Matched: <?php echo number_format( $matching_result['matched'] ); ?></li>
-                        <li>❌ Failed: <?php echo number_format( $matching_result['failed'] ); ?></li>
-                        <li>📊 Success Rate: <?php echo round( ( $matching_result['matched'] / $matching_result['total'] ) * 100 ); ?>%</li>
-                    </ul>
-                <?php endif; ?>
-            </div>
-        <?php endif; ?>
-        
-        <!-- Overpass Matching Tool -->
-        <div class="subsales-card" style="margin-top: 20px; padding: 20px; background: #fff3cd; border-left: 4px solid #ffc107;">
-            <h2 style="margin-top: 0;">🗺️ Overpass Address Matching</h2>
-            <p class="description">Cross-reference addresses with OpenStreetMap to assign verified ZIP codes and improve coordinates.</p>
-            
-            <?php
-            $stats = Subsales_Overpass_Matcher::get_statistics();
-            $unmatched = $stats['total'] - $stats['matched'];
-            ?>
-            
-            <div style="background: #f9f9f9; padding: 15px; border-radius: 4px; margin: 15px 0;">
-                <h3 style="margin-top: 0;">Current Status:</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>Total Addresses:</th>
-                        <td><strong><?php echo number_format( $stats['total'] ); ?></strong></td>
-                    </tr>
-                    <tr>
-                        <th>Matched to OSM:</th>
-                        <td><?php echo number_format( $stats['matched'] ); ?> (<?php echo $stats['total'] > 0 ? round( ( $stats['matched'] / $stats['total'] ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                    <tr>
-                        <th>Unmatched:</th>
-                        <td><strong style="color: #d63638;"><?php echo number_format( $unmatched ); ?></strong></td>
-                    </tr>
-                    <tr>
-                        <th>High Confidence:</th>
-                        <td><?php echo number_format( $stats['high_confidence'] ); ?></td>
-                    </tr>
-                    <tr>
-                        <th>Medium Confidence:</th>
-                        <td><?php echo number_format( $stats['medium_confidence'] ); ?></td>
-                    </tr>
-                    <tr>
-                        <th>With ZIP Codes:</th>
-                        <td><?php echo number_format( $stats['with_zip'] ); ?> (<?php echo $stats['total'] > 0 ? round( ( $stats['with_zip'] / $stats['total'] ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                </table>
-            </div>
-            
-            <?php if ( $unmatched > 0 ) : ?>
-                <form method="post" action="" style="margin-top: 15px;">
-                    <?php wp_nonce_field( 'subsales_overpass_matching' ); ?>
-                    <p>
-                        <label for="match_limit"><strong>Number of addresses to match:</strong></label><br>
-                        <input type="number" id="match_limit" name="match_limit" value="100" min="1" max="1000" style="width: 100px;" />
-                        <span class="description">(Recommended: 100-500 per batch. Rate limit: 2 seconds per address.)</span>
-                    </p>
-                    <p>
-                        <button type="submit" name="run_overpass_matching" class="button button-primary button-large">
-                            🚀 Start Matching (<?php echo min( 100, $unmatched ); ?> addresses)
-                        </button>
-                        <span class="description" style="margin-left: 15px; color: #666;">
-                            ⏱️ Estimated time: ~<?php echo ceil( min( 100, $unmatched ) * 2 / 60 ); ?> minutes
-                        </span>
-                    </p>
-                    <p class="description" style="color: #856404;">
-                        <strong>Note:</strong> This queries OpenStreetMap's Overpass API. Please be patient and respect rate limits.
-                        The process may take several minutes depending on batch size.
-                    </p>
-                </form>
-            <?php else : ?>
-                <p style="color: #28a745; font-weight: bold;">✅ All addresses have been matched!</p>
-            <?php endif; ?>
-        </div>
-        
-        <!-- Data Summary -->
-        <div class="subsales-dashboard-grid" style="margin-top: 20px;">
-            <div class="subsales-card">
-                <h2>📊 Database Summary</h2>
-                <table class="form-table">
-                    <tr>
-                        <th>Total Addresses:</th>
-                        <td><strong><?php echo number_format( $total_addresses ); ?></strong></td>
-                    </tr>
-                    <tr>
-                        <th>Residential:</th>
-                        <td><?php echo number_format( $residential_count ); ?> (<?php echo $total_addresses > 0 ? round( ( $residential_count / $total_addresses ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                    <tr>
-                        <th>Commercial:</th>
-                        <td><?php echo number_format( $commercial_count ); ?> (<?php echo $total_addresses > 0 ? round( ( $commercial_count / $total_addresses ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                    <tr>
-                        <th>With GPS Coordinates:</th>
-                        <td><?php echo number_format( $total_addresses ); ?> (100%)</td>
-                    </tr>
-                    <tr>
-                        <th>Matched to Overpass:</th>
-                        <td><?php echo number_format( $matched_count ); ?> (<?php echo $total_addresses > 0 ? round( ( $matched_count / $total_addresses ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                    <tr>
-                        <th>High Confidence:</th>
-                        <td><?php echo number_format( $high_confidence_count ); ?> (<?php echo $total_addresses > 0 ? round( ( $high_confidence_count / $total_addresses ) * 100 ) : 0; ?>%)</td>
-                    </tr>
-                    <tr>
-                        <th>Last Updated:</th>
-                        <td><?php echo date( 'M j, Y g:i A' ); ?></td>
-                    </tr>
-                </table>
-            </div>
-            
-            <div class="subsales-card">
-                <h2>📍 ZIP Code Breakdown</h2>
-                <?php if ( ! empty( $zip_breakdown ) ) : ?>
-                    <table class="wp-list-table widefat fixed striped">
-                        <thead>
-                            <tr>
-                                <th>ZIP Code</th>
-                                <th style="text-align: right;">Addresses</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ( $zip_breakdown as $row ) : ?>
-                                <tr>
-                                    <td><?php echo esc_html( $row['zip'] ); ?></td>
-                                    <td style="text-align: right;"><?php echo number_format( $row['count'] ); ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php else : ?>
-                    <p style="color: #666; font-style: italic;">No ZIP data yet.</p>
-                <?php endif; ?>
-            </div>
-        </div>
-        
-        <div class="subsales-dashboard-grid" style="margin-top: 20px;">
-            <div class="subsales-card">
-                <h2>📦 Data Sources</h2>
-                <?php if ( ! empty( $source_breakdown ) ) : ?>
-                    <table class="wp-list-table widefat fixed striped">
-                        <thead>
-                            <tr>
-                                <th>Source</th>
-                                <th style="text-align: right;">Addresses</th>
-                                <th style="text-align: right;">Percentage</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ( $source_breakdown as $row ) : ?>
-                                <tr>
-                                    <td><?php echo esc_html( ucfirst( $row['source'] ) ); ?></td>
-                                    <td style="text-align: right;"><?php echo number_format( $row['count'] ); ?></td>
-                                    <td style="text-align: right;"><?php echo $total_addresses > 0 ? round( ( $row['count'] / $total_addresses ) * 100 ) : 0; ?>%</td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php else : ?>
-                    <p style="color: #666; font-style: italic;">No data sources yet.</p>
-                <?php endif; ?>
-            </div>
-            
-            <div class="subsales-card">
-                <h2>📤 Upload Address Data</h2>
-                <form method="post" action="" enctype="multipart/form-data">
-                    <?php wp_nonce_field( 'subsales_upload_address_file' ); ?>
-                    
-                    <p>
-                        <label for="address_file"><strong>Select File:</strong></label><br>
-                        <input type="file" name="address_file" id="address_file" accept=".zip,.csv" required style="margin-top: 8px;" />
-                    </p>
-                    
-                    <p class="description">
-                        <strong>Supported formats:</strong><br>
-                        • <strong>.zip</strong> - Shapefile archive (must contain .shp, .dbf, .prj files)<br>
-                        • <strong>.csv</strong> - Address list with columns: street, city, state, zip, lat, lng
-                    </p>
-                    
-                    <p>
-                        <button type="submit" name="upload_file" class="button button-primary">
-                            📤 Upload and Process
-                        </button>
-                    </p>
-                </form>
-                
-                <hr style="margin: 20px 0;">
-                
-                <h3>Actions</h3>
-                <p>
-                    <button class="button" disabled title="Coming in Phase 7">🔄 Regenerate JSON Files</button>
-                    <button class="button" disabled title="Coming in Phase 9">📥 Export All Addresses</button>
-                    <button class="button button-link-delete" disabled title="Coming in Phase 9">🗑️ Clear Address Database</button>
-                </p>
-            </div>
-        </div>
-        
-        <!-- Processing Status (shown when file is being processed) -->
-        <?php if ( ! empty( $processing_status ) ) : ?>
-            <div class="subsales-card" style="margin-top: 20px; background: #f0f6fc; border-left: 4px solid #2271b1;">
-                <h2>⚙️ Processing Status</h2>
-                <div id="processing-status">
-                    <p><strong>File Type:</strong> <?php echo esc_html( ucfirst( $processing_status['file_type'] ) ); ?></p>
-                    <p><strong>Status:</strong> <?php echo esc_html( ucfirst( $processing_status['status'] ) ); ?></p>
-                    
-                    <div class="progress-bar" style="background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; margin: 10px 0;">
-                        <div class="progress-fill" style="background: #2271b1; height: 100%; width: 10%; transition: width 0.3s;"></div>
-                    </div>
-                    
-                    <p class="description">Processing is not yet implemented. This will be available in Phase 3 (Shapefile) and Phase 8 (CSV).</p>
-                </div>
-            </div>
-        <?php endif; ?>
-    </div>
-    
-    <style>
-    .subsales-dashboard-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-        gap: 20px;
-    }
-    .subsales-card {
-        background: #fff;
-        border: 1px solid #c3c4c7;
-        border-radius: 4px;
-        padding: 20px;
-    }
-    .subsales-card h2 {
-        margin-top: 0;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #e0e0e0;
-    }
-    .subsales-card .form-table th {
-        padding: 10px 0;
-        width: 60%;
-    }
-    .subsales-card .form-table td {
-        padding: 10px 0;
-    }
-    </style>
-    <?php
-}
 
 /**
  * DEPRECATED: Admin Delivery page (inline version)
@@ -8074,13 +7138,6 @@ function subsales_address_coverage_page() {
 /**
  * Address Validation Page
  */
-function subsales_address_validation_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
-    }
-    include SUBSALES_PLUGIN_PATH . 'admin/address-validation-report.php';
-}
-
 /**
  * GPS Proximity Search Page
  */

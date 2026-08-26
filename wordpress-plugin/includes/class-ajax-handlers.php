@@ -33,28 +33,11 @@ class Subsales_AJAX_Handlers {
         add_action( 'wp_ajax_subsales_run_init', array( __CLASS__, 'run_init' ) );
         
         // Address Management
-        add_action( 'wp_ajax_subsales_search_address', array( __CLASS__, 'search_address' ) );
-        add_action( 'wp_ajax_subsales_download_openaddresses', array( __CLASS__, 'download_openaddresses' ) );
-        add_action( 'wp_ajax_subsales_extract_openaddresses_zips', array( __CLASS__, 'extract_openaddresses_zips' ) );
-        add_action( 'wp_ajax_subsales_match_addresses_batch', array( __CLASS__, 'match_addresses_batch' ) );
-        add_action( 'wp_ajax_subsales_upload_address_file', array( __CLASS__, 'upload_address_file' ) );
-        add_action( 'wp_ajax_subsales_upload_status', array( __CLASS__, 'upload_status' ) );
-        add_action( 'wp_ajax_subsales_reassign_zips', array( __CLASS__, 'reassign_zips' ) );
-        add_action( 'wp_ajax_subsales_reassign_zips_legacy', array( __CLASS__, 'reassign_zips_legacy' ) );
         
-        // Background Matcher
-        add_action( 'wp_ajax_subsales_bg_match_start', array( __CLASS__, 'bg_match_start' ) );
-        add_action( 'wp_ajax_subsales_bg_match_stop', array( __CLASS__, 'bg_match_stop' ) );
-        add_action( 'wp_ajax_subsales_bg_match_resume', array( __CLASS__, 'bg_match_resume' ) );
-        add_action( 'wp_ajax_subsales_bg_match_status', array( __CLASS__, 'bg_match_status' ) );
-        add_action( 'wp_ajax_subsales_bg_match_reset', array( __CLASS__, 'bg_match_reset' ) );
         
         // ZIP Management
-        add_action( 'wp_ajax_subsales_delete_zip_extract', array( __CLASS__, 'delete_zip_extract' ) );
         add_action( 'wp_ajax_subsales_refresh_zip_index', array( __CLASS__, 'refresh_zip_index' ) );
         add_action( 'wp_ajax_subsales_update_sales_mode', array( __CLASS__, 'update_sales_mode' ) );
-        add_action( 'wp_ajax_subsales_generate_zip_extracts', array( __CLASS__, 'generate_zip_extracts' ) );
-        add_action( 'wp_ajax_subsales_upload_zip_boundaries', array( __CLASS__, 'upload_zip_boundaries' ) );
         
         // Orders
         add_action( 'wp_ajax_subsales_fetch_orders', array( __CLASS__, 'fetch_orders' ) );
@@ -275,108 +258,11 @@ class Subsales_AJAX_Handlers {
         wp_send_json_success( array( 'message' => 'Step completed' ) );
     }
 
-    /**
-     * Background matcher control - Start
-     */
-    public static function bg_match_start() {
-        check_ajax_referer( 'subsales_bg_match', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        $result = Subsales_Background_Matcher::start_job();
-        if ( $result['success'] ) {
-            wp_send_json_success( $result );
-        } else {
-            wp_send_json_error( $result );
-        }
-    }
 
-    /**
-     * Background matcher control - Stop
-     */
-    public static function bg_match_stop() {
-        check_ajax_referer( 'subsales_bg_match', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        $result = Subsales_Background_Matcher::stop_job();
-        if ( $result['success'] ) {
-            wp_send_json_success( $result );
-        } else {
-            wp_send_json_error( $result );
-        }
-    }
 
-    /**
-     * Background matcher control - Resume
-     */
-    public static function bg_match_resume() {
-        check_ajax_referer( 'subsales_bg_match', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        $result = Subsales_Background_Matcher::resume_job();
-        if ( $result['success'] ) {
-            wp_send_json_success( $result );
-        } else {
-            wp_send_json_error( $result );
-        }
-    }
 
-    /**
-     * Background matcher control - Status
-     */
-    public static function bg_match_status() {
-        check_ajax_referer( 'subsales_bg_match', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        $status = Subsales_Background_Matcher::get_complete_status();
-        wp_send_json_success( $status );
-    }
 
-    /**
-     * Background matcher control - Reset
-     */
-    public static function bg_match_reset() {
-        check_ajax_referer( 'subsales_bg_match', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        $result = Subsales_Background_Matcher::reset_job();
-        if ( $result['success'] ) {
-            wp_send_json_success( $result );
-        } else {
-            wp_send_json_error( $result );
-        }
-    }
 
-    /**
-     * Match addresses batch using Overpass API
-     */
-    public static function match_addresses_batch() {
-        check_ajax_referer( 'subsales_match_addresses', 'nonce' );
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( 'Permission denied' );
-        }
-        
-        if ( ! class_exists( 'Subsales_Overpass_Matcher' ) ) {
-            wp_send_json_error( 'Overpass Matcher class not loaded' );
-        }
-        
-        $result = Subsales_Overpass_Matcher::match_addresses();
-        
-        if ( $result['success'] ) {
-            wp_send_json_success( $result );
-        } else {
-            wp_send_json_error( $result );
-        }
-    }
 
     /**
      * Refresh ZIP index file
@@ -562,20 +448,11 @@ class Subsales_AJAX_Handlers {
         wp_send_json_success( array( 'message' => 'Lock released' ) );
     }
 
-    // NOTE: The following complex handlers delegate to standalone functions in the main file
-    // to avoid moving hundreds of lines of business logic:
-    // - search_address() - calls subsales_search_address_preview()
-    // - download_openaddresses() - complex file handling
-    // - extract_openaddresses_zips() - calls subsales_extract_openaddresses_zips()
-    // - upload_address_file() - calls subsales_upload_address_file_ajax()
-    // - upload_status() - calls subsales_upload_status_ajax()
-    // - reassign_zips() - calls subsales_reassign_zips_ajax()
-    // - reassign_zips_legacy() - calls subsales_reassign_zips_legacy_ajax()
-    // - delete_zip_extract() - calls subsales_delete_zip_extract()
-    // - generate_zip_extracts() - calls subsales_generate_zip_extracts()
-    // - upload_zip_boundaries() - calls subsales_upload_zip_boundaries_ajax()
-    //
-    // These will remain as standalone functions since they contain significant business
-    // logic that would require extensive refactoring. The simpler handlers above
-    // delegate to those standalone functions.
+    // NOTE: this class used to also register ~10 address-pipeline hooks pointing at
+    // methods that were never written (search_address, upload_address_file,
+    // reassign_zips, the bg_match_* family, ...). Because init() runs before the
+    // main plugin file's own add_action() calls, those broken registrations won the
+    // hook and shadowed the working standalone functions. They were removed along
+    // with the shapefile/Overpass/OpenAddresses pipeline; the remaining address
+    // AJAX actions are registered in subsales-management.php.
 }

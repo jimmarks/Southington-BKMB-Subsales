@@ -624,57 +624,40 @@ $zip_array = $served_zips;
                     </div>
                 </div>
                 
-                <!-- Address Validation Card -->
+                <!-- Addresses Needing Review Card -->
                 <?php
-                $validation_issues_count = Subsales_Database::get_address_validation_issues_count();
-                $has_validation_run = Subsales_Database::has_address_validation_run();
-                $pending_count = Subsales_Database::get_address_validation_pending_count();
-                
-                // Determine card state:
-                // 1. Never validated + pending orders = show "Validation Pending"
-                // 2. Has validated + issues > 0 = show issue count (warning)
-                // 3. Has validated + issues = 0 = show "All Valid" (success)
-                $show_warning = ( ! $has_validation_run && $pending_count > 0 ) || ( $validation_issues_count > 0 );
+                // Replaces the old nightly-validation card. Nothing is blocked by
+                // this queue - it is a to-do list the admin works through whenever
+                // they feel like it, which is the whole point of the redesign.
+                $review_pending = Subsales_Database::count_review_queue_rows( 'pending' );
+                $address_page   = admin_url( 'admin.php?page=subsales-settings#tab-address_extracts' );
                 ?>
-                <div class="postbox subsales-box<?php echo $show_warning ? ' subsales-box-warning' : ''; ?>">
+                <div class="postbox subsales-box<?php echo $review_pending > 0 ? ' subsales-box-warning' : ''; ?>">
                     <div class="postbox-header">
                         <h2>
-                            <span class="ss-icon dashicons dashicons-warning" aria-hidden="true"></span> 
-                            Address Issues
+                            <span class="ss-icon dashicons dashicons-location-alt" aria-hidden="true"></span>
+                            Addresses to Review
                         </h2>
                     </div>
                     <div class="inside subsales-address-validation-inside">
-                        <?php if ( ! $has_validation_run && $pending_count > 0 ): ?>
-                            <!-- Validation has never run -->
-                            <p class="stat-value subsales-validation-count" style="color:#f0ad4e;">⏳</p>
-                            <p class="subsales-address-data-label" style="color:#f0ad4e;">
-                                Validation pending
-                            </p>
-                            <p class="subsales-address-data-action">
-                                <a href="<?php echo admin_url( 'admin.php?page=subsales-address-validation' ); ?>" class="button button-small button-primary">
-                                    Run Validation Now
-                                </a>
-                            </p>
-                        <?php elseif ( $validation_issues_count > 0 ): ?>
-                            <!-- Validation has run and found issues -->
-                            <p class="stat-value subsales-validation-count"><?php echo intval( $validation_issues_count ); ?></p>
+                        <?php if ( $review_pending > 0 ): ?>
+                            <p class="stat-value subsales-validation-count"><?php echo intval( $review_pending ); ?></p>
                             <p class="subsales-address-data-label">
-                                Order<?php echo $validation_issues_count != 1 ? 's' : ''; ?> need<?php echo $validation_issues_count == 1 ? 's' : ''; ?> review
+                                address<?php echo $review_pending != 1 ? 'es' : ''; ?> we couldn't place automatically
                             </p>
                             <p class="subsales-address-data-action">
-                                <a href="<?php echo admin_url( 'admin.php?page=subsales-address-validation' ); ?>" class="button button-small button-primary">
-                                    Review Now
+                                <a href="<?php echo esc_url( $address_page ); ?>" class="button button-small button-primary">
+                                    Review
                                 </a>
                             </p>
                         <?php else: ?>
-                            <!-- Validation has run and all is well -->
                             <p class="stat-value subsales-validation-count" style="color:#4caf50;">✓</p>
                             <p class="subsales-address-data-label" style="color:#4caf50;">
-                                All addresses valid
+                                Nothing waiting for review
                             </p>
                             <p class="subsales-address-data-action">
-                                <a href="<?php echo admin_url( 'admin.php?page=subsales-address-validation' ); ?>" class="button button-small">
-                                    View Report
+                                <a href="<?php echo esc_url( $address_page ); ?>" class="button button-small">
+                                    Address Data
                                 </a>
                             </p>
                         <?php endif; ?>

@@ -408,7 +408,7 @@ $estimated_cost = ( $unique_need_geocoding / 1000 ) * 5;
             
             <?php if ( $unique_need_geocoding > 50 ): ?>
             <li><strong>High cost warning:</strong> You have <?php echo number_format( $unique_need_geocoding ); ?> addresses to geocode. This will cost approximately $<?php echo number_format( $estimated_cost, 2 ); ?>.</li>
-            <li><strong>Before generating manifests:</strong> Consider running the Overpass address matcher to populate more addresses in wp_ss_addresses database (Settings → Address Extracts).</li>
+            <li><strong>Before generating manifests:</strong> Consider running a ZIP code ingestion from CT parcel data to populate more addresses in the wp_ss_addresses database (Address Management → Ingest ZIP Codes).</li>
             <?php elseif ( $unique_need_geocoding > 0 ): ?>
             <li><strong>Moderate cost:</strong> <?php echo number_format( $unique_need_geocoding ); ?> addresses need geocoding (~$<?php echo number_format( $estimated_cost, 2 ); ?>). This is a reasonable one-time cost.</li>
             <?php else: ?>

@@ -1,5 +1,6 @@
 // Simple nearby autocomplete client
-// - Uses existing getCurrentPositionPromise(timeout) from app.js
+// - Gets GPS via its own getPositionOnce(); app.js's getCurrentPositionPromise()
+//   lives inside that file's IIFE and is not actually reachable from here
 // - Calls /wp-json/subsales/v1/nearby?lat=..&lng=..&r=..&max=..
 // - Caches responses in IndexedDB and Cache API
 // - Renders a minimal suggestion dropdown and writes selected label to #address
@@ -365,13 +366,188 @@
     return -1;
   }
 
-  function rankItems(items, q, limit){
-    if(!q) return items.slice(0, limit);
-    const scored = items.map(it=>{
-      const label = normalizeAddress(it) + ' ' + ((it.city||'') + ' ' + (it.state||'') + ' ' + (it.zip||''));
-      return { it, score: fuzzyScore(q, label) };
-    }).filter(s=>s.score > -1).sort((a,b)=>b.score - a.score).slice(0, limit).map(s=>s.it);
-    return scored;
+  // ---------------------------------------------------------------------------
+  // Address matching. DO NOT "simplify" this back to a substring test.
+  //
+  // A seller types the house number first and then starts the street, one
+  // character at a time, at a doorstep: "196 Pondvi". That is not a contiguous
+  // substring of "196 Pond View Dr, Southington, CT 06489, USA", so an indexOf
+  // test over the concatenated label finds nothing - which is exactly what the
+  // old matchesQuery() did, and why the field failed in practice.
+  //
+  // What we do instead:
+  //   1. Split the query into house number + street fragment.
+  //   2. HARD pre-filter on the house number (exact, or prefix while typing).
+  //      This is a real filter, not a score: it cuts ~18k records to a handful,
+  //      so the street fragment can be matched loosely without noise.
+  //   3. Score only the STREET portion, with the trailing street-suffix token
+  //      stripped from BOTH sides and whitespace normalised, so the seller never
+  //      has to know or type "Dr" vs "Drive" vs nothing, or spell it spaced the
+  //      same way ("pondvi" still hits "POND VIEW").
+  // The suffix the customer actually gets is always item.street from the data -
+  // never what the seller typed. See normalizeAddress().
+  // ---------------------------------------------------------------------------
+
+  // Same set parse_address() normalises to server-side. "CT" is Court here: we
+  // only ever strip from the street portion, which never holds the state.
+  const STREET_SUFFIXES = {
+    ST:1, STREET:1, DR:1, DRIVE:1, AVE:1, AV:1, AVENUE:1, RD:1, ROAD:1,
+    LN:1, LANE:1, CT:1, COURT:1, CIR:1, CIRCLE:1, PL:1, PLACE:1,
+    BLVD:1, BOULEVARD:1, TER:1, TERRACE:1, WAY:1, XING:1, CROSSING:1,
+    HWY:1, HIGHWAY:1, PKWY:1, PARKWAY:1, TRL:1, TRAIL:1, LOOP:1,
+    PT:1, POINT:1, RUN:1, ROW:1
+  };
+
+  function normStr(s){
+    return (s == null ? '' : ''+s).toUpperCase().replace(/[.,#]/g,' ').replace(/\s+/g,' ').trim();
+  }
+
+  // "196 Pondvi" -> { number: '196', street: 'PONDVI' }
+  function splitHouseNumber(text){
+    const t = normStr(text);
+    const m = t.match(/^(\d+[A-Z0-9-]*)\s*(.*)$/);
+    return m ? { number: m[1], street: m[2].trim() } : { number: '', street: t };
+  }
+
+  // "POND VIEW DR" -> { base: 'POND VIEW', suffix: 'DR' }
+  function stripStreetSuffix(streetName){
+    const parts = normStr(streetName).split(' ').filter(Boolean);
+    if(parts.length > 1 && STREET_SUFFIXES[parts[parts.length-1]]){
+      const suffix = parts.pop();
+      return { base: parts.join(' '), suffix: suffix };
+    }
+    return { base: parts.join(' '), suffix: '' };
+  }
+
+  // Normalised pieces of a data record, memoised on the record itself - this runs
+  // over every cached ZIP row on every keystroke. Field names differ between the
+  // two PHP extract generators (house_number/postcode vs housenumber/zip), so
+  // read both rather than trusting one shape.
+  function addrParts(item){
+    if(item.__ssParts) return item.__ssParts;
+    let street = (item.street || '').trim();
+    if(!street && item.label) street = (''+item.label).split(',')[0];
+    const split = splitHouseNumber(street);              // handles number-in-street data
+    const number = split.number || normStr(item.house_number || item.housenumber || '');
+    const sfx = stripStreetSuffix(split.street);
+    // Non-enumerable on purpose: the selected record gets JSON.stringify'd into
+    // input.dataset.subsalesSelected, and this cache must not ride along.
+    const parts = { number: number, name: split.street, base: sfx.base, suffix: sfx.suffix };
+    parts.flat = parts.base.replace(/\s+/g,'');          // POND VIEW DR -> PONDVIEW
+    parts.flatFull = parts.name.replace(/\s+/g,'');       // POND VIEW DR -> PONDVIEWDR
+    try{ Object.defineProperty(item, '__ssParts', { value: parts, enumerable: false }); }catch(e){ item.__ssParts = parts; }
+    return parts;
+  }
+
+  // Score a typed street fragment against a candidate street base. Spacing is
+  // optional (sellers drop it), so the de-spaced prefix test carries most of the
+  // real-world weight; fuzzyScore() is only the typo tail.
+  function streetScore(qBase, qFlat, cand){
+    if(!qBase) return 500; // number-only query: every house-number match qualifies
+    if(cand.base === qBase) return 1000;
+    if(cand.base.indexOf(qBase) === 0) return 900;
+    if(cand.flat === qFlat) return 950;
+    if(cand.flat.indexOf(qFlat) === 0) return 880;      // "PONDVI" -> "PONDVIEW"
+    if(cand.flatFull !== cand.flat){                    // seller ran the suffix on: "PONDVIEWDR"
+      if(cand.flatFull === qFlat) return 940;
+      if(cand.flatFull.indexOf(qFlat) === 0) return 870;
+    }
+    const at = cand.flat.indexOf(qFlat);
+    if(at > -1) return 800 - at;
+    const s = fuzzyScore(qBase, cand.base);             // typo tail; may be -1
+    // fuzzyScore's edit-distance band (<=600) allows 2 edits at ANY length, so a
+    // 4-letter street matches a different 4-letter street (POND vs PINE) - which
+    // would also manufacture fake suffix collisions. Only trust it once enough
+    // has been typed for 2 edits to plausibly be a typo. Tune this if field
+    // testing shows real typos being dropped.
+    if(s <= 600 && qBase.length < 6) return -1;
+    return s;
+  }
+
+  function rankAddressItems(items, q, limit){
+    items = items || [];
+    const query = splitHouseNumber((q || '').split(',')[0]);
+    if(!query.number && !query.street) return items.slice(0, limit);
+    const qs = stripStreetSuffix(query.street);
+    const qFlat = qs.base.replace(/\s+/g,'');
+
+    // 1. house-number hard filter
+    let pool = items;
+    if(query.number){
+      pool = items.filter(it=>{
+        const n = addrParts(it).number;
+        return n && n.indexOf(query.number) === 0;
+      });
+    }
+
+    // 2. score the street fragment only
+    const scored = [];
+    for(const it of pool){
+      const p = addrParts(it);
+      let score = streetScore(qs.base, qFlat, p);
+      if(score < 0) continue;
+      if(query.number && p.number === query.number) score += 100; // exact beats prefix
+      if(qs.suffix && p.suffix === qs.suffix) score += 60;        // seller typed the suffix: honour it
+      scored.push({ it: it, score: score });
+    }
+    scored.sort((a,b)=>b.score - a.score);
+    return scored.slice(0, limit).map(s=>s.it);
+  }
+
+  // Southington has 18 street names that differ only by suffix, and they are not
+  // near each other: PINE ST and PINE DR are ~1.95 miles apart and in different
+  // ZIPs. Detect that collision among the top results so the caller can break the
+  // tie with GPS instead of silently picking one and misrouting a delivery.
+  function findSuffixCollision(items, topN){
+    const groups = {};
+    items.slice(0, topN).forEach(it=>{
+      const p = addrParts(it);
+      const key = p.number + '|' + p.base;
+      (groups[key] = groups[key] || []).push(it);
+    });
+    for(const k of Object.keys(groups)){
+      const g = groups[k];
+      if(g.length < 2) continue;
+      const suffixes = {};
+      g.forEach(it=>{ suffixes[addrParts(it).suffix] = 1; });
+      if(Object.keys(suffixes).length > 1) return g;
+    }
+    return null;
+  }
+
+  // app.js defines getCurrentPositionPromise(timeout) but keeps it inside its own
+  // IIFE, so it is not actually reachable from this file. Use it if it is ever
+  // exported; otherwise the same shape locally. Never rejects - resolves null on
+  // denial / unavailable / timeout so callers have one "no fix" path.
+  function getPositionOnce(timeout){
+    if(typeof window.getCurrentPositionPromise === 'function'){
+      try{ return Promise.resolve(window.getCurrentPositionPromise(timeout)); }catch(e){}
+    }
+    return new Promise((resolve)=>{
+      if(!navigator.geolocation) return resolve(null);
+      let done = false;
+      const timer = setTimeout(()=>{ if(!done){ done = true; resolve(null); } }, timeout);
+      navigator.geolocation.getCurrentPosition(
+        (pos)=>{ if(done) return; done = true; clearTimeout(timer); resolve(pos); },
+        ()=>{ if(done) return; done = true; clearTimeout(timer); resolve(null); },
+        { enableHighAccuracy: true, timeout: timeout }
+      );
+    });
+  }
+
+  // Winner of a suffix collision, or null if GPS can't settle it confidently.
+  // The winner must beat the runner-up by more than the fix's own accuracy
+  // (floor 250ft) - a 1.95-mile split clears that easily, a coin-flip doesn't.
+  function nearestOfTied(tied, pos){
+    const lat = pos && pos.coords ? pos.coords.latitude : NaN;
+    const lng = pos && pos.coords ? pos.coords.longitude : NaN;
+    if(!isFinite(lat) || !isFinite(lng)) return null;
+    const ranked = tied.map(it=>({ it: it, d: haversineFeet(lat, lng, parseFloat(it.lat), parseFloat(it.lng)) }))
+                       .filter(r=>isFinite(r.d))
+                       .sort((a,b)=>a.d - b.d);
+    if(ranked.length < 2) return null; // a tied candidate has no coords: let the seller pick
+    const accFeet = (pos.coords && isFinite(pos.coords.accuracy)) ? pos.coords.accuracy * 3.28084 : 0;
+    return (ranked[1].d - ranked[0].d) > Math.max(250, accFeet) ? ranked[0].it : null;
   }
 
   // Normalize an item into: "Number Street, City, State ZIP" when possible
@@ -423,7 +599,11 @@
     }
     return streetOut || label || '';
   }
-  function renderDropdown(inputEl, items){
+  // opts.tiedItems  - rows to mark as "same name, different street type" (GPS
+  //                   could not choose; the seller must)
+  // opts.promoted   - the row GPS picked as nearest
+  function renderDropdown(inputEl, items, opts){
+    opts = opts || {};
 
     if(window.PWALogger && window.PWALogger.debugEnabled){
       window.PWALogger.log('address', 'Address suggestions displayed', {
@@ -456,7 +636,29 @@
       row.style.fontSize = '16px';
       row.style.cursor = 'pointer';
       row.style.borderBottom = '1px solid rgba(0,0,0,0.04)';
-      row.innerText = normalizeAddress(it);
+      const isPromoted = opts.promoted === it;
+      const isTied = !isPromoted && opts.tiedItems && opts.tiedItems.indexOf(it) !== -1;
+      if(isPromoted || isTied){
+        const main = document.createElement('div');
+        main.innerText = normalizeAddress(it);
+        const note = document.createElement('div');
+        note.style.fontSize = '13px';
+        note.style.marginTop = '2px';
+        if(isPromoted){
+          note.innerText = '📍 Closest to you right now';
+          note.style.color = '#1b5e20';
+          row.style.background = '#f1f8e9';
+        } else {
+          const sfx = addrParts(it).suffix;
+          note.innerText = '⚠️ Two different streets share this name — this is the ' + (sfx || 'unsuffixed') + ' one';
+          note.style.color = '#8a6d00';
+          row.style.background = '#fffbea';
+        }
+        row.appendChild(main);
+        row.appendChild(note);
+      } else {
+        row.innerText = normalizeAddress(it);
+      }
       row.setAttribute('role','option');
       row.setAttribute('data-index', ''+idx);
       row.id = 'subsales-option-' + idx;
@@ -560,13 +762,46 @@
   let currentZipLoaded = null; // string zip loaded into memory
     let isManualMode = false; // track if user switched to manual entry mode
 
-    function matchesQuery(item, q){
-      if(!q) return true;
-      const s = (item.label || '') + ' ' + (item.street||'') + ' ' + (item.city||'');
-      return s.toLowerCase().indexOf(q.toLowerCase()) !== -1;
+    // Newest GPS tie-break request wins; a slow fix must never reorder a dropdown
+    // that belongs to an older query.
+    let gpsRequestId = 0;
+
+    // Render now, always. GPS (if needed at all) only reorders afterwards - a
+    // seller standing at a door cannot wait several seconds for a dropdown.
+    function showResults(items, q){
+      if(!items || !items.length){ removeDropdown(input); return; }
+      renderDropdown(input, items);
+      highlighted = -1;
+      maybeGpsTieBreak(items, q);
     }
 
-      
+    function maybeGpsTieBreak(items, q){
+      // Seller typed the street type themselves - they already disambiguated,
+      // and their explicit choice is ranked first. Don't ask for GPS, and don't
+      // let it override them.
+      if(stripStreetSuffix(splitHouseNumber((q || '').split(',')[0]).street).suffix) return;
+      const tied = findSuffixCollision(items, 8);
+      if(!tied) return;
+      const reqId = ++gpsRequestId;
+      // Bail if the world moved on: newer query, edited input, dropdown closed,
+      // or the seller is already arrow-keying (never yank the list out from
+      // under an active keyboard selection).
+      const stale = ()=> reqId !== gpsRequestId
+        || (input.value || '').trim() !== q
+        || !document.getElementById('subsales-nearby-list')
+        || highlighted > -1;
+      const show = (opts)=>{
+        if(stale()) return;
+        renderDropdown(input, opts.items, opts);
+        highlighted = -1;
+      };
+      getPositionOnce(4000).then(pos=>{
+        const best = nearestOfTied(tied, pos); // null when denied/unavailable/timed out/too close to call
+        if(best) show({ items: [best].concat(items.filter(i=>i !== best)), promoted: best });
+        else show({ items: items, tiedItems: tied });
+      }).catch(()=>{ show({ items: items, tiedItems: tied }); });
+    }
+
 
     input.addEventListener('input', (ev)=>{
       const q = (ev.target.value || '').trim();
@@ -611,9 +846,7 @@
           try{
             const data = await loadZipData(detectedZip);
             currentZipLoaded = detectedZip;
-            const items = (data||[]).filter(i=>matchesQuery(i,q)).slice(0,50);
-            if(items.length) renderDropdown(input, items);
-            else removeDropdown(input);
+            showResults(rankAddressItems(data, q, 50), q);
             // ensure retry not shown
             const b = document.getElementById('subsales-retry-btn'); if(b){ b.parentNode && b.parentNode.removeChild(b); retryButtonShownFor = null; }
             return;
@@ -624,9 +857,7 @@
         if(currentZipLoaded && (!detectedZip || detectedZip === currentZipLoaded)){
           try{
             const data = await loadZipData(currentZipLoaded);
-            const items = (data||[]).filter(i=>matchesQuery(i,q)).slice(0,50);
-            if(items.length) renderDropdown(input, items);
-            else removeDropdown(input);
+            showResults(rankAddressItems(data, q, 50), q);
           }catch(e){ console.warn('subsalesNearby: zip search failed', e); removeDropdown(input); }
           return;
         }
@@ -652,10 +883,9 @@
         }
         
         const poolItems = pool || [];
-        const matches = rankItems(poolItems, q, 50);
-        if(matches.length) renderDropdown(input, matches); 
-        else removeDropdown(input);
-        
+        const matches = rankAddressItems(poolItems, q, 50);
+        showResults(matches, q);
+
         // If no matches found and query is 3+ characters, show "Address isn't listed" button
         if(matches.length === 0 && q.length >= 3){
           if(manualModeButtonShownFor !== input){ 

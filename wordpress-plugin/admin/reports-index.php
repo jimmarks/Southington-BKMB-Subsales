@@ -55,33 +55,34 @@ if ( ! defined( 'ABSPATH' ) ) {
             </p>
         </div>
         
-        <!-- Address Validation Report -->
+        <!-- Addresses Needing Review -->
         <?php
-        $validation_issues_count = Subsales_Database::get_address_validation_issues_count();
+        $review_pending = Subsales_Database::count_review_queue_rows( 'pending' );
         ?>
         <div class="report-card" style="border: 1px solid #ddd; border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h2 style="margin-top: 0; color: <?php echo $validation_issues_count > 0 ? '#d63638' : '#2271b1'; ?>;">
-                <span class="dashicons dashicons-warning" style="font-size: 24px; vertical-align: middle; margin-right: 8px;"></span>
-                Address Validation
-                <?php if ( $validation_issues_count > 0 ): ?>
+            <h2 style="margin-top: 0; color: <?php echo $review_pending > 0 ? '#d63638' : '#2271b1'; ?>;">
+                <span class="dashicons dashicons-location-alt" style="font-size: 24px; vertical-align: middle; margin-right: 8px;"></span>
+                Addresses to Review
+                <?php if ( $review_pending > 0 ): ?>
                     <span class="count" style="background: #d63638; color: white; padding: 2px 8px; border-radius: 10px; font-size: 14px; margin-left: 8px;">
-                        <?php echo intval( $validation_issues_count ); ?>
+                        <?php echo intval( $review_pending ); ?>
                     </span>
                 <?php endif; ?>
             </h2>
             <p style="color: #666; line-height: 1.6;">
-                Automated nightly validation of order addresses. Review geocoding failures, approve addresses 
-                for database entry, and fix invalid formats before delivery day.
-                <?php if ( $validation_issues_count > 0 ): ?>
+                Addresses the automatic ZIP code ingestion couldn't place, plus addresses sellers entered
+                that aren't in the address book yet. Nothing is blocked by this list &mdash; work through it
+                whenever it suits you.
+                <?php if ( $review_pending > 0 ): ?>
                     <strong style="color: #d63638;">
-                        <?php echo $validation_issues_count; ?> order<?php echo $validation_issues_count != 1 ? 's' : ''; ?> need<?php echo $validation_issues_count == 1 ? 's' : ''; ?> attention.
+                        <?php echo intval( $review_pending ); ?> address<?php echo $review_pending != 1 ? 'es' : ''; ?> waiting.
                     </strong>
                 <?php endif; ?>
             </p>
             <p style="margin-bottom: 0;">
-                <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-address-validation' ) ); ?>" 
+                <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-settings#tab-address_extracts' ) ); ?>"
                    class="button button-primary">
-                    <?php echo $validation_issues_count > 0 ? 'Review Issues' : 'View Report'; ?>
+                    <?php echo $review_pending > 0 ? 'Review Addresses' : 'Address Data'; ?>
                 </a>
             </p>
         </div>

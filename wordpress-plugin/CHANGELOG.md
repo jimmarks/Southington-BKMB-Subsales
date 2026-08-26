@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-08-26
+
+### The address book was rebuilt from scratch
+
+Getting addresses into this plugin used to mean hunting down GIS shapefiles on a town website, uploading them, and hoping. Three separate half-finished import systems had accumulated, plus a nightly job that asked an admin to approve addresses one at a time (which stalled after about a month of real use). Now an admin just types the ZIP codes they're selling in and presses one button.
+
+### Added
+- **Automatic address ingestion from Connecticut state parcel data.** Type your ZIP codes, press "Ingest Addresses," and the plugin pulls every property address for your town straight from Connecticut's official statewide parcel service - free, no account, no downloads, no GIS knowledge. Re-run it any time; each ZIP's addresses are replaced with a fresh copy.
+- **A "Needs Review" list** for the small number of addresses the automatic process can't place confidently, plus addresses sellers typed that aren't on file. Nothing is blocked by this list - it's a to-do list you work through whenever it suits you, not an alarm. Each row can be fixed, looked up, or ignored.
+- **A rebuilt "Order Entry Distance" report** that actually flags problems instead of just listing numbers. It now catches the case that matters: the phone's GPS was *accurate* and the seller was still two miles from the address they typed - which usually means they picked the wrong street. It also flags addresses that share a house number and street name but differ only by suffix (Southington really does have a Pine St and a Pine Dr, ~2 miles apart), and shows which one the phone was actually next to.
+
+### Fixed
+- **Whole streets were being filed under the wrong ZIP code.** All ~130 addresses on Buckland St were stored as 06489 when they're really 06479 - every single one wrong. The old code never actually tested whether a point fell inside a ZIP code's boundary; it compared against a rectangle drawn around it, and neighbouring ZIP rectangles overlap. Worse, when its cached boundary data was in the wrong format it silently assigned *every* address in a batch to whichever ZIP happened to be listed first. A separate bug did the same thing from another direction, defaulting to "the first ZIP in your settings" whenever a lookup failed. ZIP codes are now decided by a real inside-the-boundary test, and an address that can't be placed confidently goes to the review list instead of being quietly mislabelled - it will never silently guess again.
+- **Address autocomplete now works the way sellers actually type.** Typing "196 Pondvi" found nothing, because the search demanded your text appear exactly as one continuous chunk. It now matches on the house number first, then the street, and no longer cares whether you type the right ending (St/Dr/Ave), get the spacing right, or make a small typo - "196 pond view" finds "196 Pond View Dr". The correct, fully spelled address always comes from the database.
+- Suggestions appear instantly and are *then* reordered if GPS arrives, so a seller at a door never waits on a location fix.
+- Multi-unit buildings no longer flood the suggestions with one entry per unit; they appear once, and the unit goes in the existing Unit/Apt/Floor box.
+
+### Removed
+- The shapefile uploader, the Census boundary downloader, the OpenStreetMap matcher (which had processed 7 addresses out of 18,193), the OpenAddresses.io importer, the CSV upload that only ever answered "Coming in Phase 8!", the nightly validation job and its approve-one-at-a-time screen, and an unreachable duplicate GPS report. About 2,000 lines of dead or actively harmful code, including a second address-file generator that wrote a subtly different format to the same filename as the real one.
+
 ## [3.1.1] - 2026-08-26
 
 ### Fixed
