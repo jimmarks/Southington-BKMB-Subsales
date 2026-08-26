@@ -71,6 +71,13 @@ jobs:
           # Strip vendored translation-template cruft from plugin-update-checker
           find "$PLUGIN_DIR/lib/plugin-update-checker/languages" -name "*.po" -delete 2>/dev/null || true
 
+          # endroid/qr-code ships bundled fonts (noto_sans.otf is ~16MB) for its
+          # optional "QR code with a text label" feature - this plugin only ever
+          # generates plain QR codes (no labels), so these are pure dead weight
+          # in the shipped zip. Confirmed via repo-wide grep: no LabelInterface/
+          # font usage anywhere in this codebase.
+          rm -f "$PLUGIN_DIR"/vendor/endroid/qr-code/assets/*.otf "$PLUGIN_DIR"/vendor/endroid/qr-code/assets/*.ttf 2>/dev/null || true
+
       - name: Create zip
         id: zip
         run: |
