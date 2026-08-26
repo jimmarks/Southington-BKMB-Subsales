@@ -1877,3 +1877,239 @@ input:checked + .subsales-time-slider {
         max-height: 150px;
     }
 }
+
+/* =========================================================================
+   Season Setup wizard modal
+   Deliberately its OWN namespace. Do not reuse .subsales-modal /
+   .subsales-modal-close here: admin/campaigns-page.php binds
+   $('.subsales-modal-close, .subsales-modal') to close-on-click, and that
+   handler ships with the calendar we embed in step 2 - a click inside the
+   calendar would close the wizard.
+   ========================================================================= */
+
+.subsales-newseason-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100010; /* above .subsales-modal's 100000 */
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.subsales-newseason-modal-content {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  width: 92%;
+  max-width: 1200px;
+  height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header - progress bar. Never scrolls. */
+.subsales-newseason-modal-header {
+  flex: 0 0 auto;
+  padding: 16px 24px 0;
+  border-bottom: 1px solid #dcdcde;
+  background: #f6f7f7;
+}
+
+.subsales-newseason-modal-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.subsales-newseason-modal-title h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.subsales-newseason-modal-close {
+  background: none;
+  border: 0;
+  font-size: 26px;
+  line-height: 1;
+  color: #646970;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.subsales-newseason-modal-close:hover {
+  color: #000;
+}
+
+.subsales-newseason-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.subsales-newseason-progress li {
+  margin: 0;
+}
+
+.subsales-newseason-progress-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #50575e;
+  font-size: 13px;
+}
+
+.subsales-newseason-progress-step:hover {
+  color: #2271b1;
+}
+
+.subsales-newseason-progress-step.is-current {
+  color: #2271b1;
+  border-bottom-color: #2271b1;
+  font-weight: 600;
+}
+
+.subsales-newseason-progress-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #dcdcde;
+  color: #1d2327;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.subsales-newseason-progress-step.is-current .subsales-newseason-progress-num {
+  background: #2271b1;
+  color: #fff;
+}
+
+/* Body - the ONLY scrolling region. */
+.subsales-newseason-modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.subsales-newseason-modal-body h2 {
+  margin-top: 0;
+}
+
+/* Step 2 - sale days: date picker + the list being built. */
+.subsales-newseason-modal .subsales-newseason-addday {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.subsales-newseason-modal .subsales-newseason-days {
+  margin: 0 0 12px;
+  max-width: 420px;
+}
+
+.subsales-newseason-modal .subsales-newseason-days li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #dcdcde;
+  border-top: 0;
+}
+
+.subsales-newseason-modal .subsales-newseason-days li:first-child {
+  border-top: 1px solid #dcdcde;
+}
+
+.subsales-newseason-status {
+  background: #f0f6fc;
+  border-left: 4px solid #2271b1;
+  padding: 10px 14px;
+  margin: 0 0 14px;
+  font-size: 14px;
+}
+
+.subsales-newseason-ok {
+  color: #00a32a;
+  font-weight: 700;
+}
+
+.subsales-newseason-todo {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  color: #d63638;
+  font-weight: 700;
+}
+
+.subsales-newseason-preview {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid #dcdcde;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+/* Footer - Back / Next / Close. Always visible. */
+.subsales-newseason-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 24px;
+  border-top: 1px solid #dcdcde;
+  background: #f6f7f7;
+}
+
+.subsales-newseason-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #1d2327;
+}
+
+.subsales-newseason-msg.is-error {
+  color: #d63638;
+  font-weight: 600;
+}
+
+/* WP's mobile-admin breakpoint: go full screen. */
+@media screen and (max-width: 782px) {
+  .subsales-newseason-modal {
+    padding: 0;
+  }
+
+  .subsales-newseason-modal-content {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  .subsales-newseason-modal-header,
+  .subsales-newseason-modal-body,
+  .subsales-newseason-modal-footer {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .subsales-newseason-progress-label {
+    display: none;
+  }
+}

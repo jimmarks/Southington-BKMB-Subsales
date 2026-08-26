@@ -118,35 +118,8 @@ if ( ! current_user_can( 'manage_options' ) ) {
         echo '<div class="notice notice-success"><p>Branding saved!</p></div>';
     }
 
-    if ( isset( $_POST['save_products'] ) ) {
-        check_admin_referer( 'order_sync_settings_nonce' );
-        // Handle products: repeatable fields product_name[], product_price[], product_visible[], product_id[]
-        if ( isset( $_POST['product_name'] ) && is_array( $_POST['product_name'] ) ) {
-            $names = $_POST['product_name'];
-            $prices = isset( $_POST['product_price'] ) && is_array( $_POST['product_price'] ) ? $_POST['product_price'] : array();
-            $visibles = isset( $_POST['product_visible'] ) && is_array( $_POST['product_visible'] ) ? $_POST['product_visible'] : array();
-            $ids = isset( $_POST['product_id'] ) && is_array( $_POST['product_id'] ) ? $_POST['product_id'] : array();
-            $products = array();
-            $count = 0;
-            for ( $i = 0; $i < count( $names ) && $count < 10; $i++ ) {
-                $name = sanitize_text_field( $names[ $i ] );
-                if ( empty( $name ) ) continue;
-                $price_raw = isset( $prices[ $i ] ) ? $prices[ $i ] : '0';
-                $price = floatval( preg_replace( '/[^0-9.\\-]/', '', $price_raw ) );
-                $price = round( $price, 2 );
-                $id = isset( $ids[ $i ] ) ? sanitize_title( $ids[ $i ] ) : sanitize_title( $name );
-                if ( empty( $id ) ) $id = 'p' . time() . $i;
-                $suffix = 1;
-                $base_id = $id;
-                while ( in_array( $id, array_column( $products, 'id' ) ) ) { $id = $base_id . '-' . $suffix; $suffix++; }
-                $visible = in_array( (string)$i, $visibles, true ) || in_array( $id, $visibles, true ) || ( isset( $visibles[ $i ] ) && $visibles[ $i ] );
-                $products[] = array( 'id' => $id, 'name' => $name, 'price' => number_format( $price, 2, '.', '' ), 'visible' => $visible ? 1 : 0 );
-                $count++;
-            }
-            update_option( 'order_sync_products', wp_json_encode( $products ) );
-            echo '<div class="notice notice-success"><p>Products saved!</p></div>';
-        }
-    }
+    // Products are saved by admin/partials/products-editor.php, which owns its
+    // own handler and nonce (same pattern as address-management-dashboard.php).
 
     if ( isset( $_POST['save_zipcodes'] ) ) {
         check_admin_referer( 'order_sync_settings_nonce' );
@@ -278,6 +251,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
             <a href="#tab-address_extracts" class="nav-tab" data-target="#tab-address_extracts">Address Management</a>
             <a href="#tab-backup_restore" class="nav-tab" data-target="#tab-backup_restore">Backup / Restore</a>
             <a href="#tab-system_info" class="nav-tab" data-target="#tab-system_info">System Info</a>
+            <a href="#tab-season_setup" class="nav-tab" data-target="#tab-season_setup">Set Up Season</a>
         </h2>
         
         <style>
@@ -924,86 +898,12 @@ if ( ! current_user_can( 'manage_options' ) ) {
                     </form>
                 </div>
                 
-                <?php
-                // Products configuration (repeatable control)
-                $configured_products = order_sync_get_products_config();
-                ?>
                 <div id="tab-products" class="subsales-tab-panel">
-                    <form method="post" action="">
-                    <?php wp_nonce_field( 'order_sync_settings_nonce' ); ?>
-                    <input type="hidden" name="panel" value="products" />
-                    <table class="form-table">
-                        <tr>
-                            <td>
-                                <div id="products_repeatable">
-                                    <table id="products_table" class="widefat subsales-products-table">
-                                <thead><tr><th class="col-name">Name</th><th class="col-price">Price (USD)</th><th class="col-visible">Visible</th><th class="col-actions">Actions</th></tr></thead>
-                                <tbody>
-                                <?php if ( ! empty( $configured_products ) ) : ?>
-                                    <?php foreach ( $configured_products as $idx => $p ) : ?>
-                                        <tr data-index="<?php echo intval( $idx ); ?>">
-                                            <td>
-                                                <input type="text" name="product_name[]" class="regular-text product-name" value="<?php echo esc_attr( $p['name'] ?? '' ); ?>" />
-                                                <input type="hidden" name="product_id[]" class="product-id" value="<?php echo esc_attr( $p['id'] ?? '' ); ?>" />
-                                            </td>
-                                            <td><input type="text" name="product_price[]" class="regular-text product-price" value="<?php echo esc_attr( $p['price'] ?? '0.00' ); ?>" /></td>
-                                            <td class="col-center"><input type="checkbox" name="product_visible[]" value="<?php echo esc_attr( $p['id'] ?? $idx ); ?>" <?php checked( 1, intval( $p['visible'] ?? 0 ) ); ?> /></td>
-                                            <td class="col-center"><button type="button" class="button button-link remove-product">Remove</button></td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                                </tbody>
-                            </table>
-                            <p><button type="button" id="add_product_btn" class="button">Add product</button> <span class="description">Max 10 products.</span></p>
-                        </div>
-                        <script>
-                        (function(){
-                            var maxProducts = 10;
-                            function slugify(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'').substr(0,60); }
-                            function createRow(name, price, id, visible){
-                                var tbody = document.querySelector('#products_table tbody');
-                                if (!tbody) return null;
-                                var current = tbody.querySelectorAll('tr').length;
-                                if (current >= maxProducts) { alert('Maximum products reached ('+maxProducts+')'); return null; }
-                                var tr = document.createElement('tr');
-                                var tdName = document.createElement('td');
-                                var nameInput = document.createElement('input'); nameInput.type='text'; nameInput.name='product_name[]'; nameInput.className='regular-text product-name'; nameInput.value = name || '';
-                                var idInput = document.createElement('input'); idInput.type='hidden'; idInput.name='product_id[]'; idInput.className='product-id'; idInput.value = id || '';
-                                tdName.appendChild(nameInput); tdName.appendChild(idInput);
-
-                                var tdPrice = document.createElement('td');
-                                var priceInput = document.createElement('input'); priceInput.type='text'; priceInput.name='product_price[]'; priceInput.className='regular-text product-price'; priceInput.value = price || '0.00';
-                                tdPrice.appendChild(priceInput);
-
-                                var tdVis = document.createElement('td'); tdVis.className='col-center';
-                                var visInput = document.createElement('input'); visInput.type='checkbox'; visInput.name='product_visible[]'; visInput.checked = !!visible; visInput.value = id || '';
-                                tdVis.appendChild(visInput);
-
-                                var tdAct = document.createElement('td'); tdAct.className='col-center';
-                                var remBtn = document.createElement('button'); remBtn.type='button'; remBtn.className='button button-link remove-product'; remBtn.textContent='Remove';
-                                tdAct.appendChild(remBtn);
-
-                                tr.appendChild(tdName); tr.appendChild(tdPrice); tr.appendChild(tdVis); tr.appendChild(tdAct);
-                                // wire events
-                                nameInput.addEventListener('input', function(){
-                                    var slug = slugify(nameInput.value) || ('p'+Date.now());
-                                    idInput.value = slug;
-                                    // keep the visible checkbox value in sync with id
-                                    try{ visInput.value = slug; }catch(e){}
-                                });
-                                remBtn.addEventListener('click', function(){ tr.parentNode.removeChild(tr); });
-                                tbody.appendChild(tr);
-                                return tr;
-                            }
-                            document.getElementById('add_product_btn').addEventListener('click', function(){ createRow('', '0.00', 'p' + Date.now(), true); });
-                            document.querySelectorAll('#products_table .remove-product').forEach(function(b){ b.addEventListener('click', function(){ var tr = b.closest('tr'); tr && tr.parentNode.removeChild(tr); }); });
-                        })();
-                        </script>
-                            </td>
-                        </tr>
-                    </table>
-                    <p class="submit"><?php submit_button( 'Save Products', 'primary', 'save_products', false ); ?></p>
-                    </form>
+                    <?php
+                    // Shared with the Season Setup wizard. No id prefix here: this is
+                    // the canonical copy; the wizard passes its own prefix.
+                    include SUBSALES_PLUGIN_PATH . 'admin/partials/products-editor.php';
+                    ?>
                 </div>
 
                 <div id="tab-address_extracts" class="subsales-tab-panel">
@@ -1371,6 +1271,10 @@ if ( ! current_user_can( 'manage_options' ) ) {
             </tr>
         </table>
                 </div>
+                <div id="tab-season_setup" class="subsales-tab-panel">
+                    <?php include SUBSALES_PLUGIN_PATH . 'admin/partials/season-setup.php'; ?>
+                </div>
+
     </div> <!-- .wrap -->
 
     <!-- Import/Restore Progress Modal -->
