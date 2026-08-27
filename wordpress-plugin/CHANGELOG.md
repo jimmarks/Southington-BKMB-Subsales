@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2026-08-27
+
+### Fixed
+- **The order form stopped nagging about the phone field.** Tapping into Phone and then going back to fix the address popped an error, even with nothing typed — so moving between fields, which sellers do constantly, kept throwing warnings. It now only warns about a **half-typed** number, where the warning actually helps. A phone number is still required to save the order; that hasn't changed.
+
+### Added
+- **Text message groundwork (not switched on).** The plumbing for text receipts is now in place: a Text Messages tab in Settings for your Twilio details, an editable receipt message with a live preview, and the behind-the-scenes machinery to send them. **Nothing sends yet** — the master switch is off, and the remaining pieces (handling replies and STOP, and the "check my address" link) are still to come. Safe to install; nothing changes for sellers or customers.
+- **Donations are now recorded as donations.** When a seller uses the donation button, the order is marked as such. Previously a donation looked identical to a sale where the customer wouldn't give their phone number — both just had a placeholder number. Keeping them apart means "how many people declined to give a number" becomes an answerable question, and it stops donations from ever generating a pointless text.
+
 ## [3.3.0] - 2026-08-26
 
 ### Fixed — orders could be silently lost
