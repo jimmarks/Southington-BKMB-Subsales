@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-08-27
+
+### Added
+- **The order form now shows customers why we're asking for their number.** A short notice sits under the phone field: "We'll text you a receipt and delivery updates. Reply STOP anytime." This is the consent disclosure carriers require for text messaging, and the wording shown is the wording stored against the customer record. It hides automatically in Anonymous Donation mode, where no receipt is ever sent.
+
+### Fixed
+- **Text receipts would never have sent when using a Twilio Messaging Service.** The sending worker required at least one individual phone number to be listed, and reported "not configured" if the box was empty — which is exactly the setup A2P 10DLC registration pushes you toward. It silently sent nothing, with no error to explain why. A Messaging Service is now recognised as a valid sender on its own.
+- **Crash when sending with no individual numbers configured.** Picking a sender divided by the number of configured numbers, which threw a fatal `DivisionByZero` when that list was empty. With a Messaging Service in play, Twilio now picks the sender (and Sticky Sender keeps a returning customer on the same number).
+
 ## [3.4.0] - 2026-08-27
 
 ### Fixed

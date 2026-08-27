@@ -511,8 +511,12 @@ class Subsales_SMS_Queue {
             return;
         }
 
+        // A Messaging Service is a valid sender on its own - under A2P 10DLC it
+        // is the normal setup, and the numbers box is then left empty. Requiring
+        // from_numbers here meant the worker reported 'not_configured' and sent
+        // nothing, forever, with no error to explain it.
         $settings = Subsales_Twilio_SMS::get_settings();
-        if ( ! $settings || empty( $settings['from_numbers'] ) ) {
+        if ( ! $settings || ( empty( $settings['from_numbers'] ) && empty( $settings['messaging_service_sid'] ) ) ) {
             self::record_drain( 'not_configured', $counts );
             return;
         }
@@ -737,6 +741,14 @@ class Subsales_SMS_Queue {
      * @return string
      */
     private static function sender_for( $phone, $contact, $from_numbers ) {
+        // No pool: a Messaging Service is in play and Twilio picks the sender
+        // (Sticky Sender keeps a returning customer on the same number). Returning
+        // null makes send() fall through to MessagingServiceSid. Without this the
+        // modulo below is a division by zero.
+        if ( empty( $from_numbers ) ) {
+            return null;
+        }
+
         if ( $contact && ! empty( $contact['assigned_number'] ) && in_array( $contact['assigned_number'], $from_numbers, true ) ) {
             return $contact['assigned_number'];
         }
