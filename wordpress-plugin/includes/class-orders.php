@@ -842,4 +842,80 @@ class Subsales_Orders {
             'errors' => $errors
         ), 200 );
     }
+
+    /**
+     * Clear the tallied flag on one or more orders.
+     *
+     * Tallying was one-way: there was no path back anywhere in the codebase, so
+     * checking off the wrong batch - or checking off cash that had not actually
+     * arrived - could only be undone with a manual DB write. The reversal is
+     * logged to order history the same way the tally is, so the audit trail
+     * shows both the mistake and the correction.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
+     */
+    public static function untally_orders( $request ) {
+        global $wpdb;
+        $table_name   = $wpdb->prefix . 'ss_orders';
+        $current_user = wp_get_current_user();
+
+        $data      = $request->get_json_params();
+        $order_ids = isset( $data['order_ids'] ) ? $data['order_ids'] : array();
+
+        if ( empty( $order_ids ) || ! is_array( $order_ids ) ) {
+            return new WP_REST_Response( array( 'error' => 'No order IDs provided' ), 400 );
+        }
+
+        $success_count = 0;
+        $errors        = array();
+
+        foreach ( $order_ids as $db_id ) {
+            $existing_order = $wpdb->get_row( $wpdb->prepare(
+                "SELECT * FROM $table_name WHERE id = %d",
+                $db_id
+            ), ARRAY_A );
+
+            if ( ! $existing_order ) {
+                $errors[] = "Order ID $db_id not found";
+                continue;
+            }
+
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'tallied'            => 0,
+                    'tallied_at'         => null,
+                    'tallied_by_user_id' => null,
+                ),
+                array( 'id' => $db_id ),
+                array( '%d', '%s', '%d' ),
+                array( '%d' )
+            );
+
+            if ( false !== $result ) {
+                $order_data = json_decode( $existing_order['order_data'], true );
+                Subsales_Database::log_order_change(
+                    $existing_order['id'],
+                    $existing_order['order_id'],
+                    $order_data,
+                    $order_data,
+                    'update',
+                    $current_user->ID,
+                    $current_user->display_name,
+                    'Order tally cleared',
+                    'admin'
+                );
+                $success_count++;
+            } else {
+                $errors[] = "Failed to clear tally on order ID $db_id";
+            }
+        }
+
+        return new WP_REST_Response( array(
+            'message'       => "$success_count order(s) returned to untallied",
+            'success_count' => $success_count,
+            'errors'        => $errors,
+        ), 200 );
+    }
 }

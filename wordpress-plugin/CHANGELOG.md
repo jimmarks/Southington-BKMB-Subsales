@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.6.0] - 2026-08-27
+
+### Added
+- **The saved address now shows under the order ID on the Orders page.** Sorted by entry time, a street run that reads 191, 203, 207 Wild St and then jumps to 181 Franklin Rd before returning to 213 Wild St makes the mis-recorded address obvious at a glance — which is what the reconciliation queue was always meant to catch.
+- **A totals line for every order matching your filter**, not just the 100 on screen. The two biggest days last season were 710 and 540 orders, so reconciling a day previously meant adding up eight page subtotals by hand. Cash, check, digital, donations, product counts and the grand total are now shown for the whole filtered set.
+- **"Return Selected to Untallied".** Tallying was one-way with no reversal anywhere in the system, so a batch checked off in error — or checked off before the cash actually arrived — could only be undone with a manual database edit. Reversals are written to order history alongside the original tally.
+- **A season selector on the Orders page**, defaulting to the current season.
+
+### Fixed
+- **The Orders page ignored seasons entirely.** Nothing scoped it, so once a second season starts, "Untallied Only" would have mixed this season's orders with last season's leftovers and let you tally across both at once. It now defaults to the current season, with "All seasons" available deliberately rather than by accident.
+
 ## [3.5.0] - 2026-08-27
 
 ### Added

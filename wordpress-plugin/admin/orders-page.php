@@ -32,6 +32,12 @@ $teams = order_sync_get_teams();
 $members = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}ss_team_members ORDER BY name ASC", ARRAY_A );
 $products_conf = order_sync_get_products_config();
 
+// Seasons for the scope selector. The page defaults to the current season so
+// next season's reconciliation queue does not quietly include last season's
+// unchecked orders; "All seasons" stays available for looking back on purpose.
+$seasons_list       = $wpdb->get_results( "SELECT id, label FROM {$wpdb->prefix}ss_seasons ORDER BY id DESC", ARRAY_A );
+$current_season_id  = intval( get_option( 'subsales_current_season_id' ) );
+
 // Get filter parameters from request
 $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : '';
 $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : '';
@@ -143,6 +149,17 @@ $params = array();
                     </td>
                 </tr>
                 <tr>
+                    <th>Season</th>
+                    <td>
+                        <select name="season_id">
+                            <?php foreach ( $seasons_list as $s ) : ?>
+                                <option value="<?php echo intval( $s['id'] ); ?>" <?php selected( intval( $s['id'] ), $current_season_id ); ?>>
+                                    <?php echo esc_html( $s['label'] ); ?><?php echo intval( $s['id'] ) === $current_season_id ? ' (current)' : ''; ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <option value="0">All seasons</option>
+                        </select>
+                    </td>
                     <th>Show Deleted</th>
                     <td>
                         <label>
@@ -170,6 +187,9 @@ $params = array();
         <div style="margin-bottom: 15px;">
             <button id="subsales-bulk-tally-btn" class="button button-secondary" disabled>
                 Mark Selected as Tallied
+            </button>
+            <button id="subsales-bulk-untally-btn" class="button button-secondary" disabled title="Return the selected orders to untallied - use if a batch was checked off in error">
+                Return Selected to Untallied
             </button>
             <span id="subsales-selected-count" style="margin-left: 10px; color: #666;"></span>
         </div>
@@ -199,6 +219,21 @@ $params = array();
                     <tr><td colspan="<?php echo 8 + count( $products_conf ); ?>">Use the filters above and click Filter to load orders via AJAX.</td></tr>
                 </tbody>
                 <tfoot>
+                    <tr class="subsales-filtered-totals">
+                        <td colspan="5" style="text-align:right">
+                            All <span id="subsales-ft-count">0</span> matching orders &mdash;
+                            Cash <span id="subsales-ft-cash">$0.00</span> &middot;
+                            Check <span id="subsales-ft-check">$0.00</span> &middot;
+                            Digital <span id="subsales-ft-digital">$0.00</span>
+                        </td>
+                        <?php foreach ( $products_conf as $pcol ) : ?>
+                            <td id="subsales-ft-prod-<?php echo esc_attr( $pcol['id'] ); ?>" style="text-align:center">0</td>
+                        <?php endforeach; ?>
+                        <td id="subsales-ft-donation" style="text-align:right">$0.00</td>
+                        <td></td>
+                        <td id="subsales-ft-total" style="text-align:right">$0.00</td>
+                        <td></td>
+                    </tr>
                     <tr>
                         <td colspan="5" style="text-align:right">Page totals:</td>
                         <?php foreach ( $products_conf as $pcol ) : ?>
@@ -405,6 +440,25 @@ $params = array();
         
         .subsales-orders-meta-note { float: right; color: #666; font-size: 0.9em; }
         .subsales-edited-star { color: red; font-weight: bold; }
+        /* Second line of the order cell. Deliberately narrow and truncating: the
+           column must not widen enough to push the product columns off screen,
+           and a wrapped 3-line address would break the row rhythm that makes an
+           out-of-place street name easy to spot when scanning. Full value is in
+           the title attribute. */
+        .subsales-order-address {
+            font-size: 11px;
+            line-height: 1.3;
+            color: #646970;
+            margin-top: 2px;
+            max-width: 220px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .subsales-order-address em { color: #b32d2e; font-style: normal; }
+        /* Filtered-set totals: the row you actually reconcile against, so it
+           reads heavier than the per-page row above it. */
+        .subsales-filtered-totals td { font-weight: 700; border-top: 2px solid #2271b1; background: #f6f7f7; }
         .subsales-action-btn { 
             padding: 6px 12px; 
             font-size: 12px; 
@@ -452,6 +506,7 @@ $params = array();
         const nonce = <?php echo json_encode( $nonce ); ?>;
         const configuredProducts = <?php echo json_encode( array_values( $products_conf ) ); ?>;
         const restUrl = <?php echo json_encode( rest_url( 'order-manager/v1/orders/tally' ) ); ?>;
+        const untallyUrl = <?php echo json_encode( rest_url( 'order-manager/v1/orders/untally' ) ); ?>;
         const restNonce = <?php echo json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
         
         let selectedOrderIds = new Set();
@@ -467,14 +522,17 @@ $params = array();
         
         function updateTallyButton(){
             const btn = document.getElementById('subsales-bulk-tally-btn');
+            const unBtn = document.getElementById('subsales-bulk-untally-btn');
             const countSpan = document.getElementById('subsales-selected-count');
             const count = selectedOrderIds.size;
             
             if (count > 0) {
                 btn.disabled = false;
+                if (unBtn) unBtn.disabled = false;
                 countSpan.textContent = count;
             } else {
                 btn.disabled = true;
+                if (unBtn) unBtn.disabled = true;
                 countSpan.textContent = '0';
             }
         }
@@ -502,20 +560,26 @@ $params = array();
             updateTallyButton();
         }
         
-        async function bulkTallyOrders(){
+        // Shared by both buttons - tallying and reversing a tally differ only in
+        // the endpoint and the wording, so they run through one path.
+        async function bulkSetTally(untally){
+            const verb = untally ? 'return to untallied' : 'tally';
             if (selectedOrderIds.size === 0) {
-                alert('Please select at least one order to tally.');
+                alert('Please select at least one order to ' + verb + '.');
                 return;
             }
-            
-            if (!confirm('Mark ' + selectedOrderIds.size + ' order(s) as tallied?')) {
+
+            const question = untally
+                ? 'Return ' + selectedOrderIds.size + ' order(s) to untallied?'
+                : 'Mark ' + selectedOrderIds.size + ' order(s) as tallied?';
+            if (!confirm(question)) {
                 return;
             }
-            
+
             const orderIdsArray = Array.from(selectedOrderIds);
-            
+
             try {
-                const resp = await fetch(restUrl, {
+                const resp = await fetch(untally ? untallyUrl : restUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -523,23 +587,26 @@ $params = array();
                     },
                     body: JSON.stringify({ order_ids: orderIdsArray })
                 });
-                
+
                 const data = await resp.json();
-                
+
                 if (data.success_count > 0) {
-                    alert('Successfully tallied ' + data.success_count + ' order(s)');
+                    alert(data.message || ('Updated ' + data.success_count + ' order(s)'));
                     selectedOrderIds.clear();
                     document.getElementById('subsales-select-all').checked = false;
                     updateTallyButton();
                     fetchPage(1); // Refresh the table
                 } else {
-                    alert('Failed to tally orders: ' + (data.errors ? data.errors.join(', ') : 'Unknown error'));
+                    alert('Failed to ' + verb + ': ' + (data.errors ? data.errors.join(', ') : 'Unknown error'));
                 }
             } catch (error) {
                 console.error('Tally error:', error);
-                alert('Error tallying orders: ' + error.message);
+                alert('Error trying to ' + verb + ': ' + error.message);
             }
         }
+
+        async function bulkTallyOrders(){ return bulkSetTally(false); }
+        async function bulkUntallyOrders(){ return bulkSetTally(true); }
 
         function renderRows(orders){
             const tbody = document.getElementById('subsales-orders-tbody');
@@ -561,7 +628,13 @@ $params = array();
                 html += '<input type="checkbox" class="subsales-order-checkbox" data-order-id="' + o.id + '" onchange="handleCheckboxChange(' + o.id + ', this.checked)">';
                 html += '</td>';
                 
-                html += '<td style="white-space: nowrap;">' + escapeHtml(o.order_id) + (o.edited ? ' <span class="subsales-edited-star">*</span>' : '') + '</td>';
+                // Order id on line one, the saved address on line two. Scanning a
+                // day sorted by entry time, an address that breaks the street run
+                // (191, 203, 207 Wild St ... 181 Franklin Rd ... 213 Wild St) is
+                // the tell that it was recorded wrong.
+                html += '<td>' + escapeHtml(o.order_id) + (o.edited ? ' <span class="subsales-edited-star">*</span>' : '');
+                html += '<div class="subsales-order-address" title="' + escapeHtml(o.address || '') + '">' + (o.address ? escapeHtml(o.address) : '<em>no address</em>') + '</div>';
+                html += '</td>';
                 html += '<td style="white-space: nowrap;">' + escapeHtml(o.created_at_formatted) + '</td>';
                 html += '<td style="white-space: nowrap;">' + escapeHtml(o.entered_by_name || o.user_id || '') + '</td>';
                 html += '<td style="white-space: nowrap;">' + escapeHtml(o.team_name || '') + '</td>';
@@ -629,6 +702,27 @@ $params = array();
             document.getElementById('subsales-page-digital').textContent = '$' + Number(totals.digital || 0).toFixed(2);
         }
 
+        // Totals for every order matching the current filter, not just the page.
+        // This is the figure to reconcile a sale day against - the page row above
+        // resets every 100 rows, and a big day runs to seven or eight pages.
+        function renderFilteredTotals(ft){
+            if (!ft) ft = {};
+            const money = (v) => '$' + Number(v || 0).toFixed(2);
+            const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            set('subsales-ft-count', String(ft.order_count || 0));
+            set('subsales-ft-cash', money(ft.cash));
+            set('subsales-ft-check', money(ft.check));
+            set('subsales-ft-digital', money(ft.digital));
+            set('subsales-ft-donation', money(ft.donations));
+            set('subsales-ft-total', money(ft.grand));
+            try{
+                for (const p of configuredProducts){
+                    const el = document.getElementById('subsales-ft-prod-' + p.id);
+                    if (el) el.textContent = (ft.product_totals && ft.product_totals[p.id] !== undefined) ? String(ft.product_totals[p.id]) : '0';
+                }
+            }catch(e){ console.warn('renderFilteredTotals product totals error', e); }
+        }
+
         function renderPagination(page, pages){
             const el = document.getElementById('subsales-pagination');
             el.innerHTML = '';
@@ -663,6 +757,7 @@ $params = array();
                 renderRows(payload.orders);
                 renderMeta(payload.total_count, payload.page, payload.pages);
                 renderTotals(payload.totals);
+                renderFilteredTotals(payload.filtered_totals);
                 renderPagination(payload.page, payload.pages);
             } catch (error) {
                 console.error('[Orders Page] Fetch error:', error);
@@ -683,6 +778,10 @@ $params = array();
         // Bulk tally button handler
         document.getElementById('subsales-bulk-tally-btn').addEventListener('click', function(){
             bulkTallyOrders();
+        });
+
+        document.getElementById('subsales-bulk-untally-btn').addEventListener('click', function(){
+            bulkUntallyOrders();
         });
         
         // Make functions globally available
@@ -724,6 +823,7 @@ $params = array();
                         renderRows(payload.orders);
                         renderMeta(payload.total_count, payload.page, payload.pages);
                         renderTotals(payload.totals);
+                        renderFilteredTotals(payload.filtered_totals);
                         renderPagination(payload.page, payload.pages);
                         
                         const count = payload.total_count || 0;

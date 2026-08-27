@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.5.0
+ * Version: 3.6.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.5.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.6.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2980,6 +2980,11 @@ function order_sync_fetch_orders_ajax() {
     $page_size = isset( $_POST['page_size'] ) ? intval( $_POST['page_size'] ) : 100;
     if ( $page_size <= 0 || $page_size > 100 ) $page_size = 100;
 
+    // Season scope. Defaults to the current season so next season's reconciliation
+    // queue does not silently include last season's stragglers; an explicit 0
+    // means "all seasons", for looking back at a closed season on purpose.
+    $season_id = isset( $_POST['season_id'] ) ? intval( $_POST['season_id'] ) : intval( get_option( 'subsales_current_season_id' ) );
+
     $where = array();
     $params = array();
     
@@ -3013,6 +3018,10 @@ function order_sync_fetch_orders_ajax() {
     if ( ! empty( $end_date ) ) {
         $where[] = "created_at <= %s";
         $params[] = $end_date . ' 23:59:59';
+    }
+    if ( $season_id > 0 ) {
+        $where[] = "season_id = %d";
+        $params[] = $season_id;
     }
     if ( $filter_team ) {
         $where[] = "team_id = %d";
@@ -3078,24 +3087,41 @@ function order_sync_fetch_orders_ajax() {
     if ( $page > $pages ) $page = $pages;
     $offset = ( $page - 1 ) * $page_size;
 
-    // fetch page
-    $select_sql = "SELECT * FROM {$table} {$where_sql} ORDER BY created_at DESC LIMIT %d OFFSET %d";
-    $select_args = array_merge( array( $select_sql ), $params );
-    $select_args[] = $page_size; $select_args[] = $offset;
-    $prepared = call_user_func_array( array( $wpdb, 'prepare' ), $select_args );
-    $rows = $wpdb->get_results( $prepared, ARRAY_A );
+    // Fetch the whole filtered set, not just the page. Reconciling a sale day
+    // needs the total for everything that matched the filter - the two big days
+    // last season were 710 and 540 orders against a 100-row page, so page totals
+    // alone meant adding up eight subtotals by hand. Rows outside the current
+    // page are parsed for totals only; the per-row team/member lookups below stay
+    // gated on $in_page so the query count is unchanged.
+    // ponytail: loads the whole filtered set into memory to total it. Fine at one
+    // season (1.7k orders); if "All seasons" across many years gets slow, move the
+    // money into generated columns and total it with SUM() in SQL instead.
+    $select_sql = "SELECT * FROM {$table} {$where_sql} ORDER BY created_at DESC";
+    if ( ! empty( $params ) ) {
+        $prepared = call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $select_sql ), $params ) );
+        $rows = $wpdb->get_results( $prepared, ARRAY_A );
+    } else {
+        $rows = $wpdb->get_results( $select_sql, ARRAY_A );
+    }
 
     // Load configured products once for building products_map
     $configured_products = order_sync_get_products_config();
 
     $orders = array();
     $totals = array( 'cash' => 0.0, 'check' => 0.0, 'digital' => 0.0, 'grand' => 0.0, 'donations' => 0.0, 'product_totals' => array() );
+    // Same shape as $totals, but across every row matching the filter.
+    $filtered_totals = array( 'cash' => 0.0, 'check' => 0.0, 'digital' => 0.0, 'grand' => 0.0, 'donations' => 0.0, 'order_count' => 0, 'product_totals' => array() );
     // initialize product totals for the page
     foreach ( $configured_products as $pconf ) {
         $totals['product_totals'][ $pconf['id'] ] = 0;
+        $filtered_totals['product_totals'][ $pconf['id'] ] = 0;
     }
 
+    $row_index = -1;
     foreach ( $rows as $r ) {
+        $row_index++;
+        $in_page = ( $row_index >= $offset && $row_index < ( $offset + $page_size ) );
+
         $od = json_decode( $r['order_data'], true );
         if ( ! is_array( $od ) ) $od = array();
 
@@ -3159,20 +3185,42 @@ function order_sync_fetch_orders_ajax() {
         // Only include non-deleted orders in page totals
         $is_deleted = isset( $r['deleted'] ) && intval( $r['deleted'] ) === 1;
         if ( ! $is_deleted ) {
-            if ( strtolower( $payment ) === 'check' ) $totals['check'] += $order_total;
-            elseif ( strtolower( $payment ) === 'cash' ) $totals['cash'] += $order_total;
-            if ( strtolower( $payment ) === 'digital' ) $totals['digital'] += $order_total;
-            $totals['grand'] += $order_total;
-            $totals['donations'] += $donation;
+            $pay_l = strtolower( $payment );
 
-            // add to page product totals
+            // Whole filtered set - this is the number you reconcile against.
+            if ( $pay_l === 'check' )        $filtered_totals['check']   += $order_total;
+            elseif ( $pay_l === 'cash' )     $filtered_totals['cash']    += $order_total;
+            elseif ( $pay_l === 'digital' )  $filtered_totals['digital'] += $order_total;
+            $filtered_totals['grand']     += $order_total;
+            $filtered_totals['donations'] += $donation;
+            $filtered_totals['order_count']++;
             foreach ( $products_map as $pid => $qty ) {
-                if ( isset( $totals['product_totals'][ $pid ] ) ) {
-                    $totals['product_totals'][ $pid ] += intval( $qty );
-                } else {
-                    $totals['product_totals'][ $pid ] = intval( $qty );
+                if ( ! isset( $filtered_totals['product_totals'][ $pid ] ) ) $filtered_totals['product_totals'][ $pid ] = 0;
+                $filtered_totals['product_totals'][ $pid ] += intval( $qty );
+            }
+
+            if ( $in_page ) {
+                if ( $pay_l === 'check' )       $totals['check']   += $order_total;
+                elseif ( $pay_l === 'cash' )    $totals['cash']    += $order_total;
+                elseif ( $pay_l === 'digital' ) $totals['digital'] += $order_total;
+                $totals['grand'] += $order_total;
+                $totals['donations'] += $donation;
+
+                // add to page product totals
+                foreach ( $products_map as $pid => $qty ) {
+                    if ( isset( $totals['product_totals'][ $pid ] ) ) {
+                        $totals['product_totals'][ $pid ] += intval( $qty );
+                    } else {
+                        $totals['product_totals'][ $pid ] = intval( $qty );
+                    }
                 }
             }
+        }
+
+        // Everything below builds one displayed row, including per-row DB
+        // lookups - skip it for rows that only contributed to the totals.
+        if ( ! $in_page ) {
+            continue;
         }
 
         $team_name = '';
@@ -3231,6 +3279,11 @@ function order_sync_fetch_orders_ajax() {
             'user_id' => $r['user_id'],
             'entered_by_name' => $entered_by_name,
             'team_name' => $team_name,
+            // Shown under the order id. Sorted by entry time, a street that runs
+            // 191, 203, 207, 209 Wild St then jumps to 181 Franklin Rd and back
+            // to 213 Wild St makes the odd one out obvious at a glance.
+            'address' => isset( $od['address'] ) ? (string) $od['address'] : '',
+            'customer' => isset( $od['customer'] ) ? (string) $od['customer'] : '',
             'items' => implode( ', ', $items_arr ),
             'order_total' => round( $order_total, 2 ),
             'donation_amount' => $donation,
@@ -3249,6 +3302,8 @@ function order_sync_fetch_orders_ajax() {
     $response = array(
         'orders' => $orders,
         'totals' => $totals,
+        'filtered_totals' => $filtered_totals,
+        'season_id' => $season_id,
         'total_count' => $count,
         'page' => $page,
         'pages' => $pages,

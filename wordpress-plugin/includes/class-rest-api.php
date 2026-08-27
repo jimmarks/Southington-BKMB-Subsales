@@ -84,6 +84,13 @@ class Subsales_REST_API {
             'callback' => array( 'Subsales_Orders', 'tally_orders' ),
             'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
         ));
+
+        // Reverse a tally - see Subsales_Orders::untally_orders().
+        register_rest_route( 'order-manager/v1', '/orders/untally', array(
+            'methods' => 'POST',
+            'callback' => array( 'Subsales_Orders', 'untally_orders' ),
+            'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
+        ));
         
         // Authentication API
         register_rest_route( 'order-manager/v1', '/auth/login', array(
