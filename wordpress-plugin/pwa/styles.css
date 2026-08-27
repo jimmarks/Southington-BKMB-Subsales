@@ -98,6 +98,17 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 .pay-options input[type="checkbox"]{margin:0;width:18px;height:18px;flex-shrink:0}
 .check-number-row{margin-top:8px}
 
+/* SMS consent notice, sits directly under #cellNumber. Negative top margin keeps
+   it tied to the phone field rather than floating between it and the products
+   row. Full width comes from the single-column flex form, so no width rule. */
+.sms-consent-note{
+  font-size:0.78rem;
+  line-height:1.35;
+  color:#666;
+  margin:-4px 0 10px 0;
+  padding:0 2px;
+}
+
 /* Donation checkbox - mobile-friendly styling with iOS compatibility */
 .donation-checkbox-label{
   display:-webkit-box;

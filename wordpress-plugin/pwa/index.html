@@ -120,6 +120,9 @@
             <input id="address" placeholder="Address" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <input id="unitFloorApt" placeholder="Unit / Floor / Apt (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
             <input id="cellNumber" type="tel" inputmode="numeric" placeholder="Phone Number" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" required />
+            <!-- Must stay verbatim identical to Subsales_SMS_Queue::DEFAULT_CONSENT_WORDING -
+                 that constant is what gets stored as the record of what the customer was shown. -->
+            <p id="smsConsentNote" class="sms-consent-note">We'll text you a receipt and delivery updates. Reply STOP anytime.</p>
             <div class="row row-spaced">
               <div id="productsContainer" class="row row-products" style="width:100%; display:flex; gap:8px; flex-wrap:wrap"></div>
             </div>

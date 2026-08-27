@@ -2881,7 +2881,8 @@
   const notesInput = qs('#notes');
   const checkNumberInput = qs('#checkNumber');
   const donationOnlyCheckbox = qs('#donationOnly');
-  
+  const smsConsentNote = qs('#smsConsentNote');
+
   // Donation-only mode toggle handler
   donationOnlyCheckbox && donationOnlyCheckbox.addEventListener('change', function() {
     const isDonationMode = this.checked;
@@ -2903,7 +2904,10 @@
         cellInput.readOnly = true;
         cellInput.style.backgroundColor = '#f5f5f5';
       }
-      
+      // No receipt is sent for donation-only orders (the queue skips them), so
+      // don't leave a promise of one on screen.
+      if (smsConsentNote) smsConsentNote.style.display = 'none';
+
       // Disable and clear all product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {
         input.value = '0';
@@ -2937,7 +2941,8 @@
         cellInput.readOnly = false;
         cellInput.style.backgroundColor = '';
       }
-      
+      if (smsConsentNote) smsConsentNote.style.display = '';
+
       // Re-enable product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {
         input.disabled = false;
