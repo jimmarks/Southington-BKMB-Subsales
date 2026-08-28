@@ -189,7 +189,7 @@ class Subsales_Teams {
                     AND t.season_id = %d
                     AND t.status = 'active'",
                 $user['id'],
-                intval( get_option( 'subsales_current_season_id' ) )
+                Subsales_Database::current_season_id()
             ));
             
             // In individual mode (team_id = -1 or 0 requested), user doesn't need team assignment

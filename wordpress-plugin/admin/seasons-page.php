@@ -30,7 +30,7 @@ if ( isset( $_POST['subsales_season_action'] ) && $_POST['subsales_season_action
     if ( $new_label === '' ) {
         $notice = '<div class="notice notice-error"><p>Please enter a label for the new season.</p></div>';
     } else {
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         $current_season    = null;
         foreach ( Subsales_Database::get_seasons() as $season ) {
             if ( intval( $season['id'] ) === $current_season_id ) {
@@ -63,7 +63,7 @@ if ( isset( $_POST['subsales_season_action'] ) && $_POST['subsales_season_action
 }
 
 $seasons           = Subsales_Database::get_seasons();
-$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+$current_season_id = Subsales_Database::current_season_id();
 
 endif; // $active_tab === 'seasons'
 ?>

@@ -84,8 +84,12 @@ class Subsales_Signups {
         ));
         
         // Get user's signups
+        // GET as well as POST: the mini-registration page calls
+        // /my-signups?phone=... and only POST was ever registered, so that page
+        // always reported "No registrations found". The handler already reads the
+        // phone from either the query string or the body.
         register_rest_route( 'order-manager/v1', '/my-signups', array(
-            'methods' => 'POST',
+            'methods' => 'GET, POST',
             'callback' => array( __CLASS__, 'rest_get_my_signups' ),
             'permission_callback' => '__return_true',
         ));
@@ -380,30 +384,31 @@ class Subsales_Signups {
      * POST /campaigns - Create new campaign
      */
     public static function rest_create_campaign( $request ) {
-        global $wpdb;
-        
         $body = $request->get_json_params();
         $name = isset( $body['name'] ) ? sanitize_text_field( $body['name'] ) : '';
         $date = isset( $body['date'] ) ? sanitize_text_field( $body['date'] ) : '';
-        
+
         if ( empty( $date ) ) {
             return new WP_Error( 'missing_date', 'Date is required', array( 'status' => 400 ) );
         }
-        
-        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
-        
-        $wpdb->insert( $campaigns_table, array(
-            'name' => $name,
-            'date' => $date,
-            'status' => 'active',
-            'created_at' => current_time( 'mysql' )
-        ), array( '%s', '%s', '%s', '%s' ) );
-        
-        $campaign_id = $wpdb->insert_id;
-        
+
+        // This used to insert columns named name/date. The real ones are
+        // campaign_name/campaign_date, so every insert failed silently and the
+        // endpoint still reported success. save_campaign() writes the correct
+        // columns and stamps season_id.
+        $campaign_id = Subsales_Database::save_campaign( array(
+            'campaign_name' => $name,
+            'campaign_date' => $date,
+            'status'        => 'active',
+        ) );
+
+        if ( ! $campaign_id ) {
+            return new WP_Error( 'create_failed', 'Could not create the sale day.', array( 'status' => 500 ) );
+        }
+
         return rest_ensure_response( array(
             'success' => true,
-            'id' => $campaign_id
+            'id'      => intval( $campaign_id ),
         ) );
     }
     
@@ -411,19 +416,22 @@ class Subsales_Signups {
      * DELETE /campaigns/{id} - Delete campaign
      */
     public static function rest_delete_campaign( $request ) {
-        global $wpdb;
-        
         $campaign_id = intval( $request->get_param( 'id' ) );
-        $campaigns_table = $wpdb->prefix . 'ss_campaigns';
-        
-        $wpdb->update(
-            $campaigns_table,
-            array( 'status' => 'deleted' ),
-            array( 'id' => $campaign_id ),
-            array( '%s' ),
-            array( '%d' )
-        );
-        
+
+        // This used to write status = 'deleted', which is not a member of the
+        // column's enum ('active','inactive','completed') - MySQL coerced it to
+        // '' and the sale day stayed visible. delete_campaign() does the real
+        // removal and refuses when signups or orders still depend on it.
+        $result = Subsales_Database::delete_campaign( $campaign_id );
+
+        if ( true !== $result ) {
+            return new WP_Error(
+                'delete_blocked',
+                is_string( $result ) ? $result : 'Could not delete the sale day.',
+                array( 'status' => 409 )
+            );
+        }
+
         return rest_ensure_response( array( 'success' => true ) );
     }
 }

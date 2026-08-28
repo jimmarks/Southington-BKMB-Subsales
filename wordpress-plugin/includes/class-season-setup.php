@@ -54,7 +54,7 @@ class Subsales_Season_Setup {
     public static function status() {
         global $wpdb;
 
-        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $season_id = Subsales_Database::current_season_id();
         $season    = null;
         foreach ( Subsales_Database::get_seasons() as $row ) {
             if ( intval( $row['id'] ) === $season_id ) {
@@ -193,7 +193,7 @@ class Subsales_Season_Setup {
      * @return string Message for the wizard footer.
      */
     private static function save_sales_days( $posted, $step ) {
-        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $season_id = Subsales_Database::current_season_id();
         if ( ! $season_id ) {
             self::fail( 'Start the season in step 1 first - sale days are filed under a season.', $step );
         }

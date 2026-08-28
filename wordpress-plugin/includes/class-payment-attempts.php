@@ -148,7 +148,7 @@ class Subsales_Payment_Attempts {
 
         $insert_row = array(
             'attempt_uid'            => $attempt_uid,
-            'season_id'              => intval( get_option( 'subsales_current_season_id' ) ),
+            'season_id'              => Subsales_Database::current_season_id(),
             'team_id'                => intval( $team_id ),
             'user_id'                => $user_id,
             'entered_by_name'        => $entered_by_name,

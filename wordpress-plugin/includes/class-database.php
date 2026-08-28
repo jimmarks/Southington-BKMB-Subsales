@@ -71,7 +71,7 @@ class Subsales_Database {
             tallied_by_user_id bigint(20) unsigned DEFAULT NULL,
             address varchar(500) DEFAULT NULL,
             address_entry_method enum('autocomplete','manual','gps','unknown') DEFAULT 'unknown',
-            address_validation_status enum('pending','valid','geocode_failed','format_invalid','approved') DEFAULT 'pending',
+            address_validation_status enum('pending','valid','geocode_failed','format_invalid','approved','dismissed') DEFAULT 'pending',
             address_validation_date datetime DEFAULT NULL,
             address_validation_data text DEFAULT NULL,
             address_hash varchar(64) DEFAULT NULL,
@@ -504,7 +504,7 @@ class Subsales_Database {
                  ADD INDEX season_id (season_id)"
             );
 
-            $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+            $current_season_id = Subsales_Database::current_season_id();
             if ( $current_season_id ) {
                 $wpdb->query( $wpdb->prepare(
                     "UPDATE {$teams_table_name} SET season_id = %d WHERE season_id = 0",
@@ -573,7 +573,7 @@ class Subsales_Database {
              ADD INDEX season_id (season_id)"
         );
 
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         if ( $current_season_id ) {
             $wpdb->query( $wpdb->prepare(
                 "UPDATE {$campaigns_table_name} SET season_id = %d WHERE season_id = 0",
@@ -610,7 +610,7 @@ class Subsales_Database {
             return;
         }
 
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         if ( $current_season_id ) {
             $wpdb->query( $wpdb->prepare(
                 "UPDATE {$campaigns_table_name} SET season_id = %d WHERE season_id = 0",
@@ -667,7 +667,7 @@ class Subsales_Database {
              ADD INDEX season_id (season_id)"
         );
 
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         if ( $current_season_id ) {
             $wpdb->query( $wpdb->prepare(
                 "UPDATE {$orders_table_name} SET season_id = %d WHERE season_id = 0",
@@ -1151,7 +1151,7 @@ class Subsales_Database {
     public static function add_team( $name, $access_code, $description = '', $status = 'active' ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_teams';
-        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $season_id = Subsales_Database::current_season_id();
 
         $existing = $wpdb->get_row(
             $wpdb->prepare(
@@ -1257,6 +1257,42 @@ class Subsales_Database {
      * @param string $label New season label, e.g. "2026-2027"
      * @return array|WP_Error { new_season_id, old_season_id, teams_deactivated }
      */
+    /**
+     * The current season id, with a self-healing fallback.
+     *
+     * subsales_current_season_id is written once by migrate_seasons_table() and
+     * nothing re-establishes it if it is lost. When it was missing, callers
+     * disagreed about what 0 meant: some failed open (the kids' app listed every
+     * sale day ever recorded), others failed closed (the admin dashboard read
+     * zero orders), and create_order() stamped season_id = 0 on live orders,
+     * orphaning them from every season-scoped query with no way back.
+     *
+     * Falling back to the newest season is the safe reading: a site with seasons
+     * is always operating in the most recent one, and writing the option back
+     * means the inconsistency is repaired rather than re-derived on every call.
+     *
+     * @return int Season id, or 0 only when no seasons exist at all.
+     */
+    public static function current_season_id() {
+        $id = intval( get_option( 'subsales_current_season_id' ) );
+        if ( $id > 0 ) {
+            return $id;
+        }
+
+        global $wpdb;
+        $seasons_table = $wpdb->prefix . 'ss_seasons';
+        $newest = intval( $wpdb->get_var( "SELECT id FROM {$seasons_table} ORDER BY id DESC LIMIT 1" ) );
+
+        if ( $newest > 0 ) {
+            update_option( 'subsales_current_season_id', $newest, false );
+            subsales_log( 'WARNING', 'seasons', 'subsales_current_season_id was missing; healed to newest season', array(
+                'season_id' => $newest,
+            ) );
+        }
+
+        return $newest;
+    }
+
     public static function start_new_season( $label ) {
         global $wpdb;
         $label = sanitize_text_field( $label );
@@ -1275,7 +1311,7 @@ class Subsales_Database {
             return new WP_Error( 'duplicate_label', 'A season with that label already exists.', array( 'status' => 409 ) );
         }
 
-        $old_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $old_season_id = Subsales_Database::current_season_id();
 
         $inserted = $wpdb->insert( $seasons_table, array( 'label' => $label ), array( '%s' ) );
         if ( ! $inserted ) {
@@ -1312,14 +1348,44 @@ class Subsales_Database {
      * 
      * @return array Teams
      */
-    public static function get_teams() {
+    /**
+     * Teams, optionally filtered by status and season.
+     *
+     * Callers were already passing 'active' - the signature just ignored it and
+     * returned every team of every season and status. Season defaults to the
+     * current one: with seasons in play, "the teams" means this year's unless
+     * something deliberately asks otherwise ($season_id = 0 for all seasons).
+     *
+     * @param string|null $status    e.g. 'active'; null for any status.
+     * @param int|null    $season_id Season to scope to; 0 for all; null = current.
+     */
+    public static function get_teams( $status = null, $season_id = null ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_teams';
-        
-        return $wpdb->get_results( 
-            "SELECT * FROM {$table_name} ORDER BY status DESC, created_at DESC", 
-            ARRAY_A 
-        );
+
+        if ( null === $season_id ) {
+            $season_id = self::current_season_id();
+        }
+
+        $where  = array( '1=1' );
+        $params = array();
+
+        if ( ! empty( $status ) ) {
+            $where[]  = 'status = %s';
+            $params[] = $status;
+        }
+        if ( $season_id > 0 ) {
+            $where[]  = 'season_id = %d';
+            $params[] = $season_id;
+        }
+
+        $sql = "SELECT * FROM {$table_name} WHERE " . implode( ' AND ', $where )
+             . " ORDER BY status DESC, created_at DESC";
+
+        if ( $params ) {
+            return $wpdb->get_results( $wpdb->prepare( $sql, $params ), ARRAY_A );
+        }
+        return $wpdb->get_results( $sql, ARRAY_A );
     }
     
     /**
@@ -2269,7 +2335,7 @@ class Subsales_Database {
         // every season's dates forever.
         if ( 'all' !== $season_id ) {
             $season_id = ( null === $season_id )
-                ? intval( get_option( 'subsales_current_season_id' ) )
+                ? Subsales_Database::current_season_id()
                 : intval( $season_id );
             if ( $season_id ) {
                 $where[] = $wpdb->prepare( 'season_id = %d', $season_id );
@@ -2308,13 +2374,21 @@ class Subsales_Database {
      * @param string $date Date in Y-m-d format
      * @return array|null Campaign record
      */
-    public static function get_campaign_by_date( $date ) {
+    public static function get_campaign_by_date( $date, $season_id = null ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_campaigns';
-        
+
+        // Season-scoped: dates recur across seasons, and unscoped this matched a
+        // retired season's sale day. The calendar would then show the date empty
+        // while toggling it silently reactivated last year's campaign.
+        if ( null === $season_id ) {
+            $season_id = self::current_season_id();
+        }
+
         $campaign = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM {$table_name} WHERE campaign_date = %s",
-            $date
+            "SELECT * FROM {$table_name} WHERE campaign_date = %s AND season_id = %d",
+            $date,
+            $season_id
         ), ARRAY_A );
         
         return $campaign;
@@ -2335,7 +2409,7 @@ class Subsales_Database {
         // never scoped to the season it belongs to.
         $season_id = isset( $data['season_id'] )
             ? intval( $data['season_id'] )
-            : intval( get_option( 'subsales_current_season_id' ) );
+            : Subsales_Database::current_season_id();
 
         $campaign_data = array(
             'campaign_date' => $data['campaign_date'],
@@ -2805,7 +2879,7 @@ class Subsales_Database {
     public static function get_or_create_team( $team_name ) {
         global $wpdb;
         $teams_table = $wpdb->prefix . 'ss_teams';
-        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $season_id = Subsales_Database::current_season_id();
 
         // Scoped to the current season only - a same-named team from a
         // prior (now-inactive) season must never be matched here, or a kid
@@ -3180,7 +3254,7 @@ class Subsales_Database {
         // Season-scoped internally (every caller means "right now", which
         // always means the current season) rather than threaded through
         // this function's signature.
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         $orders = $wpdb->get_results( $wpdb->prepare(
             "SELECT * FROM {$orders_table}
              WHERE team_id = %d AND DATE(created_at) = %s AND deleted = 0 AND season_id = %d
@@ -3331,7 +3405,7 @@ class Subsales_Database {
                AND t.season_id = %d
              ORDER BY c.campaign_date ASC, t.name ASC",
             $user_id,
-            intval( get_option( 'subsales_current_season_id' ) )
+            Subsales_Database::current_season_id()
         ), ARRAY_A );
 
         return $rows ? $rows : array();
@@ -3622,7 +3696,7 @@ class Subsales_Database {
         $orders_table = $wpdb->prefix . 'ss_orders';
         $watermark = get_option( 'subsales_address_scan_watermark', '' );
 
-        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $season_id = Subsales_Database::current_season_id();
 
         if ( ! empty( $watermark ) ) {
             $orders = $wpdb->get_results( $wpdb->prepare(

@@ -39,7 +39,7 @@ if ( ! function_exists( 'subsales_oed_distance' ) ) {
 
 global $wpdb;
 $orders_table      = $wpdb->prefix . 'ss_orders';
-$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+$current_season_id = Subsales_Database::current_season_id();
 
 // Handle search
 $search_query        = isset( $_GET['search'] ) ? sanitize_text_field( wp_unslash( $_GET['search'] ) ) : '';

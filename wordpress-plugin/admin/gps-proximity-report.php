@@ -120,7 +120,7 @@ if ( isset( $_POST['search_address'] ) && check_admin_referer( 'gps_proximity_se
                                             AND DATE_ADD(%s, INTERVAL 10 MINUTE)
                      ORDER BY o.created_at DESC",
                     $user_name,
-                    intval( get_option( 'subsales_current_season_id' ) ),
+                    Subsales_Database::current_season_id(),
                     $heartbeat_time,
                     $heartbeat_time
                 ), ARRAY_A );

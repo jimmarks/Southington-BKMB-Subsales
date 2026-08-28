@@ -23,7 +23,7 @@ $start_addr = esc_attr( get_option( 'order_sync_delivery_start_address', '' ) );
     foreach ( $configured_products as $p ) { $product_totals[ $p['id'] ] = 0; }
     $rows_all = $wpdb->get_results( $wpdb->prepare(
         "SELECT * FROM {$orders_table} WHERE deleted = 0 AND season_id = %d ORDER BY id ASC",
-        intval( get_option( 'subsales_current_season_id' ) )
+        Subsales_Database::current_season_id()
     ), ARRAY_A );
     $pre_total_orders = 0;
     $by_address_pf = array();

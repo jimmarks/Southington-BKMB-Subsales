@@ -36,7 +36,7 @@ $products_conf = order_sync_get_products_config();
 // next season's reconciliation queue does not quietly include last season's
 // unchecked orders; "All seasons" stays available for looking back on purpose.
 $seasons_list       = $wpdb->get_results( "SELECT id, label FROM {$wpdb->prefix}ss_seasons ORDER BY id DESC", ARRAY_A );
-$current_season_id  = intval( get_option( 'subsales_current_season_id' ) );
+$current_season_id  = Subsales_Database::current_season_id();
 
 // Get filter parameters from request
 $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : '';

@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-season-setup.php';
 
-$season_setup_id = intval( get_option( 'subsales_current_season_id' ) );
+$season_setup_id = Subsales_Database::current_season_id();
 $season_setup_label = '';
 foreach ( Subsales_Database::get_seasons() as $season_setup_row ) {
     if ( intval( $season_setup_row['id'] ) === $season_setup_id ) {

@@ -45,7 +45,7 @@ class Subsales_Points_Calculator {
         
         // Get all non-deleted orders with necessary fields, scoped to the
         // current season so this report doesn't mix in prior-season sales.
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         $orders = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT id, order_data, created_at, team_id, user_id FROM {$orders_table} WHERE deleted = 0 AND season_id = %d ORDER BY created_at DESC",

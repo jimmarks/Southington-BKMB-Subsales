@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.8.0] - 2026-08-28
+
+### Removed
+- **Backup & Restore is gone entirely** — the feature, its settings tab, the import modal, and both class files. It predated seasons and would have merged this year's teams into last year's on any restore. A replacement will be built properly later.
+- **~1,400 lines of dead code**: a 987-line duplicate of the Settings page that nothing rendered, and five signup handlers left orphaned when v3.7.0 removed their duplicate routes.
+
+### Fixed
+- **Sale days can be created and deleted again.** Creating one wrote to columns that don't exist (`name`/`date` rather than `campaign_name`/`campaign_date`), so it failed silently while still reporting success. Deleting one wrote a status value that isn't valid for the column, so the day stayed visible. Both now go through the same code the rest of the plugin uses, and deleting refuses when signups or orders still depend on the day.
+- **The mini-registration page finds registrations again** — it looks them up with `GET`, but only `POST` was ever registered, so it always said "No registrations found."
+- **Team lists no longer span every season.** `get_teams()` accepted a status filter and silently ignored it, returning every team of every season and status.
+- **The calendar can no longer reactivate a retired season's sale day.** Looking a date up ignored the season, so toggling a date that exists in a prior season silently revived it while the calendar still showed the date as empty.
+- **A missing current-season setting is now self-healing.** When it was lost, some screens showed every season's data and others showed none, and new orders were stamped with no season at all — orphaning them permanently. All 36 read sites now go through one accessor that falls back to the newest season and repairs the setting.
+- **"Dismissed" addresses stopped disappearing on upgrade.** The status column's definition was missing that value, so every version bump reset those rows to blank before the migration re-added the value — hiding the loss.
+
 ## [3.7.0] - 2026-08-28
 
 ### Fixed

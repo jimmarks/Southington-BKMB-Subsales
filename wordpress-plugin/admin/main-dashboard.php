@@ -25,7 +25,7 @@ $teams_table = $wpdb->prefix . 'ss_teams';
 $members_table = $wpdb->prefix . 'ss_team_members';
 
 // Get counts
-$current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+$current_season_id = Subsales_Database::current_season_id();
 $order_count = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$orders_table} WHERE deleted = 0 AND season_id = %d", $current_season_id ) );
 $team_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'active'" );
 $team_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$teams_table} WHERE status = 'inactive'" );
@@ -36,7 +36,7 @@ $member_count_inactive = $wpdb->get_var( "SELECT COUNT(*) FROM {$members_table} 
 function subsales_compute_financials( $where_clause = "deleted = 0" ) {
     global $wpdb;
     $orders_table = $wpdb->prefix . 'ss_orders';
-    $season_id = intval( get_option( 'subsales_current_season_id' ) );
+    $season_id = Subsales_Database::current_season_id();
 
     $product_sales_total = 0.0;
     $donations_total = 0.0;

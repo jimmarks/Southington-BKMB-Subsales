@@ -72,7 +72,7 @@ class Subsales_Delivery {
         // Fetch orders (delivery date is for display only, not filtering).
         // Scoped to the current season so a manifest run after a new season
         // starts doesn't pull in already-delivered historical orders.
-        $current_season_id = intval( get_option( 'subsales_current_season_id' ) );
+        $current_season_id = Subsales_Database::current_season_id();
         $rows = $wpdb->get_results( $wpdb->prepare(
             "SELECT * FROM {$table} WHERE deleted = 0 AND season_id = %d ORDER BY id ASC",
             $current_season_id

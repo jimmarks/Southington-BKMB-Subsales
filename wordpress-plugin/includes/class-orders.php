@@ -62,7 +62,7 @@ class Subsales_Orders {
         // Always scoped to the current season - this is the admin orders
         // list, which must not mix in a prior season's already-handled orders.
         $where[] = 'season_id = %d';
-        $values[] = intval( get_option( 'subsales_current_season_id' ) );
+        $values[] = Subsales_Database::current_season_id();
 
         if ( ! empty( $user_id ) ) {
             $where[] = 'user_id = %s';
@@ -285,7 +285,7 @@ class Subsales_Orders {
             'sync_status' => 'synced',
             // Always known (a global "current season" setting, not
             // client-submitted) - unlike team_id this is never conditional.
-            'season_id' => intval( get_option( 'subsales_current_season_id' ) ),
+            'season_id' => Subsales_Database::current_season_id(),
         );
         $formats = array( '%s', '%s', '%s', '%s', '%d' );
         if ( $team_id !== null ) {
