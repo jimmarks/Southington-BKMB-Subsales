@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.15.0] - 2026-08-28
+
+### Added
+- **Groundwork for accurate address matching.** Street names are now understood in one canonical form, so "Steeplechase Dr", "Steeple Chase Drive" and the parcel data's "STEEPLE CHASE DR" are recognised as the same street — as are "W Ridge"/"West Ridge", "Mt Vernon"/"Mount Vernon" and "Winding Ridge"/"WINDING RDG". A shared resolver decides where each order actually gets delivered, preferring a matched address, falling back to the GPS the seller's phone recorded at the door, and saying plainly when it can do neither.
+
+Nothing uses this yet — the Address Coverage Report is being rebuilt on top of it.
+
 ## [3.14.1] - 2026-08-28
 
 ### Fixed

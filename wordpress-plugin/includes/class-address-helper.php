@@ -23,6 +23,13 @@ class Subsales_Address_Helper {
      * and in different ZIPs), so the base street is the join key and the suffix
      * is the thing we have to disambiguate.
      */
+    /**
+     * Worst GPS accuracy, in metres, we will still route from. One reading last
+     * season was 1,633m out - half a town away - and silently routing from it is
+     * worse than having no fix at all.
+     */
+    const GPS_ACCURACY_LIMIT_M = 100;
+
     const STREET_SUFFIXES = array(
         'ST', 'STREET',
         'DR', 'DRIVE',
@@ -93,6 +100,266 @@ class Subsales_Address_Helper {
         }
 
         return trim( substr( $normalized, 0, -strlen( $suffix ) ) );
+    }
+
+    /**
+     * Suffix spellings that mean the same street, mapped to one canonical token.
+     *
+     * The parcel import and the sellers disagree constantly: the book holds both
+     * RDG (155 rows) and RIDGE (34), writes AV rather than AVE, and abbreviates
+     * HOLLOW to HOLW. Sellers type whichever they know. Neither is wrong, so both
+     * collapse to the same token before anything is compared.
+     */
+    const SUFFIX_CANONICAL = array(
+        'STREET' => 'ST',      'ST'     => 'ST',
+        'DRIVE'  => 'DR',      'DR'     => 'DR',
+        'AVENUE' => 'AV',      'AVE'    => 'AV',   'AV'   => 'AV',
+        'ROAD'   => 'RD',      'RD'     => 'RD',
+        'LANE'   => 'LN',      'LN'     => 'LN',
+        'COURT'  => 'CT',      'CT'     => 'CT',
+        'CIRCLE' => 'CIR',     'CIR'    => 'CIR',
+        'PLACE'  => 'PL',      'PL'     => 'PL',
+        'TERRACE'=> 'TERR',    'TERR'   => 'TERR', 'TER'  => 'TERR',
+        'RIDGE'  => 'RDG',     'RDG'    => 'RDG',
+        'CROSSING'=> 'XING',   'XING'   => 'XING',
+        'HOLLOW' => 'HOLW',    'HOLW'   => 'HOLW',
+        'TURNPIKE'=> 'TPKE',   'TPKE'   => 'TPKE',
+        'HEIGHTS'=> 'HTS',     'HTS'    => 'HTS',
+        'TRAIL'  => 'TRL',     'TRL'    => 'TRL',
+        'BOULEVARD'=> 'BLVD',  'BLVD'   => 'BLVD',
+        'PARKWAY'=> 'PKWY',    'PKWY'   => 'PKWY',
+        'SQUARE' => 'SQ',      'SQ'     => 'SQ',
+        'EXTENSION'=> 'EXT',   'EXT'    => 'EXT',
+        'HIGHWAY'=> 'HWY',     'HWY'    => 'HWY',
+        'WAY'    => 'WAY',     'PATH'   => 'PATH',  'RUN' => 'RUN',
+        'GATE'   => 'GATE',    'HILL'   => 'HILL',  'WOODS' => 'WOODS',
+        'MEADOWS'=> 'MEADOWS',
+    );
+
+    /** Leading tokens sellers abbreviate but the parcel data spells out. */
+    const PREFIX_CANONICAL = array(
+        'N' => 'NORTH', 'S' => 'SOUTH', 'E' => 'EAST', 'W' => 'WEST', 'MT' => 'MOUNT',
+    );
+
+    /**
+     * A street reduced to one canonical spelling.
+     *
+     * Beyond normalize_street(): drops anything after a comma (the city routinely
+     * leaks into the street field), removes the assessor's parcel artefacts, and
+     * canonicalises the leading direction and the trailing suffix. "W Ridge Rd",
+     * "West Ridge Road" and "WEST RIDGE RD" all land on "WEST RIDGE RD".
+     *
+     * @param string $street
+     * @return string
+     */
+    public static function canonical_street( $street ) {
+        $s = strtoupper( trim( (string) $street ) );
+        $s = preg_replace( '/,.*$/', '', $s );                    // city/state leaked in
+        $s = preg_replace( '/\s*\(TP\)\s*/', ' ', $s );          // parcel artefacts
+        $s = preg_replace( '/\s*#\s*REAR\s*$/', ' ', $s );
+        $s = preg_replace( '/\s*-\s*(REAR|LOT\b.*)$/', ' ', $s );
+        $s = preg_replace( '/[^A-Z0-9 ]+/', ' ', $s );
+        $s = trim( preg_replace( '/\s+/', ' ', $s ) );
+
+        if ( '' === $s ) {
+            return '';
+        }
+
+        $words = explode( ' ', $s );
+
+        if ( count( $words ) > 1 && isset( self::PREFIX_CANONICAL[ $words[0] ] ) ) {
+            $words[0] = self::PREFIX_CANONICAL[ $words[0] ];
+        }
+
+        $last = $words[ count( $words ) - 1 ];
+        if ( isset( self::SUFFIX_CANONICAL[ $last ] ) ) {
+            $words[ count( $words ) - 1 ] = self::SUFFIX_CANONICAL[ $last ];
+        }
+
+        return implode( ' ', $words );
+    }
+
+    /**
+     * Canonical street with spacing removed, for comparison only.
+     *
+     * The book writes STEEPLE CHASE DR and LADY SLIPPER LN; sellers type
+     * Steeplechase and Ladyslipper. Whether a name is one word or two carries no
+     * meaning, so the comparison key ignores it entirely.
+     *
+     * @param string $street
+     * @return string
+     */
+    public static function street_key( $street ) {
+        return str_replace( ' ', '', self::canonical_street( $street ) );
+    }
+
+    /**
+     * Comparison key with the suffix dropped and a trailing plural removed.
+     *
+     * Catches "Old Farms Rd" against "OLD FARM RD", and any case where one side
+     * carries a suffix the other omits. Looser than street_key(), so callers
+     * should try that first.
+     *
+     * @param string $street
+     * @return string
+     */
+    public static function street_base_key( $street ) {
+        $canonical = self::canonical_street( $street );
+        if ( '' === $canonical ) {
+            return '';
+        }
+
+        $words = explode( ' ', $canonical );
+        if ( count( $words ) > 1 && in_array( end( $words ), self::SUFFIX_CANONICAL, true ) ) {
+            array_pop( $words );
+        }
+
+        return preg_replace( '/S$/', '', implode( '', $words ) );
+    }
+
+    /**
+     * Cached canonical index of the address book: key => row.
+     *
+     * Built once per request. 16,962 rows, so re-querying per order turns a
+     * coverage run into tens of thousands of round trips.
+     *
+     * @var array|null
+     */
+    protected static $book_index = null;
+
+    /**
+     * Build (or return) the canonical index of the address book.
+     *
+     * @return array ['exact' => [key => row], 'base' => [key => row]]
+     */
+    public static function book_index() {
+        if ( null !== self::$book_index ) {
+            return self::$book_index;
+        }
+
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            "SELECT id, house_number, street, unit, city, state, zip, lat, lng
+             FROM {$wpdb->prefix}ss_addresses",
+            ARRAY_A
+        );
+
+        $exact = array();
+        $base  = array();
+        foreach ( (array) $rows as $row ) {
+            $hn = strtoupper( trim( $row['house_number'] ) );
+            if ( '' === $hn ) {
+                continue;
+            }
+            $ek = $hn . '|' . self::street_key( $row['street'] );
+            $bk = $hn . '|' . self::street_base_key( $row['street'] );
+            if ( ! isset( $exact[ $ek ] ) ) { $exact[ $ek ] = $row; }
+            if ( ! isset( $base[ $bk ] ) )  { $base[ $bk ]  = $row; }
+        }
+
+        self::$book_index = array( 'exact' => $exact, 'base' => $base );
+        return self::$book_index;
+    }
+
+    /**
+     * Where does this order actually get delivered, and how sure are we?
+     *
+     * One resolver, used by the coverage report and by manifest routing, so the
+     * report an admin signs off on is the same judgement the route is built from.
+     *
+     * Resolution order, most trustworthy first:
+     *   book      - the address matched a parcel record. A house, not a guess.
+     *   gps       - no address match, but the seller's phone recorded the doorstep.
+     *   none      - neither. A person has to look at it.
+     * Plus 'donation', which is not a delivery at all and must never count
+     * against coverage.
+     *
+     * When both a book match and GPS exist, the book wins (deliveries go to a
+     * house, not to where someone stood) but the distance between them is
+     * returned so a disagreement can be flagged.
+     *
+     * @param array $order Row from ss_orders, or its decoded order_data.
+     * @return array {
+     *   @type string     $source      book|gps|none|donation
+     *   @type float|null $lat
+     *   @type float|null $lng
+     *   @type array|null $book_row    Matched address-book row, if any.
+     *   @type float|null $gap_feet    Distance between book match and GPS, if both.
+     *   @type array|null $suggestion  Nearest book row to the GPS, when unmatched.
+     *   @type string     $address     The address text as entered.
+     * }
+     */
+    public static function resolve_delivery_point( $order ) {
+        $data = isset( $order['order_data'] ) ? $order['order_data'] : $order;
+        if ( is_string( $data ) ) {
+            $data = json_decode( $data, true );
+        }
+        $data = is_array( $data ) ? $data : array();
+
+        $address = trim( (string) ( $order['address'] ?? $data['address'] ?? '' ) );
+
+        $out = array(
+            'source' => 'none', 'lat' => null, 'lng' => null,
+            'book_row' => null, 'gap_feet' => null, 'suggestion' => null,
+            'address' => $address,
+        );
+
+        // A donation has no delivery. Counting these as failures is what made the
+        // old report claim 22% of orders were undeliverable.
+        if ( ! empty( $data['donationOnly'] ) || '' === $address || 0 === strcasecmp( $address, 'donation' ) ) {
+            $out['source'] = 'donation';
+            return $out;
+        }
+
+        // Doorstep GPS, if the phone managed a reading we can trust.
+        $geo = isset( $data['geo'] ) && is_array( $data['geo'] ) ? $data['geo'] : null;
+        $has_gps = $geo && isset( $geo['latitude'], $geo['longitude'] )
+            && ( ! isset( $geo['accuracy'] ) || $geo['accuracy'] <= self::GPS_ACCURACY_LIMIT_M );
+
+        // Address-book match.
+        $parsed = self::parse_address( $address );
+        $hn     = strtoupper( trim( $parsed['house_number'] ?? '' ) );
+        $street = $parsed['street'] ?? '';
+        $row    = null;
+
+        if ( '' !== $hn && '' !== $street ) {
+            $index = self::book_index();
+            $ek    = $hn . '|' . self::street_key( $street );
+            $bk    = $hn . '|' . self::street_base_key( $street );
+            if ( isset( $index['exact'][ $ek ] ) ) {
+                $row = $index['exact'][ $ek ];
+            } elseif ( isset( $index['base'][ $bk ] ) ) {
+                $row = $index['base'][ $bk ];
+            }
+        }
+
+        if ( $row && null !== $row['lat'] ) {
+            $out['source']   = 'book';
+            $out['lat']      = (float) $row['lat'];
+            $out['lng']      = (float) $row['lng'];
+            $out['book_row'] = $row;
+
+            if ( $has_gps ) {
+                $out['gap_feet'] = self::calculate_distance(
+                    (float) $row['lat'], (float) $row['lng'],
+                    (float) $geo['latitude'], (float) $geo['longitude'], 'ft'
+                );
+            }
+            return $out;
+        }
+
+        if ( $has_gps ) {
+            $out['source'] = 'gps';
+            $out['lat']    = (float) $geo['latitude'];
+            $out['lng']    = (float) $geo['longitude'];
+            // Nearest known house, offered as a suggestion only - never applied
+            // automatically. 287 Hitchcock Rd sits 11ft from 9 HITCHCOCK RD, and
+            // acting on that without a human sends subs to the wrong door.
+            $out['suggestion'] = self::nearest_address_to_point( $out['lat'], $out['lng'] );
+            return $out;
+        }
+
+        return $out;
     }
 
     /**
