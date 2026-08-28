@@ -140,7 +140,10 @@ foreach ( $orders as $order ) {
                 : null,
         );
     }
-    $grouped[ $bucket ][ $key ]['orders'][] = $order['order_id'];
+    $grouped[ $bucket ][ $key ]['orders'][] = array(
+        'id'  => (int) $order['id'],
+        'ref' => $order['order_id'],
+    );
     $seller = Subsales_Order_Helper::get_entered_by_name( $order );
     if ( ! empty( $seller ) ) {
         $grouped[ $bucket ][ $key ]['sellers'][ $seller ] = true;
@@ -300,7 +303,7 @@ $confidence_labels = array(
     <p class="description">
         Nothing here can be looked up &mdash; <code>N/A</code>, <code>?</code>, a street with no
         number. These need the seller who took the order, and are worth raising at the next
-        sale day rather than guessing at.
+        sale day rather than guessing at. Click an order ID to open it for editing.
     </p>
     <?php if ( empty( $grouped['unusable'] ) ) : ?>
         <p>None.</p>
@@ -313,7 +316,19 @@ $confidence_labels = array(
                 <td><code><?php echo esc_html( '' === $row['address'] ? '(blank)' : $row['address'] ); ?></code></td>
                 <td><?php echo esc_html( count( $row['orders'] ) ); ?></td>
                 <td class="sellers"><?php echo esc_html( implode( ', ', array_keys( $row['sellers'] ) ) ); ?></td>
-                <td class="order-ids"><?php echo esc_html( implode( ', ', $row['orders'] ) ); ?></td>
+                <td class="order-ids">
+                    <?php foreach ( $row['orders'] as $i => $o ) : ?>
+                        <?php echo $i ? ', ' : ''; ?><a href="<?php
+                            // ?edit= takes the database id and opens the order's
+                            // edit modal straight away - the address is going to
+                            // need retyping, so land where it can be retyped.
+                            echo esc_url( add_query_arg(
+                                array( 'page' => 'subsales-orders', 'edit' => $o['id'] ),
+                                admin_url( 'admin.php' )
+                            ) );
+                        ?>"><?php echo esc_html( $o['ref'] ); ?></a>
+                    <?php endforeach; ?>
+                </td>
             </tr>
         <?php endforeach; ?>
         </tbody>
