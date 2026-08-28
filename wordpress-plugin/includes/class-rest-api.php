@@ -14,6 +14,32 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Subsales_REST_API {
+
+    /**
+     * Who the current request authenticated AS.
+     *
+     * check_permissions() only ever answered "is this a valid member of some
+     * team" - it never said which. Handlers then took team_id/user_id straight
+     * from query parameters, so any seller could read any team's orders. This
+     * records the identity the credentials actually prove so handlers can scope
+     * to it.
+     *
+     * Shape: array( 'team_id' => int, 'user_id' => string|null, 'mode' => string )
+     * team_id -1 means individual mode. Null means no PWA identity (WP admin).
+     *
+     * @var array|null
+     */
+    protected static $auth_context = null;
+
+    /**
+     * The identity established by check_permissions() for this request.
+     *
+     * @return array|null
+     */
+    public static function auth_context() {
+        return self::$auth_context;
+    }
+
     
     /**
      * Initialize REST API hooks
@@ -562,7 +588,7 @@ class Subsales_REST_API {
         if ( ! empty( $team_name ) && ! empty( $access_code ) ) {
             $team = order_sync_get_team_by_credentials( $team_name, $access_code );
             if ( $team ) {
-                error_log( 'Subsales: perm_check team creds ok id=' . ( isset($team['id']) ? $team['id'] : 'unknown' ) );
+                self::$auth_context = array( 'team_id' => intval( $team['id'] ), 'user_id' => null, 'mode' => 'team_code' );
                 return true;
             }
             error_log( 'Subsales: perm_check invalid team credentials provided (team=' . $team_name . ', code=' . ( $access_code ? 'present' : 'missing' ) . ')' );
@@ -604,7 +630,7 @@ class Subsales_REST_API {
                 // User existence already verified above - allow access for individual users
                 // This allows them to view their orders even after session timeout
                 // Security: They can only see orders WHERE user_id matches (enforced by get_orders filter)
-                error_log( 'Subsales: perm_check individual user auth ok user_id=' . $user_id . ' (individual mode)' );
+                self::$auth_context = array( 'team_id' => -1, 'user_id' => (string) intval( $user_id ), 'mode' => 'individual' );
                 return true;
             }
             
@@ -617,7 +643,7 @@ class Subsales_REST_API {
             ));
             
             if ( $assignment ) {
-                error_log( 'Subsales: perm_check user-based auth ok user_id=' . $user_id . ' team_id=' . $team_id . ' (session-independent)' );
+                self::$auth_context = array( 'team_id' => intval( $team_id ), 'user_id' => (string) intval( $user_id ), 'mode' => 'user' );
                 return true;
             }
             
@@ -632,13 +658,15 @@ class Subsales_REST_API {
         if ( ! empty( $team_email ) && ! empty( $team_id ) ) {
             $member = order_sync_verify_team_member( $team_email, $team_id );
             if ( $member ) {
-                error_log( 'Subsales: perm_check team member ok id=' . ( isset($member['id']) ? $member['id'] : 'unknown' ) );
+                self::$auth_context = array( 'team_id' => intval( $team_id ), 'user_id' => null, 'mode' => 'team_email' );
                 return true;
             }
         }
         
-        error_log( 'Subsales: perm_check FAILED - no valid auth headers, falling back to WP user check' );
-        return current_user_can( 'edit_posts' );
+        // No PWA credentials. A WP administrator may still call these directly
+        // (the admin screens do); anyone else is refused. auth_context stays null,
+        // which handlers read as "unscoped admin".
+        return current_user_can( 'manage_options' );
     }
     
     /**

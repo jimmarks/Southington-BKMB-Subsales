@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.0] - 2026-08-28
+
+### Security
+- **A seller's login could read every team's orders.** The app checked that whoever was calling was a valid team member, but never checked *which* team — so a single child's credentials (or one leaked team code) returned all 1,640 orders across all 22 teams, each with the customer's name, phone number and home address. Sellers are now restricted to their own team's orders, and an individual seller to their own. Found by adversarial testing before any real exposure.
+- **A seller could edit or delete another team's orders.** Neither editing nor deleting checked who the order belonged to. Both now refuse and log the attempt.
+- **The lock on card-paid orders could be worked around.** Saving an order replaced the whole record with whatever the app sent, so a save that quietly left out the payment link erased it — and the next save was no longer locked. Payment links and other server-owned fields are now preserved regardless of what is sent.
+
 ## [3.13.1] - 2026-08-28
 
 ### Security

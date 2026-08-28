@@ -64,6 +64,12 @@ class Subsales_Orders {
         $where[] = 'season_id = %d';
         $values[] = Subsales_Database::current_season_id();
 
+        // ...and to whoever the caller actually is. Client-supplied team_id /
+        // user_id below can only narrow this further, never widen it.
+        if ( ! self::scope_to_caller( $where, $values ) ) {
+            return new WP_REST_Response( array( 'error' => 'Not permitted' ), 403 );
+        }
+
         if ( ! empty( $user_id ) ) {
             $where[] = 'user_id = %s';
             $values[] = $user_id;
@@ -172,6 +178,77 @@ class Subsales_Orders {
             return $tally;
         }
         return new WP_REST_Response( $tally, 200 );
+    }
+
+    /**
+     * Constrain a query to what the caller is actually allowed to see.
+     *
+     * check_permissions() proves the caller is a valid member of some team; it
+     * never said which. Handlers took team_id / user_id from query parameters,
+     * so one seller's credentials could read every team's orders - names, phone
+     * numbers and home addresses for the whole fundraiser. This forces the scope
+     * to the identity the credentials actually established.
+     *
+     * @param array $where  WHERE fragments, by reference.
+     * @param array $values Prepare values, by reference.
+     * @return bool False if the caller has no usable identity (deny).
+     */
+    protected static function scope_to_caller( &$where, &$values ) {
+        // A WordPress administrator is the one caller allowed to see everything.
+        if ( current_user_can( 'manage_options' ) ) {
+            return true;
+        }
+
+        $ctx = class_exists( 'Subsales_REST_API' ) ? Subsales_REST_API::auth_context() : null;
+        if ( ! is_array( $ctx ) ) {
+            return false;
+        }
+
+        if ( -1 === intval( $ctx['team_id'] ) ) {
+            // Individual seller: their own orders only.
+            if ( empty( $ctx['user_id'] ) ) {
+                return false;
+            }
+            $where[]  = 'user_id = %s';
+            $values[] = $ctx['user_id'];
+            return true;
+        }
+
+        if ( intval( $ctx['team_id'] ) > 0 ) {
+            $where[]  = 'team_id = %d';
+            $values[] = intval( $ctx['team_id'] );
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * May this caller act on this specific order?
+     *
+     * Same gap as scope_to_caller(), on the write side: update_order() and
+     * delete_order() looked orders up by id alone, so a seller holding any
+     * order id - trivially obtained once listing was unscoped - could edit or
+     * delete another team's sales.
+     *
+     * @param array $order Row from ss_orders.
+     * @return bool
+     */
+    protected static function caller_owns_order( $order ) {
+        if ( current_user_can( 'manage_options' ) ) {
+            return true;
+        }
+
+        $ctx = class_exists( 'Subsales_REST_API' ) ? Subsales_REST_API::auth_context() : null;
+        if ( ! is_array( $ctx ) ) {
+            return false;
+        }
+
+        if ( -1 === intval( $ctx['team_id'] ) ) {
+            return ! empty( $ctx['user_id'] ) && (string) $order['user_id'] === (string) $ctx['user_id'];
+        }
+
+        return intval( $ctx['team_id'] ) > 0 && intval( $order['team_id'] ) === intval( $ctx['team_id'] );
     }
 
     /**
@@ -513,6 +590,17 @@ class Subsales_Orders {
             return new WP_REST_Response( 'Order not found', 404 );
         }
         
+        if ( ! self::caller_owns_order( $existing_order ) ) {
+            subsales_log( 'WARNING', 'orders', 'Blocked cross-team order edit', array(
+                'order_id'   => $order_id,
+                'order_team' => $existing_order['team_id'],
+            ), $auth_source, $user_id, $user_name );
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'This order belongs to another team.',
+            ), 403 );
+        }
+
         // Parse before/after data for history
         $before_data = json_decode( $existing_order['order_data'], true );
         if ( ! is_array( $before_data ) ) {
@@ -557,6 +645,17 @@ class Subsales_Orders {
         $edit_reason = isset( $data['_edit_reason'] ) ? sanitize_textarea_field( $data['_edit_reason'] ) : '';
         unset( $data['_edit_reason'] ); // Remove from order data
         
+        // Merge onto what is stored rather than replacing it. A wholesale
+        // overwrite let a client drop any field it simply omitted - including
+        // digitalAttemptId, which is what the captured-payment lock keys off.
+        // Omitting it once during an otherwise-allowed edit erased the link, and
+        // the next edit was then unlocked.
+        foreach ( array( 'digitalAttemptId', 'digital_attempt_id', 'attempt_id', 'order_id', 'price_snapshot' ) as $owned ) {
+            if ( isset( $before_data[ $owned ] ) ) {
+                $data[ $owned ] = $before_data[ $owned ];
+            }
+        }
+
         $order_data = wp_json_encode( $data );
         
         if ( $order_data === false ) {
@@ -703,6 +802,14 @@ class Subsales_Orders {
         
         if ( ! $existing_order ) {
             return new WP_REST_Response( 'Order not found or already deleted', 404 );
+        }
+
+        if ( ! self::caller_owns_order( $existing_order ) ) {
+            subsales_log( 'WARNING', 'orders', 'Blocked cross-team order delete', array(
+                'order_id'   => $order_id,
+                'order_team' => $existing_order['team_id'],
+            ), $auth_type, $user_id, $user_name );
+            return new WP_REST_Response( 'This order belongs to another team.', 403 );
         }
         
         // Soft delete: mark as deleted
