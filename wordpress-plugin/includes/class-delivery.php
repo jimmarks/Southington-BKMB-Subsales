@@ -107,9 +107,9 @@ class Subsales_Delivery {
             $lng = $resolved['lng'];
 
             if ( null === $lat && 'donation' !== $resolved['source'] ) {
-                // Logged, never echoed: this runs inside a POST handler that
-                // finishes with wp_safe_redirect(), and any output here sends
-                // headers early and breaks the redirect.
+                // Logged, not echoed. This used to write an HTML comment straight
+                // into the response, which lands in the middle of the generated
+                // manifest - and on the no-orders path, ahead of a redirect.
                 subsales_log( 'WARNING', 'delivery', "No location for order {$r['order_id']}: {$address}" );
             }
 
@@ -169,142 +169,98 @@ class Subsales_Delivery {
 
         subsales_log( 'INFO', 'delivery', 'Parsed ' . count( $parsed_orders ) . ' orders with products' );
 
-        // Step 2: Separate team orders from individual orders
-        // Orders with bad addresses OR not found in database stay with the person who entered them
-        $team_orders = array();
+        // Step 2: split team orders from individual orders.
+        //
+        // Only the entry mode decides this. A team order whose address we cannot
+        // locate is still a team order - the previous code reassigned those to
+        // whoever entered them, which quietly moved someone else's sale onto one
+        // kid's manifest because of a typo.
+        $team_groups       = array();
         $individual_orders = array();
-        
+
         foreach ( $parsed_orders as $order ) {
-            // Check if address is deliverable (basic format validation)
-            $is_deliverable = ! empty( $order['address'] ) && self::is_address_deliverable( $order['address'] );
-            
-            // Check if address was found in database (no typos)
-            $found_in_db = ! empty( $order['found_in_db'] );
-            
-            // Orders with bad format OR not in database → assign to enterer
-            if ( ! $is_deliverable || ! $found_in_db ) {
-                if ( ! $is_deliverable ) {
-                    subsales_log( 'WARNING', 'delivery', "Order {$order['order_id']} has undeliverable address format, assigning to enterer: {$order['address']}" );
-                } elseif ( ! $found_in_db ) {
-                    subsales_log( 'WARNING', 'delivery', "Order {$order['order_id']} address not found in database (typo?), assigning to enterer: {$order['address']}" );
-                }
-                $individual_orders[] = $order;
-            } elseif ( $order['team_id'] > 0 ) {
-                // Valid team order - group by date and team for distribution
+            if ( $order['team_id'] > 0 ) {
                 $key = $order['order_date'] . '_' . $order['team_id'];
-                if ( ! isset( $team_orders[ $key ] ) ) {
-                    $team_orders[ $key ] = array(
-                        'date' => $order['order_date'],
+                if ( ! isset( $team_groups[ $key ] ) ) {
+                    $team_groups[ $key ] = array(
+                        'date'    => $order['order_date'],
                         'team_id' => $order['team_id'],
-                        'orders' => array()
+                        'orders'  => array(),
                     );
                 }
-                $team_orders[ $key ]['orders'][] = $order;
+                $team_groups[ $key ]['orders'][] = $order;
             } else {
-                // Individual order (no team) - assign directly to entered_by_id
                 $individual_orders[] = $order;
             }
         }
 
-        subsales_log( 'INFO', 'delivery', 'Separated into ' . count( $team_orders ) . ' team groups and ' . count( $individual_orders ) . ' individual/problem orders' );
+        ksort( $team_groups );
+        subsales_log( 'INFO', 'delivery', 'Separated into ' . count( $team_groups ) . ' team/day groups and ' . count( $individual_orders ) . ' individual orders' );
 
-        // Step 3: Initialize member order counts with individual/problem orders
-        $member_orders = array(); // Will hold orders per member_id
-        $member_counts = array(); // Track order counts for load balancing
-        
-        // First, assign individual/problem orders to their respective members
+        // Step 3: for each sale day, for each team, divide that day's orders
+        // evenly across the members who signed up for that team that day.
+        //
+        // Each day/team group is split on its own. Carrying a running total
+        // across days would mean a member who sold a lot on day 1 receives
+        // almost nothing on day 2, which is not an even division of day 2.
+        $member_orders = array();
+
+        foreach ( $team_groups as $group ) {
+            $campaign_id = $wpdb->get_var( $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}ss_campaigns WHERE campaign_date = %s",
+                $group['date']
+            ) );
+
+            if ( ! $campaign_id ) {
+                subsales_log( 'WARNING', 'delivery', "No campaign for {$group['date']}, skipping " . count( $group['orders'] ) . ' orders' );
+                continue;
+            }
+
+            $member_ids = $wpdb->get_col( $wpdb->prepare(
+                "SELECT user_id FROM {$wpdb->prefix}ss_signups
+                 WHERE campaign_id = %d AND team_id = %d AND status = 'active'
+                 ORDER BY user_id ASC",
+                $campaign_id,
+                $group['team_id']
+            ) );
+            $member_ids = array_map( 'intval', $member_ids );
+
+            if ( empty( $member_ids ) ) {
+                subsales_log( 'WARNING', 'delivery', "No signups for campaign {$campaign_id} team {$group['team_id']}, skipping " . count( $group['orders'] ) . ' orders' );
+                continue;
+            }
+
+            // Deal round-robin over the sorted roster. Even, and the same every
+            // run - a printed manifest has to survive being regenerated.
+            $orders = $group['orders'];
+            usort( $orders, function ( $a, $b ) {
+                return strcmp( (string) $a['order_id'], (string) $b['order_id'] );
+            } );
+
+            foreach ( $orders as $i => $order ) {
+                $member_id = $member_ids[ $i % count( $member_ids ) ];
+                $member_orders[ $member_id ][] = $order;
+            }
+
+            subsales_log( 'INFO', 'delivery', sprintf(
+                'Divided %d orders across %d members for %s team %d',
+                count( $orders ), count( $member_ids ), $group['date'], $group['team_id']
+            ) );
+        }
+
+        // Step 4: append each individual order to whoever entered it, on top of
+        // whatever they already picked up from the team days.
         foreach ( $individual_orders as $order ) {
             $member_id = $order['entered_by_id'];
             if ( $member_id > 0 ) {
-                if ( ! isset( $member_orders[ $member_id ] ) ) {
-                    $member_orders[ $member_id ] = array();
-                    $member_counts[ $member_id ] = 0;
-                }
                 $member_orders[ $member_id ][] = $order;
-                $member_counts[ $member_id ]++;
             } else {
                 subsales_log( 'WARNING', 'delivery', "Order {$order['order_id']} has no entered_by_id, skipping" );
             }
         }
-        
-        subsales_log( 'INFO', 'delivery', 'Assigned ' . count( $individual_orders ) . ' problem orders to their enterers' );
-        
-        // Step 4: Distribute team orders with load balancing
-        // For each team/date group, distribute orders evenly while accounting for problem orders each member already has
-        foreach ( $team_orders as $group ) {
-            $campaign_date = $group['date'];
-            $team_id = $group['team_id'];
-            $orders = $group['orders'];
-            
-            // Find campaign for this date
-            $campaign = $wpdb->get_row( $wpdb->prepare(
-                "SELECT id FROM {$wpdb->prefix}ss_campaigns WHERE campaign_date = %s",
-                $campaign_date
-            ), ARRAY_A );
-            
-            if ( ! $campaign ) {
-                subsales_log( 'WARNING', 'delivery', "No campaign found for date {$campaign_date}, skipping " . count( $orders ) . " orders" );
-                continue;
-            }
-            
-            $campaign_id = $campaign['id'];
-            
-            // Get signups for this campaign and team
-            $signups = $wpdb->get_results( $wpdb->prepare(
-                "SELECT user_id FROM {$wpdb->prefix}ss_signups 
-                 WHERE campaign_id = %d AND team_id = %d AND status = 'active'",
-                $campaign_id,
-                $team_id
-            ), ARRAY_A );
-            
-            if ( empty( $signups ) ) {
-                subsales_log( 'WARNING', 'delivery', "No signups found for campaign {$campaign_id}, team {$team_id}, skipping " . count( $orders ) . " orders" );
-                continue;
-            }
-            
-            $member_ids = array_map( function( $s ) { return intval( $s['user_id'] ); }, $signups );
-            
-            // Initialize counts for members who haven't received problem orders yet
-            foreach ( $member_ids as $mid ) {
-                if ( ! isset( $member_counts[ $mid ] ) ) {
-                    $member_counts[ $mid ] = 0;
-                    $member_orders[ $mid ] = array();
-                }
-            }
-            
-            subsales_log( 'INFO', 'delivery', "Distributing " . count( $orders ) . " orders across " . count( $member_ids ) . " members for {$campaign_date}, team {$team_id} (with load balancing)" );
-            
-            // Distribute orders with load balancing - always assign to member with fewest total orders
-            foreach ( $orders as $order ) {
-                // Find member(s) with minimum order count among this team's members
-                $min_count = PHP_INT_MAX;
-                foreach ( $member_ids as $mid ) {
-                    if ( $member_counts[ $mid ] < $min_count ) {
-                        $min_count = $member_counts[ $mid ];
-                    }
-                }
-                
-                $candidates = array();
-                foreach ( $member_ids as $mid ) {
-                    if ( $member_counts[ $mid ] === $min_count ) {
-                        $candidates[] = $mid;
-                    }
-                }
-                
-                // Tie-break on the order id, not at random. array_rand() meant
-                // regenerating a manifest reshuffled every kid's list, so a
-                // printed manifest could not be reproduced - and nothing here is
-                // persisted to compare against. Hashing the order id keeps the
-                // spread even while making the same input give the same output.
-                sort( $candidates );
-                $member_id = $candidates[ crc32( $order['order_id'] ) % count( $candidates ) ];
-                
-                $member_orders[ $member_id ][] = $order;
-                $member_counts[ $member_id ]++;
-            }
-        }
 
         subsales_log( 'INFO', 'delivery', 'Final distribution: ' . count( $member_orders ) . ' members with orders' );
+
 
         // Step 5: Build by_individual array for manifest generation (convert to expected format)
         $by_individual = array();
@@ -412,8 +368,9 @@ class Subsales_Delivery {
         }
         
         if ( $total_missing > 0 ) {
-            echo "<!-- Geocoding {$total_missing} addresses (this may take a minute)... -->\n";
-            flush();
+            // Logged, not echoed - this lands above the doctype of the manifest
+            // the admin is about to print, and leaks customer addresses into it.
+            subsales_log( 'INFO', 'delivery', "Geocoding {$total_missing} addresses missing coordinates" );
         }
         
         $geocoding_progress = 0;
@@ -422,8 +379,6 @@ class Subsales_Delivery {
                 if ( $order['lat'] === null || $order['lng'] === null ) {
                     if ( ! empty( $order['address'] ) ) {
                         $geocoding_progress++;
-                        echo "<!-- Geocoding {$geocoding_progress}/{$total_missing}: {$order['address']} -->\n";
-                        flush();
                         
                         $coords = self::geocode_address( $order['address'] );
                         if ( $coords ) {
@@ -1020,168 +975,29 @@ class Subsales_Delivery {
             return array_merge( $orders_with_coords, $orders_without_coords );
         }
 
-        $api_key = get_option( 'order_sync_google_maps_api_key', '' );
-        $use_api = ! empty( $api_key );
-        
-        $optimized = array();
-        $total_stops = count( $orders_with_coords );
-        
-        // Strategy depends on route size
-        if ( $total_stops <= 23 && $use_api ) {
-            // Small/medium routes: Use Google Directions API for optimal ordering
-            subsales_log( 'INFO', 'delivery', "Optimizing {$total_stops}-stop route using Google Directions API" );
-            
-            $api_result = self::optimize_route_with_directions_api( $orders_with_coords, $start_coords );
-            
-            if ( $api_result !== false ) {
-                $optimized = $api_result;
-                subsales_log( 'INFO', 'delivery', "Successfully optimized {$total_stops} stops using Google Directions API" );
-            } else {
-                // API failed - fall back to greedy algorithm
-                subsales_log( 'WARNING', 'delivery', "Google Directions API failed, falling back to greedy algorithm for {$total_stops} stops" );
-                $optimized = self::optimize_route_greedy( $orders_with_coords, $start_coords );
-            }
-            
-        } elseif ( $total_stops > 23 ) {
-            // Large routes: Chunk into segments and optimize each
-            subsales_log( 'INFO', 'delivery', "Large route ({$total_stops} stops) - chunking into segments for optimization" );
-            
-            $chunk_size = 23;
-            $chunks = array_chunk( $orders_with_coords, $chunk_size );
-            $current_start = $start_coords;
-            
-            foreach ( $chunks as $idx => $chunk ) {
-                if ( $use_api ) {
-                    $chunk_result = self::optimize_route_with_directions_api( $chunk, $current_start );
-                    if ( $chunk_result !== false ) {
-                        $optimized = array_merge( $optimized, $chunk_result );
-                        // Next chunk starts from last stop of this chunk
-                        $last_order = end( $chunk_result );
-                        $current_start = array( 'lat' => $last_order['lat'], 'lng' => $last_order['lng'] );
-                    } else {
-                        // API failed for this chunk - use greedy
-                        $chunk_result = self::optimize_route_greedy( $chunk, $current_start );
-                        $optimized = array_merge( $optimized, $chunk_result );
-                        $last_order = end( $chunk_result );
-                        $current_start = array( 'lat' => $last_order['lat'], 'lng' => $last_order['lng'] );
-                    }
-                } else {
-                    // No API key - use greedy for chunk
-                    $chunk_result = self::optimize_route_greedy( $chunk, $current_start );
-                    $optimized = array_merge( $optimized, $chunk_result );
-                    $last_order = end( $chunk_result );
-                    $current_start = array( 'lat' => $last_order['lat'], 'lng' => $last_order['lng'] );
-                }
-            }
-            
-            subsales_log( 'INFO', 'delivery', "Completed optimization of {$total_stops} stops in " . count( $chunks ) . " chunks" );
-            
-        } else {
-            // No API key and route <= 23 stops - use greedy algorithm
-            subsales_log( 'INFO', 'delivery', "Optimizing {$total_stops}-stop route using greedy algorithm (no API key)" );
-            $optimized = self::optimize_route_greedy( $orders_with_coords, $start_coords );
-        }
-        
-        // Append orders without coordinates at the end
+        // One nearest-neighbour pass over the whole list, from the start address
+        // on the Delivery Manifest page.
+        //
+        // This used to hand ordering to the Google Directions API, which caps at
+        // 23 waypoints - so anything longer was array_chunk()ed into blocks of 23
+        // by position in the array and each block ordered separately. Those
+        // blocks were whatever order the orders happened to be assigned in, not
+        // anything geographic, so a long route was optimised within arbitrary
+        // groups and never as a route. The turn-by-turn the API returns was
+        // never rendered; only the ordering was ever used.
+        $optimized = self::optimize_route_greedy( $orders_with_coords, $start_coords );
+
+        subsales_log( 'INFO', 'delivery', sprintf(
+            'Routed %d stops by nearest turn from %s',
+            count( $orders_with_coords ),
+            $start_coords['lat'] . ',' . $start_coords['lng']
+        ) );
+
+        // Stops we could not locate still belong on the manifest - they go last,
+        // so the driver has them in hand without them steering the route.
         return array_merge( $optimized, $orders_without_coords );
     }
-    
-    /**
-     * Optimize route using Google Directions API with waypoint optimization
-     * 
-     * @param array $orders Orders with valid coordinates (max 23)
-     * @param array $start_coords Starting point ['lat' => x, 'lng' => y]
-     * @return array|false Optimized orders or false on failure
-     * @since 2.4.53
-     */
-    private static function optimize_route_with_directions_api( $orders, $start_coords ) {
-        if ( empty( $orders ) || count( $orders ) > 23 ) {
-            return false;
-        }
-        
-        $api_key = get_option( 'order_sync_google_maps_api_key', '' );
-        if ( empty( $api_key ) ) {
-            return false;
-        }
-        
-        // Build waypoints string: "optimize:true|lat1,lng1|lat2,lng2|..."
-        $waypoint_coords = array();
-        foreach ( $orders as $order ) {
-            $waypoint_coords[] = $order['lat'] . ',' . $order['lng'];
-        }
-        $waypoints_param = 'optimize:true|' . implode( '|', $waypoint_coords );
-        
-        // API call: origin = start, destination = start (round trip), waypoints = all stops
-        $origin = $start_coords['lat'] . ',' . $start_coords['lng'];
-        $destination = $origin; // Round trip back to depot
-        
-        $url = sprintf(
-            'https://maps.googleapis.com/maps/api/directions/json?origin=%s&destination=%s&waypoints=%s&key=%s',
-            urlencode( $origin ),
-            urlencode( $destination ),
-            urlencode( $waypoints_param ),
-            $api_key
-        );
-        
-        $response = wp_remote_get( $url, array( 'timeout' => 30 ) );
-        
-        if ( is_wp_error( $response ) ) {
-            subsales_log( 'ERROR', 'delivery', 'Google Directions API request failed: ' . $response->get_error_message() );
-            return false;
-        }
-        
-        $body = wp_remote_retrieve_body( $response );
-        $data = json_decode( $body, true );
-        
-        if ( empty( $data['status'] ) || $data['status'] !== 'OK' ) {
-            $error_msg = ! empty( $data['error_message'] ) ? $data['error_message'] : $data['status'];
-            subsales_log( 'ERROR', 'delivery', 'Google Directions API returned error: ' . $error_msg );
-            return false;
-        }
-        
-        // Extract optimized waypoint order
-        if ( empty( $data['routes'][0]['waypoint_order'] ) ) {
-            subsales_log( 'ERROR', 'delivery', 'Google Directions API response missing waypoint_order' );
-            return false;
-        }
-        
-        $waypoint_order = $data['routes'][0]['waypoint_order'];
-        
-        // Reorder orders based on optimized sequence
-        $optimized = array();
-        foreach ( $waypoint_order as $idx ) {
-            if ( isset( $orders[ $idx ] ) ) {
-                $optimized[] = $orders[ $idx ];
-            }
-        }
-        
-        // Log distance savings if available
-        if ( ! empty( $data['routes'][0]['legs'] ) ) {
-            $total_distance = 0;
-            $total_duration = 0;
-            foreach ( $data['routes'][0]['legs'] as $leg ) {
-                $total_distance += ! empty( $leg['distance']['value'] ) ? $leg['distance']['value'] : 0;
-                $total_duration += ! empty( $leg['duration']['value'] ) ? $leg['duration']['value'] : 0;
-            }
-            
-            $distance_km = round( $total_distance / 1000, 1 );
-            $duration_min = round( $total_duration / 60 );
-            subsales_log( 'INFO', 'delivery', "Optimized route: {$distance_km} km, {$duration_min} min driving time" );
-        }
-        
-        return $optimized;
-    }
-    
-    /**
-     * Greedy nearest-neighbor route optimization (fallback algorithm)
-     * 
-     * Uses straight-line distance. Not optimal but fast and reliable.
-     * 
-     * @param array $orders Orders with valid coordinates
-     * @param array $start_coords Starting point ['lat' => x, 'lng' => y]
-     * @return array Optimized orders
-     * @since 2.4.53
-     */
+
     private static function optimize_route_greedy( $orders, $start_coords ) {
         if ( empty( $orders ) ) return array();
 
