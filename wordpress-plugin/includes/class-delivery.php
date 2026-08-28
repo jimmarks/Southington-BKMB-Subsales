@@ -98,55 +98,21 @@ class Subsales_Delivery {
             // Parse order details
             $address = ! empty( $r['address'] ) ? $r['address'] : ( ! empty( $od['address'] ) ? $od['address'] : '' );
             
-            // Look up coordinates from address database using structured matching
-            $lat = null;
-            $lng = null;
-            if ( ! empty( $address ) ) {
-                $parsed = self::parse_address( $address );
-                
-                // Only require house_number and street for matching (ZIP is optional)
-                if ( $parsed && ! empty( $parsed['house_number'] ) && ! empty( $parsed['street'] ) ) {
-                    // Match against structured fields: house_number + street required, ZIP optional
-                    // Unit is optional (many addresses don't have units)
-                    $query = "SELECT lat, lng FROM {$wpdb->prefix}ss_addresses 
-                              WHERE LOWER(TRIM(street)) = %s 
-                              AND LOWER(TRIM(house_number)) = %s";
-                    $params = array(
-                        strtolower( trim( $parsed['street'] ) ),
-                        strtolower( trim( $parsed['house_number'] ) )
-                    );
-                    
-                    // If ZIP is present in address, use it to narrow results
-                    if ( ! empty( $parsed['zip'] ) ) {
-                        $query .= " AND zip = %s";
-                        $params[] = $parsed['zip'];
-                    }
-                    
-                    // If unit is specified in order, match it too
-                    if ( ! empty( $parsed['unit'] ) ) {
-                        $query .= " AND LOWER(TRIM(unit)) = %s";
-                        $params[] = strtolower( trim( $parsed['unit'] ) );
-                    }
-                    
-                    $query .= " LIMIT 1";
-                    
-                    $address_row = $wpdb->get_row( $wpdb->prepare( $query, $params ), ARRAY_A );
-                    
-                    if ( $address_row && ! empty( $address_row['lat'] ) && ! empty( $address_row['lng'] ) ) {
-                        $lat = floatval( $address_row['lat'] );
-                        $lng = floatval( $address_row['lng'] );
-                    } else {
-                        // Not in address database - output console message for quick debugging
-                        $zip_info = ! empty( $parsed['zip'] ) ? ", ZIP: {$parsed['zip']}" : " (no ZIP)";
-                        echo "<!-- Address not in database: Order {$r['order_id']}, Address: {$address} (Parsed: {$parsed['house_number']} {$parsed['street']}{$zip_info}) -->\n";
-                        flush();
-                    }
-                } else {
-                    echo "<!-- Could not parse address: Order {$r['order_id']}, Address: {$address} -->\n";
-                    flush();
-                }
+            // Coordinates come from the shared resolver, which canonicalises
+            // suffixes and falls back to doorstep GPS. The exact-match SQL that
+            // used to live here missed every "52 pine Holw Dr" and "43 W Ridge
+            // Rd", and those orders were then dumped on whoever entered them.
+            $resolved = Subsales_Address_Helper::resolve_delivery_point( $r );
+            $lat = $resolved['lat'];
+            $lng = $resolved['lng'];
+
+            if ( null === $lat && 'donation' !== $resolved['source'] ) {
+                // Logged, never echoed: this runs inside a POST handler that
+                // finishes with wp_safe_redirect(), and any output here sends
+                // headers early and breaks the redirect.
+                subsales_log( 'WARNING', 'delivery', "No location for order {$r['order_id']}: {$address}" );
             }
-            
+
             $order_entry = array(
                 'id' => $r['id'],
                 'order_id' => $r['order_id'],
@@ -325,8 +291,13 @@ class Subsales_Delivery {
                     }
                 }
                 
-                // If multiple members tied, pick randomly for fairness
-                $member_id = $candidates[ array_rand( $candidates ) ];
+                // Tie-break on the order id, not at random. array_rand() meant
+                // regenerating a manifest reshuffled every kid's list, so a
+                // printed manifest could not be reproduced - and nothing here is
+                // persisted to compare against. Hashing the order id keeps the
+                // spread even while making the same input give the same output.
+                sort( $candidates );
+                $member_id = $candidates[ crc32( $order['order_id'] ) % count( $candidates ) ];
                 
                 $member_orders[ $member_id ][] = $order;
                 $member_counts[ $member_id ]++;
