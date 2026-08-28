@@ -397,14 +397,27 @@ class Subsales_SMS_Queue {
 
         $customer = Subsales_Order_Helper::get_customer_name( array( 'order_data' => $order_data ), 'there' );
 
+        // No number set: drop the whole sentence that would have carried it,
+        // rather than substituting an empty string and sending "Questions? Call ."
+        // to a customer. Sentence-level so a template can phrase the invitation
+        // however it likes as long as it keeps it to its own sentence.
+        $admin_phone = Subsales_Season_Setup::format_phone( get_option( 'subsales_admin_contact_phone', '' ) );
+        if ( '' === $admin_phone && false !== strpos( $template, '{adminphone}' ) ) {
+            $kept = array();
+            foreach ( preg_split( '/(?<=[.!?])\s+/', $template ) as $sentence ) {
+                if ( false === strpos( $sentence, '{adminphone}' ) ) {
+                    $kept[] = $sentence;
+                }
+            }
+            $template = trim( implode( ' ', $kept ) );
+        }
+
         $body = strtr( $template, array(
             '{customer}' => $customer,
             '{items}'    => $parts ? implode( ', ', $parts ) : 'your order',
             '{total}'    => '$' . number_format( $total, 2 ),
             '{org}'      => (string) get_option( 'subsales_branding', 'Subsales' ),
-            // Set per season in the setup wizard (step 7). Empty until an admin
-            // fills it in, so a template using it degrades to a shorter message
-            // rather than printing a placeholder at a customer.
+            // Set per season in the setup wizard (step 7).
             '{adminphone}' => Subsales_Season_Setup::format_phone( get_option( 'subsales_admin_contact_phone', '' ) ),
         ) );
 
