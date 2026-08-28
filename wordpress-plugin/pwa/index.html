@@ -268,14 +268,19 @@
           if(appScript){
             var base = appScript.src.replace(/app\.js(\?.*)?$/,'');
             
+            // Version-stamped so a released change is fetched rather than
+            // served from the previous release's service-worker cache.
+            var _v = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.assetVersion)
+              ? ('?v=' + encodeURIComponent(window.SUBSALES_PWA_CONFIG.assetVersion)) : '';
+
             // Load session-tracking.js
             var sessionScript = document.createElement('script');
-            sessionScript.src = base + 'session-tracking.js';
+            sessionScript.src = base + 'session-tracking.js' + _v;
             document.head.appendChild(sessionScript);
             
             // Load pwa-logger.js
             var loggerScript = document.createElement('script');
-            loggerScript.src = base + 'pwa-logger.js';
+            loggerScript.src = base + 'pwa-logger.js' + _v;
             document.head.appendChild(loggerScript);
           } else {
             // fallback to relative paths
@@ -319,6 +324,14 @@
           swScope = cfg.pluginBase;
         }
         
+        // The ?v= is what makes a release actually take effect: the browser
+        // sees a byte-different service worker URL, installs it, and the SW
+        // derives its cache name from the same value - so the old release's
+        // cached app.js is dropped instead of being served for one more load.
+        if (cfg && cfg.assetVersion) {
+          swPath += (swPath.indexOf('?') === -1 ? '?' : '&') + 'v=' + encodeURIComponent(cfg.assetVersion);
+        }
+
         console.log('[PWA] Registering service worker:', swPath);
         
         navigator.serviceWorker.register(swPath, { scope: swScope })

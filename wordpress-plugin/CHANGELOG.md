@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.14.1] - 2026-08-28
+
+### Fixed
+- **Sellers' phones kept running the previous version of the app for one extra session after an update.** App files were cached with no version attached, and the cache only refreshed when a developer remembered to hand-edit a line in the offline worker — so a device served yesterday's app against today's server, then quietly swapped it in on the next load. Every app file and the offline worker itself now carry the release version, so an update takes effect on the first load and the old copy is discarded.
+
 ## [3.14.0] - 2026-08-28
 
 ### Security

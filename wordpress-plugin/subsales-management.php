@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.14.0
+ * Version: 3.14.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.14.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.14.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4195,16 +4195,23 @@ function subsales_serve_portal_assets() {
                 'portalBase' => esc_url_raw( home_url( '/' . get_option( 'order_sync_portal_slug', 'subsales-portal' ) . '/' ) ),
                 'googleMapsApiKey' => get_option( 'order_sync_google_maps_api_key', '' ),
                 'brandName' => get_option( 'subsales_branding', 'Subsales' ),
-                'brandingImage' => $header_image_url
+                'brandingImage' => $header_image_url,
+                // Stamped on every PWA asset URL and on the service worker
+                // registration. Without it the service worker cached app.js
+                // cache-first under a hand-edited cache name, so a device kept
+                // running the previous release's app against the new API until
+                // its second load after an update.
+                'assetVersion' => SUBSALES_VERSION,
             );
             // Include configured products so portal bootstraps with current product list
             $settings['products'] = order_sync_get_products_config();
 
             $html = file_get_contents( $file );
+            $ver = '?v=' . rawurlencode( SUBSALES_VERSION );
             $inject = "<script>window.SUBSALES_PWA_CONFIG = " . wp_json_encode( $settings ) . ";</script>";
-            $app_src = esc_url( $settings['pluginBase'] . 'app.js' );
+            $app_src = esc_url( $settings['pluginBase'] . 'app.js' ) . $ver;
             // Rewrite relative stylesheet hrefs to absolute plugin path to avoid portal-relative 404s
-            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . '"', $html );
+            $html = str_replace( 'href="styles.css"', 'href="' . esc_url( $settings['pluginBase'] . 'styles.css' ) . $ver . '"', $html );
             $new_html = str_replace( '<script src="app.js"></script>', $inject . "\n<script src=\"" . $app_src . "\"></script>", $html );
             // If replacement didn't find the exact marker (different spacing/paths), inject config before </head>
             if ( $new_html === $html ) {

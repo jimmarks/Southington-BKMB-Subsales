@@ -1,5 +1,15 @@
 // Subsales PWA service worker with offline-first support
-const CACHE_NAME = 'subsales-pwa-v2026-07-01-driver-money-3';
+// Derived from the ?v= the page registers this worker with, which is the
+// plugin version. Previously this was a hand-edited string, so shipping a new
+// app.js without also editing this line left every device serving the old one
+// (assets are cached cache-first) until its second load after the update.
+// A new version means a new cache name, and the activate handler below already
+// deletes every cache that is not the current one.
+const SW_VERSION = (function () {
+  try { return new URL(self.location.href).searchParams.get('v') || 'dev'; }
+  catch (e) { return 'dev'; }
+})();
+const CACHE_NAME = 'subsales-pwa-' + SW_VERSION;
 // Resolve asset URLs relative to the service worker's scope so the SW works when the plugin
 // is served from a nested path (e.g. /subsales-portal/). We build absolute URLs at runtime.
 const ASSETS = [
