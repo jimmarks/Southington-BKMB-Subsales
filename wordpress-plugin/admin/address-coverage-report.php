@@ -29,77 +29,153 @@ $orders_table = $wpdb->prefix . 'ss_orders';
 $season_id    = Subsales_Database::current_season_id();
 $notice       = null;
 
-/*
- * Apply a correction. Addresses repeat across orders (two kids both typed
- * "157 Rethal St"), so a fix is keyed on the address text and applied to every
- * order carrying it - fixing the same typo six times is how an admin gives up
- * on a cleanup tool.
+/**
+ * Rewrite an address across every order that carries it.
+ *
+ * Addresses repeat (two kids both typed "157 Rethal St"), so a fix is keyed on
+ * the address text, not the order - fixing the same typo six times is how an
+ * admin gives up on a cleanup tool.
+ *
+ * @return array{changed:int,error:string}
  */
+if ( ! function_exists( 'subsales_coverage_rewrite_address' ) ) :
+function subsales_coverage_rewrite_address( $old, $new, $season_id, $reason ) {
+    global $wpdb;
+    $orders_table = $wpdb->prefix . 'ss_orders';
+
+    $affected = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT id, order_id, address, order_data FROM {$orders_table}
+             WHERE deleted = 0 AND season_id = %d AND address = %s",
+            $season_id,
+            $old
+        ),
+        ARRAY_A
+    );
+
+    $user    = wp_get_current_user();
+    $changed = 0;
+
+    foreach ( $affected as $row ) {
+        $before = json_decode( $row['order_data'], true );
+        $before = is_array( $before ) ? $before : array();
+        $after  = $before;
+        $after['address'] = $new;
+
+        $ok = $wpdb->update(
+            $orders_table,
+            array( 'address' => $new, 'order_data' => wp_json_encode( $after ) ),
+            array( 'id' => (int) $row['id'] ),
+            array( '%s', '%s' ),
+            array( '%d' )
+        );
+
+        if ( false === $ok ) {
+            // A silent write failure here would report a cleanup that never
+            // happened, and the manifest would still be missing the stop.
+            return array(
+                'changed' => $changed,
+                'error'   => 'Database error updating order ' . $row['order_id'] . ': ' . $wpdb->last_error,
+            );
+        }
+
+        $changed++;
+        Subsales_Database::log_order_change(
+            (int) $row['id'],
+            $row['order_id'],
+            $before,
+            $after,
+            'update',
+            $user->ID,
+            $user->display_name,
+            $reason,
+            'admin'
+        );
+    }
+
+    return array( 'changed' => $changed, 'error' => '' );
+}
+endif;
+
+/* Manual correction from the worklist. */
 if ( isset( $_POST['subsales_fix_address'] ) ) {
     check_admin_referer( 'subsales_fix_address' );
 
-    $old = isset( $_POST['old_address'] ) ? wp_unslash( $_POST['old_address'] ) : '';
-    $new = isset( $_POST['new_address'] ) ? sanitize_text_field( wp_unslash( $_POST['new_address'] ) ) : '';
-    $old = sanitize_text_field( $old );
+    $old = sanitize_text_field( wp_unslash( $_POST['old_address'] ?? '' ) );
+    $new = sanitize_text_field( wp_unslash( $_POST['new_address'] ?? '' ) );
 
     if ( '' === $new ) {
         $notice = array( 'error', 'A replacement address is required.' );
     } elseif ( $new === $old ) {
         $notice = array( 'error', 'The replacement is identical to the current address.' );
     } else {
-        $affected = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, order_id, address, order_data FROM {$orders_table}
-                 WHERE deleted = 0 AND season_id = %d AND address = %s",
-                $season_id,
-                $old
+        $result = subsales_coverage_rewrite_address( $old, $new, $season_id, 'Address coverage cleanup' );
+        $notice = $result['error']
+            ? array( 'error', $result['error'] )
+            : array( 'success', sprintf( '%d order%s updated to "%s".', $result['changed'], 1 === $result['changed'] ? '' : 's', $new ) );
+    }
+}
+
+/*
+ * Look up an out-of-town address and add it to the book.
+ *
+ * These will never be in the parcel import, but they are still deliveries. One
+ * geocode gives both the normalized address text and coordinates; writing the
+ * result into ss_addresses means the manifest and this report pick it up
+ * through the same path as every other address, with no second source of
+ * coordinates to keep in step.
+ */
+if ( isset( $_POST['subsales_geocode_address'] ) ) {
+    check_admin_referer( 'subsales_geocode_address' );
+
+    $target = sanitize_text_field( wp_unslash( $_POST['old_address'] ?? '' ) );
+    $coords = Subsales_Delivery::geocode_address( $target, true );
+
+    if ( ! $coords || empty( $coords['formatted_address'] ) ) {
+        $notice = array( 'error', sprintf( 'No usable result for "%s". Correct the address text and try again.', $target ) );
+    } elseif ( ! in_array( $coords['location_type'], array( 'ROOFTOP', 'RANGE_INTERPOLATED' ), true ) ) {
+        // GEOMETRIC_CENTER and APPROXIMATE mean the geocoder found the street or
+        // the town, not the house. Writing that into the book would send a driver
+        // to the middle of the road with no way to tell it was a guess.
+        $notice = array(
+            'error',
+            sprintf(
+                'Too imprecise to add: "%s" resolved to %s (%s). Correct the address text and try again.',
+                $target,
+                $coords['formatted_address'],
+                strtolower( str_replace( '_', ' ', $coords['location_type'] ) )
             ),
-            ARRAY_A
+        );
+    } else {
+        $added = Subsales_Address_Helper::add_to_book(
+            $coords['formatted_address'],
+            $coords['lat'],
+            $coords['lng'],
+            'high'
         );
 
-        $user    = wp_get_current_user();
-        $changed = 0;
-
-        foreach ( $affected as $row ) {
-            $before = json_decode( $row['order_data'], true );
-            $before = is_array( $before ) ? $before : array();
-            $after  = $before;
-            $after['address'] = $new;
-
-            $ok = $wpdb->update(
-                $orders_table,
-                array( 'address' => $new, 'order_data' => wp_json_encode( $after ) ),
-                array( 'id' => (int) $row['id'] ),
-                array( '%s', '%s' ),
-                array( '%d' )
+        if ( is_wp_error( $added ) ) {
+            $notice = array( 'error', $added->get_error_message() );
+        } else {
+            $result = subsales_coverage_rewrite_address(
+                $target,
+                $coords['formatted_address'],
+                $season_id,
+                'Address coverage geocode'
             );
-
-            if ( false === $ok ) {
-                // A silent write failure here would report a cleanup that never
-                // happened, and the manifest would still be missing the stop.
-                $notice = array( 'error', 'Database error updating order ' . $row['order_id'] . ': ' . $wpdb->last_error );
-                break;
-            }
-
-            $changed++;
-            Subsales_Database::log_order_change(
-                (int) $row['id'],
-                $row['order_id'],
-                $before,
-                $after,
-                'update',
-                $user->ID,
-                $user->display_name,
-                'Address coverage cleanup',
-                'admin'
-            );
-        }
-
-        if ( null === $notice ) {
-            $notice = array(
-                'success',
-                sprintf( '%d order%s updated to "%s".', $changed, 1 === $changed ? '' : 's', $new ),
-            );
+            $notice = $result['error']
+                ? array( 'error', $result['error'] )
+                : array(
+                    'success',
+                    sprintf(
+                        'Added %s, %s %s to the address book and updated %d order%s. It will match from now on.',
+                        $added['house_number'] . ' ' . $added['street'],
+                        $added['city'],
+                        $added['zip'],
+                        $result['changed'],
+                        1 === $result['changed'] ? '' : 's'
+                    ),
+                );
         }
     }
 }
@@ -278,21 +354,43 @@ $confidence_labels = array(
 
     <h2>Outside Southington</h2>
     <p class="description">
-        Real addresses in other towns. They will never match the parcel data, so they are
-        routed from their own geocode rather than the book &mdash; listed here so the manifest
-        does not quietly drop them.
+        Real addresses in other towns. They are still deliveries, but they will never be in
+        the parcel import &mdash; and their doorstep GPS is not usable either, because an
+        out-of-town order gets typed in later, from home. <strong>Look up</strong> geocodes the
+        address and adds it to the book, after which it matches and routes like any other stop.
     </p>
     <?php if ( empty( $grouped['out_of_area'] ) ) : ?>
         <p>None.</p>
     <?php else : ?>
     <table class="wp-list-table widefat striped">
-        <thead><tr><th style="width:50%;">Address</th><th style="width:10%;">Orders</th><th>Sellers</th></tr></thead>
+        <thead>
+            <tr>
+                <th style="width:30%;">Address as entered</th>
+                <th style="width:8%;">Orders</th>
+                <th style="width:18%;">Sellers</th>
+                <th style="width:44%;">Fix</th>
+            </tr>
+        </thead>
         <tbody>
         <?php foreach ( $grouped['out_of_area'] as $row ) : ?>
             <tr>
                 <td><code><?php echo esc_html( $row['address'] ); ?></code></td>
                 <td><?php echo esc_html( count( $row['orders'] ) ); ?></td>
                 <td class="sellers"><?php echo esc_html( implode( ', ', array_keys( $row['sellers'] ) ) ); ?></td>
+                <td>
+                    <form method="post" class="fix-form">
+                        <?php wp_nonce_field( 'subsales_geocode_address' ); ?>
+                        <input type="hidden" name="old_address" value="<?php echo esc_attr( $row['address'] ); ?>" />
+                        <button type="submit" name="subsales_geocode_address" value="1" class="button button-primary">Look&nbsp;up</button>
+                    </form>
+                    <form method="post" class="fix-form">
+                        <?php wp_nonce_field( 'subsales_fix_address' ); ?>
+                        <input type="hidden" name="old_address" value="<?php echo esc_attr( $row['address'] ); ?>" />
+                        <input type="text" name="new_address" class="regular-text"
+                               value="<?php echo esc_attr( $row['address'] ); ?>" />
+                        <button type="submit" name="subsales_fix_address" value="1" class="button">Save&nbsp;text</button>
+                    </form>
+                </td>
             </tr>
         <?php endforeach; ?>
         </tbody>
@@ -386,6 +484,8 @@ $confidence_labels = array(
     gap: 6px;
     align-items: center;
 }
+/* Out-of-area rows stack a Look up button above the free-text fallback. */
+.subsales-coverage .fix-form + .fix-form { margin-top: 6px; }
 .subsales-coverage .fix-form input[type="text"] { flex: 1 1 auto; min-width: 0; }
 .subsales-coverage .sellers,
 .subsales-coverage .order-ids { font-size: 12px; color: #646970; }

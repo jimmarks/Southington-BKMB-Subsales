@@ -221,7 +221,7 @@ class Subsales_Database {
             zip varchar(10) NOT NULL,
             lat decimal(10, 8) NOT NULL,
             lng decimal(11, 8) NOT NULL,
-            source enum('parcel','overpass','csv','manual') NOT NULL DEFAULT 'manual',
+            source enum('parcel','overpass','csv','manual','geocode') NOT NULL DEFAULT 'manual',
             confidence enum('high','medium','low') NOT NULL DEFAULT 'medium',
             matched tinyint(1) DEFAULT 0,
             type enum('residential','commercial','other') NOT NULL DEFAULT 'residential',
@@ -382,6 +382,7 @@ class Subsales_Database {
         dbDelta( $pwa_sessions_sql );
         dbDelta( $pwa_heartbeats_sql );
         dbDelta( $addresses_sql );
+        self::migrate_address_source_enum( $addresses_table_name );
         dbDelta( $address_review_queue_sql );
         dbDelta( $campaigns_sql );
         dbDelta( $signups_sql );
@@ -1010,6 +1011,34 @@ class Subsales_Database {
         }
     }
     
+    /**
+     * Schema migration: allow 'geocode' as an address source.
+     *
+     * Out-of-town addresses will never appear in the parcel import, so they are
+     * geocoded once and inserted here - which makes them match, and route,
+     * through the same path as every other address. dbDelta does not widen an
+     * enum, and MySQL coerces an out-of-range enum value to '' without erroring,
+     * so this has to run before anything writes 'geocode'.
+     */
+    private static function migrate_address_source_enum( $addresses_table_name ) {
+        global $wpdb;
+
+        $column = $wpdb->get_row(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE()
+             AND TABLE_NAME = '{$addresses_table_name}'
+             AND COLUMN_NAME = 'source'",
+            ARRAY_A
+        );
+
+        if ( $column && strpos( $column['COLUMN_TYPE'], 'geocode' ) === false ) {
+            $wpdb->query(
+                "ALTER TABLE {$addresses_table_name}
+                 MODIFY COLUMN source enum('parcel','overpass','csv','manual','geocode') NOT NULL DEFAULT 'manual'"
+            );
+        }
+    }
+
     /**
      * Schema migration: Add address validation columns
      */

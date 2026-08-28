@@ -264,25 +264,7 @@ class Subsales_Address_Helper {
             return $resolved;
         }
 
-        // Out of area needs a POSITIVE signal. Most orders carry no town at all
-        // ("50 humiston rd", "119 Douglos st") and treating a missing town as
-        // out-of-area buries local typos in the section nobody reads.
-        if ( '' !== $zip ) {
-            $resolved['bucket'] = in_array( $zip, self::supported_zips(), true ) ? 'investigate' : 'out_of_area';
-            return $resolved;
-        }
-
-        foreach ( self::supported_towns() as $town ) {
-            if ( '' !== $town && false !== stripos( $address, $town ) ) {
-                $resolved['bucket'] = 'investigate';
-                return $resolved;
-            }
-        }
-
-        // No ZIP and no town: let the street decide. If it is a street we hold
-        // parcels for, it is ours and someone just skipped the town.
-        $suggestion         = self::suggest_correction( $address );
-        $resolved['bucket'] = $suggestion ? 'investigate' : 'out_of_area';
+        $resolved['bucket'] = self::is_out_of_area( $address ) ? 'out_of_area' : 'investigate';
         return $resolved;
     }
 
@@ -372,16 +354,114 @@ class Subsales_Address_Helper {
 
     /** Distinct canonical street names in the address book. */
     public static function book_streets() {
-        static $streets = null;
-        if ( null === $streets ) {
+        if ( null === self::$book_streets_cache ) {
             global $wpdb;
             $streets = array();
             $rows    = $wpdb->get_col( "SELECT DISTINCT street FROM {$wpdb->prefix}ss_addresses WHERE street <> ''" );
             foreach ( $rows as $row ) {
                 $streets[ self::canonical_street( $row ) ] = true;
             }
+            self::$book_streets_cache = $streets;
         }
-        return $streets;
+        return self::$book_streets_cache;
+    }
+
+    /** @var array|null Cached canonical street names; cleared by flush_book_cache(). */
+    private static $book_streets_cache = null;
+
+    /**
+     * Is this address positively outside the area the parcel data covers?
+     *
+     * Out of area needs a POSITIVE signal - an unsupported ZIP, or a town that
+     * is not ours. Most orders carry no town at all ("50 humiston rd",
+     * "119 Douglos st"), and treating a missing town as out-of-area buries local
+     * typos in the section nobody reads.
+     *
+     * @param string $address Raw address text.
+     * @return bool
+     */
+    public static function is_out_of_area( $address ) {
+        if ( preg_match( '/\b(0\d{4})\b/', $address, $m ) ) {
+            return ! in_array( $m[1], self::supported_zips(), true );
+        }
+
+        foreach ( self::supported_towns() as $town ) {
+            if ( '' !== $town && false !== stripos( $address, $town ) ) {
+                return false;
+            }
+        }
+
+        // No ZIP and no town: let the street decide. If it is a street we hold
+        // parcels for, it is ours and someone just skipped the town.
+        return null === self::suggest_correction( $address );
+    }
+
+    /**
+     * Add a geocoded address to the book so it matches and routes like any other.
+     *
+     * Out-of-town addresses will never be in the parcel import, but they are
+     * still deliveries. Writing the geocoded result here means the manifest and
+     * the coverage report pick them up through the existing path - no second
+     * source of coordinates to keep in step.
+     *
+     * @param string $formatted Geocoder's normalized address.
+     * @param float  $lat
+     * @param float  $lng
+     * @param string $confidence high|medium|low
+     * @return array|WP_Error Inserted/So-far row fields, or an error.
+     */
+    public static function add_to_book( $formatted, $lat, $lng, $confidence = 'high' ) {
+        global $wpdb;
+
+        $parsed = self::parse_address( $formatted );
+        $house  = strtoupper( trim( $parsed['house_number'] ?? '' ) );
+        $street = self::canonical_street( $parsed['street'] ?? '' );
+
+        if ( '' === $house || '' === $street ) {
+            return new WP_Error( 'unparseable', 'Could not read a house number and street from "' . $formatted . '".' );
+        }
+        if ( ! preg_match( '/,\s*([^,]+),\s*([A-Z]{2})\s*(\d{5})/', $formatted, $m ) ) {
+            return new WP_Error( 'no_locality', 'Could not read a town, state and ZIP from "' . $formatted . '".' );
+        }
+
+        $row = array(
+            'street'       => $street,
+            'house_number' => $house,
+            'unit'         => '',
+            'city'         => trim( $m[1] ),
+            'state'        => $m[2],
+            'zip'          => $m[3],
+            'lat'          => $lat,
+            'lng'          => $lng,
+            'source'       => 'geocode',
+            'confidence'   => $confidence,
+            'type'         => 'residential',
+            'full_address' => $formatted,
+        );
+
+        // The unique key is (street, house_number, unit, zip), so a repeat lookup
+        // refreshes rather than duplicating.
+        $ok = $wpdb->query(
+            $wpdb->prepare(
+                "INSERT INTO {$wpdb->prefix}ss_addresses
+                 (street, house_number, unit, city, state, zip, lat, lng, source, confidence, type, full_address)
+                 VALUES (%s,%s,%s,%s,%s,%s,%f,%f,%s,%s,%s,%s)
+                 ON DUPLICATE KEY UPDATE lat=VALUES(lat), lng=VALUES(lng),
+                   source=VALUES(source), confidence=VALUES(confidence), full_address=VALUES(full_address)",
+                $row['street'], $row['house_number'], $row['unit'], $row['city'], $row['state'],
+                $row['zip'], $row['lat'], $row['lng'], $row['source'], $row['confidence'],
+                $row['type'], $row['full_address']
+            )
+        );
+
+        if ( false === $ok ) {
+            return new WP_Error( 'db', 'Could not write the address book row: ' . $wpdb->last_error );
+        }
+
+        // The cached index predates this row and would still report a miss.
+        self::flush_book_cache();
+
+        return $row;
     }
 
     /** ZIPs the parcel import actually covers. */
@@ -389,7 +469,10 @@ class Subsales_Address_Helper {
         static $zips = null;
         if ( null === $zips ) {
             global $wpdb;
-            $zips = $wpdb->get_col( "SELECT DISTINCT zip FROM {$wpdb->prefix}ss_addresses WHERE zip <> ''" );
+            // Parcel rows only. Geocoded out-of-town rows live in the same table,
+            // and counting their ZIPs here would quietly redefine "our area" as
+            // "anywhere we have ever looked up".
+            $zips = $wpdb->get_col( "SELECT DISTINCT zip FROM {$wpdb->prefix}ss_addresses WHERE zip <> '' AND source = 'parcel'" );
         }
         return (array) $zips;
     }
@@ -399,7 +482,7 @@ class Subsales_Address_Helper {
         static $towns = null;
         if ( null === $towns ) {
             global $wpdb;
-            $towns = $wpdb->get_col( "SELECT DISTINCT city FROM {$wpdb->prefix}ss_addresses WHERE city <> ''" );
+            $towns = $wpdb->get_col( "SELECT DISTINCT city FROM {$wpdb->prefix}ss_addresses WHERE city <> '' AND source = 'parcel'" );
             // Villages of Southington - same ZIPs, never written in the city column.
             $towns = array_merge( $towns, array( 'Plantsville', 'Milldale', 'Marion' ) );
         }
@@ -421,6 +504,17 @@ class Subsales_Address_Helper {
      *
      * @return array ['exact' => [key => row], 'base' => [key => row]]
      */
+    /**
+     * Drop the cached book index and street list.
+     *
+     * Both are per-request statics, so anything that inserts an address has to
+     * clear them or the very next lookup still reports a miss.
+     */
+    public static function flush_book_cache() {
+        self::$book_index = null;
+        self::$book_streets_cache = null;
+    }
+
     public static function book_index() {
         if ( null !== self::$book_index ) {
             return self::$book_index;
@@ -501,9 +595,17 @@ class Subsales_Address_Helper {
         }
 
         // Doorstep GPS, if the phone managed a reading we can trust.
+        //
+        // Not for out-of-town addresses. Those are entered later, from home -
+        // measured on real orders, two different Bristol addresses carried the
+        // SAME coordinates, and a Torrington delivery geocoded to 5 miles from
+        // Southington centre. That reading is where the seller was sitting, not
+        // where the customer lives, so using it would route the driver to the
+        // wrong town. Those addresses get geocoded into the book instead.
         $geo = isset( $data['geo'] ) && is_array( $data['geo'] ) ? $data['geo'] : null;
         $has_gps = $geo && isset( $geo['latitude'], $geo['longitude'] )
-            && ( ! isset( $geo['accuracy'] ) || $geo['accuracy'] <= self::GPS_ACCURACY_LIMIT_M );
+            && ( ! isset( $geo['accuracy'] ) || $geo['accuracy'] <= self::GPS_ACCURACY_LIMIT_M )
+            && ! self::is_out_of_area( $address );
 
         // Address-book match.
         $parsed = self::parse_address( $address );
