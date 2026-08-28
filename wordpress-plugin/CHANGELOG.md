@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-08-28
+
+### Security
+- **Names containing a quote mark could break out of the surrounding HTML in the app.** `escapeHtml()` was defined twice in `pwa/app.js`; the second definition silently replaced the first for the whole file and did not escape quote characters, while several callers place its output inside HTML attributes — one of them a team member's name. The safe version is now the only one.
+
+### Removed
+- **~3,200 further lines of dead code.** 37 functions that nothing called — including a 1,016-line duplicate of the Orders page and a 601-line duplicate of the main dashboard, both superseded years ago — plus 12 one-line wrappers left over from the move to classes. Each was checked for hook registrations and dynamic calls before removal.
+- **Duplicate implementations consolidated.** The points report existed twice: the on-screen version used one, the CSV export the other, which is why their totals could differ. Both now use the same code. The QR code helpers existed twice as well; the unused copies are gone.
+
 ## [3.8.0] - 2026-08-28
 
 ### Removed

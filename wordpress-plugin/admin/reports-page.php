@@ -47,36 +47,6 @@ $is_print = isset( $_GET['print'] ) && $_GET['print'] === '1';
 
 // Function is defined in main plugin file (subsales-management.php)
 // Kept here with function_exists check for backwards compatibility
-if ( ! function_exists( 'subsales_build_team_sales_report' ) ) :
-/**
- * Build team sales report data
- * 
- * @param string $points_mode 'dollar' or 'order'
- * @param float $points_denomination Multiplier for points calculation
- * @param string $points_distribution 'individual' or 'team'
- * @param int $donation_bonus_enabled 1 or 0
- * @param float $donation_percentage Percentage of donations to add as bonus points
- * @param string $donation_distribution 'individual' or 'team'
- */
-function subsales_build_team_sales_report( 
-    $points_mode = 'dollar', 
-    $points_denomination = 1.0,
-    $points_distribution = 'individual',
-    $donation_bonus_enabled = 0,
-    $donation_percentage = 50.0,
-    $donation_distribution = 'team'
-) {
-    // Wrapper function for backwards compatibility - delegates to new class
-    return Subsales_Points_Calculator::build_report(
-        $points_mode,
-        $points_denomination,
-        $points_distribution,
-        $donation_bonus_enabled,
-        $donation_percentage,
-        $donation_distribution
-    );
-}
-endif; // function_exists check
 // OLD FUNCTION CODE REMOVED - NOW IN class-points-calculator.php
 // This code has been moved to the Subsales_Points_Calculator class for better maintainability
 // See /includes/class-points-calculator.php

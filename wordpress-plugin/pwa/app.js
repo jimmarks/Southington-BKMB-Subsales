@@ -2160,12 +2160,9 @@
     });
   }
   
-  function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
+  // (a second escapeHtml() lived here; it used div.textContent and so did NOT
+  //  escape quotes, yet silently overrode the regex version above for the whole
+  //  file - including the attribute-context callers. Removed; use the one above.)
 
   // User login button handler
   const userLoginBtn = qs('#userLoginBtn');
