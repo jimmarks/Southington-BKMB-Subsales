@@ -648,8 +648,11 @@ class Subsales_REST_API {
      * @return bool True if admin authenticated, false otherwise
      */
     public static function check_admin_permissions( $request ) {
-        // Check if user is logged into WordPress admin with edit permissions
-        if ( is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+        // manage_options, not edit_posts. These routes cover refunds, tally,
+        // untally, order history and restore - the Orders screen that drives all
+        // of them is itself manage_options, and edit_posts would have handed a
+        // Contributor the ability to move money.
+        if ( is_user_logged_in() && current_user_can( 'manage_options' ) ) {
             return true;
         }
         

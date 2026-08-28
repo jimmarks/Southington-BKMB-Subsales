@@ -335,6 +335,11 @@ class Subsales_Season_Setup {
                     $message = 'Cleared the admin contact number. Receipts and the seller message will fall back to "the subsales administrator".';
                     break;
                 }
+                // Accept 1-860-555-1234 the way the init wizard already does,
+                // rather than rejecting a number the admin typed correctly.
+                if ( 11 === strlen( $digits ) && '1' === $digits[0] ) {
+                    $digits = substr( $digits, 1 );
+                }
                 if ( 10 !== strlen( $digits ) ) {
                     self::fail( 'Please enter a 10-digit US phone number.', $step );
                 }

@@ -133,8 +133,9 @@ class Subsales_Orders {
      * @return bool
      */
     public static function check_team_tally_permission( $request ) {
-        // WordPress admins always allowed
-        if ( current_user_can( 'edit_posts' ) ) {
+        // WordPress admins always allowed. manage_options, not edit_posts - this
+        // returns a whole team's money and every seller's name inside it.
+        if ( current_user_can( 'manage_options' ) ) {
             return true;
         }
 
@@ -468,7 +469,10 @@ class Subsales_Orders {
         
         // Try WordPress admin authentication first
         $current_user = wp_get_current_user();
-        $is_admin = ( $current_user && $current_user->ID );
+        // Being logged in is not the same as being an admin. This flag also
+        // decides whether the captured-payment edit lock is skipped, so a
+        // logged-in Subscriber or Contributor must not satisfy it.
+        $is_admin = ( $current_user && $current_user->ID && current_user_can( 'manage_options' ) );
         
         $user_id = null;
         $user_name = '';
@@ -888,9 +892,13 @@ class Subsales_Orders {
         
         foreach ( $order_ids as $db_id ) {
             // Get the existing order
+            // Season-scoped: the Orders screen only ever lists one season, so an
+            // id from another season reaching here means something is wrong, not
+            // that we should quietly reconcile last year's money.
             $existing_order = $wpdb->get_row( $wpdb->prepare(
-                "SELECT * FROM $table_name WHERE id = %d",
-                $db_id
+                "SELECT * FROM $table_name WHERE id = %d AND season_id = %d",
+                $db_id,
+                Subsales_Database::current_season_id()
             ), ARRAY_A );
             
             if ( ! $existing_order ) {
@@ -1096,9 +1104,13 @@ class Subsales_Orders {
         $errors        = array();
 
         foreach ( $order_ids as $db_id ) {
+            // Season-scoped: the Orders screen only ever lists one season, so an
+            // id from another season reaching here means something is wrong, not
+            // that we should quietly reconcile last year's money.
             $existing_order = $wpdb->get_row( $wpdb->prepare(
-                "SELECT * FROM $table_name WHERE id = %d",
-                $db_id
+                "SELECT * FROM $table_name WHERE id = %d AND season_id = %d",
+                $db_id,
+                Subsales_Database::current_season_id()
             ), ARRAY_A );
 
             if ( ! $existing_order ) {

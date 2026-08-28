@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.1] - 2026-08-28
+
+### Security
+- **Creating and deleting sale days was open to any logged-in WordPress user**, including a Subscriber. Both now require full administrator rights.
+- **Refunds, tally, un-tally, order history and order restore were open to Contributors and above.** These move money and expose order history; they now require full administrator rights, matching the Orders screen that drives them.
+- **The "admin" exemption on order editing only checked whether someone was logged in**, so a low-privilege WordPress account would have bypassed the lock protecting card-paid orders. It now checks for administrator rights.
+- **A team's full money tally, including every seller's name, was readable by Contributors and above.** Now administrators only.
+
+### Fixed
+- **A sale day could be created with an impossible date** (e.g. 30 February), which was stored as a blank date while the app reported success. Dates are now validated.
+- **Tally and un-tally now respect the season**, so an order from a previous season can no longer be reconciled from this season's screen.
+- **A phone number entered as 1-860-555-1234 is now accepted** instead of being rejected for having eleven digits.
+
 ## [3.13.0] - 2026-08-28
 
 ### Fixed

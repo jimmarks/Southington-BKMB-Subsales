@@ -134,14 +134,17 @@ class Subsales_Signups {
         register_rest_route( 'order-manager/v1', '/campaigns', array(
             'methods' => 'POST',
             'callback' => array( __CLASS__, 'rest_create_campaign' ),
-            'permission_callback' => 'is_user_logged_in',
+            // manage_options, not is_user_logged_in: a sale day is admin
+            // configuration. The Subscriber account on this site passed the old
+            // check, which would have let it create and remove sale days.
+            'permission_callback' => function () { return current_user_can( 'manage_options' ); },
         ));
         
         // Delete campaign
         register_rest_route( 'order-manager/v1', '/campaigns/(?P<id>\d+)', array(
             'methods' => 'DELETE',
             'callback' => array( __CLASS__, 'rest_delete_campaign' ),
-            'permission_callback' => 'is_user_logged_in',
+            'permission_callback' => function () { return current_user_can( 'manage_options' ); },
         ));
     }
     
@@ -390,6 +393,13 @@ class Subsales_Signups {
 
         if ( empty( $date ) ) {
             return new WP_Error( 'missing_date', 'Date is required', array( 'status' => 400 ) );
+        }
+
+        // Without this an unparseable date reached a DATE NOT NULL column, was
+        // silently stored as 0000-00-00, and the endpoint still answered success.
+        $parts = explode( '-', $date );
+        if ( 3 !== count( $parts ) || ! checkdate( (int) $parts[1], (int) $parts[2], (int) $parts[0] ) ) {
+            return new WP_Error( 'invalid_date', 'Date must be a real calendar date in YYYY-MM-DD form.', array( 'status' => 400 ) );
         }
 
         // This used to insert columns named name/date. The real ones are
