@@ -44,8 +44,9 @@ if ( ! defined( 'ABSPATH' ) ) {
                 Address Coverage Report
             </h2>
             <p style="color: #666; line-height: 1.6;">
-                Analyze which order addresses are matched in your address database, cached with GPS coordinates, 
-                or require geocoding. Helps identify typos and improve delivery routing.
+                Checks every order address against the town parcel data and lists the ones that need
+                a person &mdash; typos, streets spelled differently, houses missing from the book. Run this
+                and clear the worklist before building the delivery manifest.
             </p>
             <p style="margin-bottom: 0;">
                 <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-address-coverage' ) ); ?>" 

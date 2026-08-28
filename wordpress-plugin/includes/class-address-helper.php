@@ -218,6 +218,195 @@ class Subsales_Address_Helper {
     }
 
     /**
+     * Classify one order for the coverage report, from the address outwards.
+     *
+     * The old report started from "can I geocode this?", which lumped 342
+     * donations in with 24 genuinely bad addresses and quoted a Google bill for
+     * 133 addresses that were already in the book. Starting from the address
+     * instead gives four buckets an admin can act on:
+     *
+     *   matched      - in the book. Nothing to do.
+     *   investigate  - a real address in a town we cover, but no match. THE WORK.
+     *   out_of_area  - a real address outside the parcel data. Deliverable, but
+     *                  it will never match, so it is handled separately.
+     *   unusable     - not an address at all ("N/A", "?", "village gate").
+     *   donation     - no delivery.
+     *
+     * @param array $order Row from ss_orders.
+     * @return array resolve_delivery_point() plus 'bucket' and 'zip'.
+     */
+    public static function classify_for_coverage( $order ) {
+        $resolved = self::resolve_delivery_point( $order );
+
+        if ( 'donation' === $resolved['source'] ) {
+            $resolved['bucket'] = 'donation';
+            $resolved['zip']    = '';
+            return $resolved;
+        }
+        if ( 'book' === $resolved['source'] ) {
+            $resolved['bucket'] = 'matched';
+            $resolved['zip']    = isset( $resolved['book_row']['zip'] ) ? $resolved['book_row']['zip'] : '';
+            return $resolved;
+        }
+
+        $address = $resolved['address'];
+        $parsed  = self::parse_address( $address );
+        $usable  = ! empty( $parsed['house_number'] ) && ! empty( $parsed['street'] );
+
+        $zip = '';
+        if ( preg_match( '/\b(0\d{4})\b/', $address, $m ) ) {
+            $zip = $m[1];
+        }
+        $resolved['zip'] = $zip;
+
+        if ( ! $usable ) {
+            $resolved['bucket'] = 'unusable';
+            return $resolved;
+        }
+
+        // Out of area needs a POSITIVE signal. Most orders carry no town at all
+        // ("50 humiston rd", "119 Douglos st") and treating a missing town as
+        // out-of-area buries local typos in the section nobody reads.
+        if ( '' !== $zip ) {
+            $resolved['bucket'] = in_array( $zip, self::supported_zips(), true ) ? 'investigate' : 'out_of_area';
+            return $resolved;
+        }
+
+        foreach ( self::supported_towns() as $town ) {
+            if ( '' !== $town && false !== stripos( $address, $town ) ) {
+                $resolved['bucket'] = 'investigate';
+                return $resolved;
+            }
+        }
+
+        // No ZIP and no town: let the street decide. If it is a street we hold
+        // parcels for, it is ours and someone just skipped the town.
+        $suggestion         = self::suggest_correction( $address );
+        $resolved['bucket'] = $suggestion ? 'investigate' : 'out_of_area';
+        return $resolved;
+    }
+
+    /**
+     * Suggest a correction for an unmatched address.
+     *
+     * Nearly every unmatched in-area address is a typo in the street name
+     * ("easteood dr", "walkers crosing", "119 Douglos st") or a house number
+     * that is genuinely not in the parcel data. Levenshtein over the distinct
+     * canonical street names separates those two cases, which is the whole
+     * question an admin needs answered before they can fix the row.
+     *
+     * @param string $address Raw address text from the order.
+     * @return array{street:string,house:string,confidence:string}|null
+     */
+    public static function suggest_correction( $address ) {
+        $parsed = self::parse_address( $address );
+        if ( empty( $parsed['street'] ) || empty( $parsed['house_number'] ) ) {
+            return null;
+        }
+
+        $index = self::book_index();
+        $house = strtoupper( trim( $parsed['house_number'] ) );
+        $want  = self::canonical_street( $parsed['street'] );
+
+        // Cheap first: is the street fine and only the house number missing?
+        $streets = self::book_streets();
+        if ( isset( $streets[ $want ] ) ) {
+            return array(
+                'street'     => $want,
+                'house'      => '',
+                'confidence' => 'house_not_in_book',
+            );
+        }
+
+        $best = self::nearest_street( $want, $streets );
+
+        // A misspelled suffix defeats the whole-string compare, because the book
+        // is canonical ("WALKERS XING") and the typo is not ("WALKERS CROSING").
+        // Comparing the base names alone recovers those.
+        if ( null === $best ) {
+            $base_map = array();
+            foreach ( $streets as $candidate => $unused ) {
+                $base_map[ self::street_base_key( $candidate ) ] = $candidate;
+            }
+            $base = self::nearest_street( self::street_base_key( $parsed['street'] ), $base_map );
+            if ( null !== $base ) {
+                $best = $base_map[ $base ];
+            }
+        }
+        if ( null === $best ) {
+            return null;
+        }
+
+        $exists = isset( $index['exact'][ $house . '|' . self::street_key( $best ) ] );
+
+        return array(
+            'street'     => $best,
+            'house'      => $house,
+            'confidence' => $exists ? 'confirmed' : 'street_only',
+        );
+    }
+
+    /**
+     * Closest key in $haystack to $needle, or null if nothing is close enough.
+     *
+     * More than a quarter of the string out is a different street, not a typo -
+     * offering it would create bad data instead of fixing it.
+     */
+    private static function nearest_street( $needle, $haystack ) {
+        if ( '' === $needle ) {
+            return null;
+        }
+        $best      = null;
+        $best_dist = PHP_INT_MAX;
+        foreach ( $haystack as $candidate => $unused ) {
+            // levenshtein() caps at 255 bytes; street names are far shorter.
+            $dist = levenshtein( $needle, $candidate );
+            if ( $dist < $best_dist ) {
+                $best_dist = $dist;
+                $best      = $candidate;
+            }
+        }
+        $tolerance = max( 1, (int) floor( strlen( $needle ) / 4 ) );
+        return ( null !== $best && $best_dist <= $tolerance ) ? $best : null;
+    }
+
+    /** Distinct canonical street names in the address book. */
+    public static function book_streets() {
+        static $streets = null;
+        if ( null === $streets ) {
+            global $wpdb;
+            $streets = array();
+            $rows    = $wpdb->get_col( "SELECT DISTINCT street FROM {$wpdb->prefix}ss_addresses WHERE street <> ''" );
+            foreach ( $rows as $row ) {
+                $streets[ self::canonical_street( $row ) ] = true;
+            }
+        }
+        return $streets;
+    }
+
+    /** ZIPs the parcel import actually covers. */
+    public static function supported_zips() {
+        static $zips = null;
+        if ( null === $zips ) {
+            global $wpdb;
+            $zips = $wpdb->get_col( "SELECT DISTINCT zip FROM {$wpdb->prefix}ss_addresses WHERE zip <> ''" );
+        }
+        return (array) $zips;
+    }
+
+    /** Towns the parcel import actually covers. */
+    public static function supported_towns() {
+        static $towns = null;
+        if ( null === $towns ) {
+            global $wpdb;
+            $towns = $wpdb->get_col( "SELECT DISTINCT city FROM {$wpdb->prefix}ss_addresses WHERE city <> ''" );
+            // Villages of Southington - same ZIPs, never written in the city column.
+            $towns = array_merge( $towns, array( 'Plantsville', 'Milldale', 'Marion' ) );
+        }
+        return (array) $towns;
+    }
+
+    /**
      * Cached canonical index of the address book: key => row.
      *
      * Built once per request. 16,962 rows, so re-querying per order turns a
