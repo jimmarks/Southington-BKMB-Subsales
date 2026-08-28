@@ -1001,14 +1001,31 @@ class Subsales_Orders {
             ), 502 );
         }
 
-        $now = current_time( 'mysql' );
-        $wpdb->update(
+        $now     = current_time( 'mysql' );
+        $written = $wpdb->update(
             $attempts_table,
             array( 'status' => 'refunded', 'refund_id' => $result['refund_id'], 'refunded_at' => $now ),
             array( 'id' => intval( $attempt['id'] ) ),
             array( '%s', '%s', '%s' ),
             array( '%d' )
         );
+
+        // The money has already left Square at this point. If we cannot record
+        // that, the guard above stops working and the order can be refunded a
+        // second time - so this failure is shouted about rather than swallowed.
+        if ( false === $written ) {
+            subsales_log( 'ERROR', 'orders', 'REFUND ISSUED BUT NOT RECORDED - risk of a double refund', array(
+                'order_id'   => $order['order_id'],
+                'attempt_id' => $attempt['id'],
+                'refund_id'  => $result['refund_id'],
+                'db_error'   => $wpdb->last_error,
+            ) );
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'The card WAS refunded (' . $result['refund_id'] . ') but the refund could not be '
+                           . 'recorded against the order. Do not retry - check the system log and record it by hand.',
+            ), 500 );
+        }
 
         $wpdb->update(
             $orders_table,

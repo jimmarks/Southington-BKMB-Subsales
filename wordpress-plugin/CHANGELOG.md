@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.2] - 2026-08-28
+
+### Fixed
+- **A refund could be issued twice.** Square's refund reference is about 73 characters and the column storing it only held 64, so recording the refund failed — the money went back to the customer but the order still looked unrefunded, and the guard against refunding again never engaged. Caught in sandbox testing before any real card was involved. The column now holds the full reference, and if recording a refund ever fails again the admin is told plainly that the card *was* refunded and not to retry.
+
 ## [3.12.1] - 2026-08-28
 
 ### Fixed

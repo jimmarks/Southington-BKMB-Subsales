@@ -714,7 +714,7 @@ class Subsales_Database {
                 checkout_url text DEFAULT NULL,
                 status enum('initiated','paid','cancelled_by_seller','expired','failed','refunded') NOT NULL DEFAULT 'initiated',
                 finalized_order_id varchar(255) DEFAULT NULL,
-                refund_id varchar(64) DEFAULT NULL,
+                refund_id varchar(255) DEFAULT NULL,
                 refunded_at datetime DEFAULT NULL,
                 created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -765,10 +765,23 @@ class Subsales_Database {
              AND COLUMN_NAME = 'refund_id'"
         );
         if ( ! $has_refund_id ) {
+            // 255, not 64: a Square refund id is "{payment_id}_{token}" and runs
+            // past 70 characters. At 64 the UPDATE fails and the refund is left
+            // recorded nowhere - money returned, system still thinks it is owed.
             $wpdb->query( "ALTER TABLE {$table_name}
-                ADD COLUMN refund_id varchar(64) DEFAULT NULL AFTER finalized_order_id,
+                ADD COLUMN refund_id varchar(255) DEFAULT NULL AFTER finalized_order_id,
                 ADD COLUMN refunded_at datetime DEFAULT NULL AFTER refund_id" );
             subsales_log( 'INFO', 'system', 'Added refund columns to payment_attempts' );
+        } else {
+            $len = (int) $wpdb->get_var(
+                "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table_name}'
+                 AND COLUMN_NAME = 'refund_id'"
+            );
+            if ( $len > 0 && $len < 255 ) {
+                $wpdb->query( "ALTER TABLE {$table_name} MODIFY COLUMN refund_id varchar(255) DEFAULT NULL" );
+                subsales_log( 'INFO', 'system', 'Widened payment_attempts.refund_id to 255' );
+            }
         }
 
         $status_type = (string) $wpdb->get_var(
