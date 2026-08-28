@@ -291,7 +291,7 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
         var template = <?php
             $tpl = (string) get_option( 'subsales_sms_receipt_template', Subsales_SMS_Queue::DEFAULT_TEMPLATE );
             if ( false === strpos( $tpl, '{adminphone}' ) ) {
-                $tpl = rtrim( $tpl ) . ' Questions? Call {adminphone}.';
+                $tpl = rtrim( $tpl ) . ' Call {adminphone} with any questions.';
             }
             echo wp_json_encode( $tpl );
         ?>;
