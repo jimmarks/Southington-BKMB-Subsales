@@ -732,6 +732,56 @@ class Subsales_Database {
 
             subsales_log( 'INFO', 'system', 'Created payment_attempts table via migration' );
         }
+
+        // The block above only runs when the table is absent, so dbDelta never
+        // sees this table again after first creation - any later column has to
+        // be added explicitly or it is silently skipped on upgrade.
+        self::migrate_payment_attempts_refunds( $payment_attempts_table_name );
+    }
+
+    /**
+     * Schema migration: refund bookkeeping on ss_payment_attempts.
+     *
+     * Adds refund_id / refunded_at, and widens the status enum to accept
+     * 'refunded'. The enum matters: MySQL coerces an out-of-range enum value to
+     * '' rather than erroring, so without this a refunded attempt would land as
+     * a blank status and look untouched - the same failure the campaigns delete
+     * bug had.
+     */
+    private static function migrate_payment_attempts_refunds( $table_name ) {
+        global $wpdb;
+
+        $exists = $wpdb->get_var(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table_name}'"
+        );
+        if ( ! $exists ) {
+            return;
+        }
+
+        $has_refund_id = $wpdb->get_var(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table_name}'
+             AND COLUMN_NAME = 'refund_id'"
+        );
+        if ( ! $has_refund_id ) {
+            $wpdb->query( "ALTER TABLE {$table_name}
+                ADD COLUMN refund_id varchar(64) DEFAULT NULL AFTER finalized_order_id,
+                ADD COLUMN refunded_at datetime DEFAULT NULL AFTER refund_id" );
+            subsales_log( 'INFO', 'system', 'Added refund columns to payment_attempts' );
+        }
+
+        $status_type = (string) $wpdb->get_var(
+            "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table_name}'
+             AND COLUMN_NAME = 'status'"
+        );
+        if ( '' !== $status_type && false === strpos( $status_type, 'refunded' ) ) {
+            $wpdb->query( "ALTER TABLE {$table_name}
+                MODIFY COLUMN status enum('initiated','paid','cancelled_by_seller','expired','failed','refunded')
+                NOT NULL DEFAULT 'initiated'" );
+            subsales_log( 'INFO', 'system', "Widened payment_attempts.status enum to include 'refunded'" );
+        }
     }
 
     /**

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.1] - 2026-08-28
+
+### Fixed
+- **The refund bookkeeping columns actually get created now.** The digital-payments table is only built when it's missing, so WordPress's schema updater never revisits it — any column added after the table first appeared was silently skipped. Added an explicit migration, which also widens the status field to accept "refunded" (without that, MySQL would have quietly stored a blank status instead).
+
 ## [3.12.0] - 2026-08-28
 
 ### Added
