@@ -2113,3 +2113,131 @@ input:checked + .subsales-time-slider {
     display: none;
   }
 }
+
+
+/* ---------------------------------------------------------------------------
+   Season setup, step 7 - admin contact number and its two "where it shows up"
+   previews. The modal content is max-width 1200px and 88vh tall with its body
+   scrolling, so these sit in a two-column grid that collapses to one column
+   below 900px - two side-by-side cards would be unreadably narrow on the phone
+   layout the modal already drops to at that width.
+   --------------------------------------------------------------------------- */
+.subsales-newseason-phone {
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  padding: 10px 12px;
+  max-width: 260px;      /* a 10-digit number and no more - a wide box invites an address */
+  display: block;
+}
+
+.subsales-newseason-fieldnote {
+  max-width: 62ch;       /* keeps the explanation readable rather than one long line */
+  margin: 6px 0 18px 0;
+}
+
+.subsales-newseason-previewhead {
+  margin: 4px 0 10px;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #646970;
+}
+
+.subsales-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 8px;
+}
+
+.subsales-preview-card {
+  border: 1px solid #dcdcde;
+  border-radius: 8px;
+  background: #f6f7f7;
+  padding: 14px;
+  min-width: 0;          /* without this a long unbroken preview string blows the grid out */
+}
+
+.subsales-preview-cap {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #646970;
+  margin-bottom: 10px;
+}
+
+.subsales-preview-note {
+  font-size: 12px;
+  color: #646970;
+  margin: 8px 0 0;
+}
+
+/* An SMS bubble, so the receipt preview reads as a phone message and not as
+   another settings field. */
+.subsales-sms-bubble {
+  background: #e7f2ff;
+  border: 1px solid #c9e0fb;
+  border-radius: 14px 14px 14px 4px;
+  padding: 11px 13px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;   /* a pasted URL must not widen the card */
+  min-height: 40px;
+}
+
+/* A flattened sketch of the seller's order form - enough to place the lock
+   message in context without pretending to be a real device frame. */
+.subsales-phone-mock {
+  background: #fff;
+  border: 1px solid #dcdcde;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.subsales-phone-mock-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #50575e;
+  margin: 8px 0 3px;
+}
+
+.subsales-phone-mock-input {
+  border: 1px solid #dcdcde;
+  border-radius: 4px;
+  padding: 6px 8px;
+  background: #fff;
+  color: #1d2327;
+  overflow-wrap: anywhere;
+}
+
+.subsales-phone-mock-input.is-locked {
+  background: #f5f5f5;
+  color: #8c8f94;
+}
+
+/* Matches the amber the PWA actually uses, so the admin recognises it. */
+.subsales-phone-mock-lock {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #7a5b00;
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.subsales-phone-mock-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 6px;
+}
+
+@media (max-width: 900px) {
+  .subsales-preview-grid { grid-template-columns: 1fr; }
+}

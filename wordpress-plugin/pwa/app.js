@@ -1732,7 +1732,15 @@
       el.style.cursor = paid ? 'not-allowed' : '';
     });
 
-    if (note) { note.style.display = paid ? '' : 'none'; }
+    if (note) {
+      if (paid) {
+        const phone = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.adminContactPhone) || '';
+        note.textContent = phone
+          ? ("This order was paid by card, so the items can't be changed here. Please ask the customer to call the subsales administrator at " + phone + ".")
+          : "This order was paid by card, so the items can't be changed here. Please ask the customer to contact the subsales administrator.";
+      }
+      note.style.display = paid ? '' : 'none';
+    }
   }
 
   async function buildNewOrderObject(paymentMethod, data, extra){

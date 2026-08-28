@@ -402,6 +402,10 @@ class Subsales_SMS_Queue {
             '{items}'    => $parts ? implode( ', ', $parts ) : 'your order',
             '{total}'    => '$' . number_format( $total, 2 ),
             '{org}'      => (string) get_option( 'subsales_branding', 'Subsales' ),
+            // Set per season in the setup wizard (step 7). Empty until an admin
+            // fills it in, so a template using it degrades to a shorter message
+            // rather than printing a placeholder at a customer.
+            '{adminphone}' => Subsales_Season_Setup::format_phone( get_option( 'subsales_admin_contact_phone', '' ) ),
         ) );
 
         return self::apply_compliance( $body );

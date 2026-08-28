@@ -24,7 +24,7 @@ class Subsales_Season_Setup {
     /** Option holding { time, user } of the last completed step. */
     const LAST_RUN_OPTION = 'subsales_season_setup_last_run';
 
-    const TOTAL_STEPS = 7;
+    const TOTAL_STEPS = 8;
 
     public static function init() {
         add_action( 'wp_ajax_subsales_season_setup_step', array( __CLASS__, 'ajax_step' ) );
@@ -39,8 +39,24 @@ class Subsales_Season_Setup {
             4 => 'Pricing',
             5 => 'Sales mode',
             6 => 'Addresses',
-            7 => 'Open sales',
+            7 => 'Admin contact',
+            8 => 'Open sales',
         );
+    }
+
+    /**
+     * Display form for a stored 10-digit number. One place, so the receipt, the
+     * seller's lock message and the wizard preview can never disagree.
+     *
+     * @param string $digits 10 digits, or anything else (returned unchanged).
+     * @return string
+     */
+    public static function format_phone( $digits ) {
+        $digits = preg_replace( '/\\D/', '', (string) $digits );
+        if ( 10 !== strlen( $digits ) ) {
+            return (string) $digits;
+        }
+        return sprintf( '%s-%s-%s', substr( $digits, 0, 3 ), substr( $digits, 3, 3 ), substr( $digits, 6 ) );
     }
 
     /* ---------------------------------------------------------------- state */
@@ -306,6 +322,24 @@ class Subsales_Season_Setup {
                     $label,
                     intval( $result['teams_deactivated'] )
                 );
+                break;
+
+            case 'admin_contact':
+                // Stored as 10 digits; formatting is a display decision, and the
+                // SMS receipt and the PWA lock message each present it their own way.
+                $raw    = isset( $_POST['admin_contact_phone'] ) ? wp_unslash( $_POST['admin_contact_phone'] ) : '';
+                $digits = preg_replace( '/\\D/', '', (string) $raw );
+
+                if ( '' === $digits ) {
+                    update_option( 'subsales_admin_contact_phone', '', false );
+                    $message = 'Cleared the admin contact number. Receipts and the seller message will fall back to "the subsales administrator".';
+                    break;
+                }
+                if ( 10 !== strlen( $digits ) ) {
+                    self::fail( 'Please enter a 10-digit US phone number.', $step );
+                }
+                update_option( 'subsales_admin_contact_phone', $digits, false );
+                $message = 'Saved. Customers will see ' . Subsales_Season_Setup::format_phone( $digits ) . ' on their receipt.';
                 break;
 
             case 'sales_days':

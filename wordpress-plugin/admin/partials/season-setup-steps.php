@@ -213,7 +213,126 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
     <p><button type="button" class="button js-newseason-goto-addresses">Open Address Management</button>
        <span class="description">This closes the setup window and takes you to the Address Management tab on this same page.</span></p>
 
-<?php elseif ( 7 === $step ) : ?>
+<?php elseif ( 7 === $step ) :
+    $admin_phone = (string) get_option( 'subsales_admin_contact_phone', '' );
+?>
+
+    <h2>Step 7 &mdash; Who do customers call?</h2>
+
+    <p class="subsales-newseason-msg">
+        The subsales chair changes from year to year, so this is set per season.
+    </p>
+
+    <form class="subsales-newseason-form" method="post" data-op="admin_contact">
+        <?php wp_nonce_field( Subsales_Season_Setup::NONCE ); ?>
+        <input type="hidden" name="step" value="7" />
+
+        <label for="subsales_admin_contact_phone"><strong>Subsales admin phone number</strong></label>
+        <input type="tel"
+               id="subsales_admin_contact_phone"
+               name="admin_contact_phone"
+               value="<?php echo esc_attr( $admin_phone ); ?>"
+               placeholder="8604187663"
+               inputmode="tel"
+               maxlength="14"
+               class="subsales-newseason-phone" />
+
+        <p class="description subsales-newseason-fieldnote">
+            This phone number will be displayed on customer receipts and listed as the admin
+            number to call if there is a sales issue. Please enter a number that you'd like to
+            be used for those purposes.
+        </p>
+
+        <h3 class="subsales-newseason-previewhead">Where it shows up</h3>
+
+        <div class="subsales-preview-grid">
+            <div class="subsales-preview-card">
+                <div class="subsales-preview-cap">1 &middot; The text receipt a customer gets</div>
+                <div class="subsales-sms-bubble" id="adminPhoneSmsPreview">Loading&hellip;</div>
+                <p class="subsales-preview-note" id="adminPhoneSmsCounts"></p>
+            </div>
+
+            <div class="subsales-preview-card">
+                <div class="subsales-preview-cap">2 &middot; What a seller sees on a card-paid order</div>
+                <div class="subsales-phone-mock">
+                    <div class="subsales-phone-mock-label">Customer name</div>
+                    <div class="subsales-phone-mock-input">Jane Doe</div>
+                    <div class="subsales-phone-mock-label">Address</div>
+                    <div class="subsales-phone-mock-input">14 Maple St, Southington, CT</div>
+                    <div class="subsales-phone-mock-lock" id="adminPhoneLockPreview">
+                        This order was paid by card, so the items can't be changed here.
+                        Please ask the customer to contact the subsales administrator.
+                    </div>
+                    <div class="subsales-phone-mock-row">
+                        <div><div class="subsales-phone-mock-label">Turkey</div><div class="subsales-phone-mock-input is-locked">2</div></div>
+                        <div><div class="subsales-phone-mock-label">Ham</div><div class="subsales-phone-mock-input is-locked">0</div></div>
+                        <div><div class="subsales-phone-mock-label">Combo</div><div class="subsales-phone-mock-input is-locked">1</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <p class="submit"><button type="submit" class="button button-primary">Save contact number</button></p>
+    </form>
+
+    <script>
+    (function(){
+        var input   = document.getElementById('subsales_admin_contact_phone');
+        var smsEl   = document.getElementById('adminPhoneSmsPreview');
+        var cntEl   = document.getElementById('adminPhoneSmsCounts');
+        var lockEl  = document.getElementById('adminPhoneLockPreview');
+        if (!input || !smsEl) { return; }
+
+        var nonce    = <?php echo wp_json_encode( wp_create_nonce( 'subsales_preview_sms_receipt' ) ); ?>;
+        var ajaxUrl  = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        // Whatever the receipt template actually is right now, with the token
+        // appended if it is not already used - so the preview shows the number
+        // in place even before the admin edits their template.
+        var template = <?php
+            $tpl = (string) get_option( 'subsales_sms_receipt_template', Subsales_SMS_Queue::DEFAULT_TEMPLATE );
+            if ( false === strpos( $tpl, '{adminphone}' ) ) {
+                $tpl = rtrim( $tpl ) . ' Questions? Call {adminphone}.';
+            }
+            echo wp_json_encode( $tpl );
+        ?>;
+
+        function fmt(d){
+            d = (d || '').replace(/\D/g, '');
+            return d.length === 10 ? (d.slice(0,3) + '-' + d.slice(3,6) + '-' + d.slice(6)) : '';
+        }
+
+        function renderLock(){
+            var p = fmt(input.value);
+            lockEl.textContent = p
+                ? ("This order was paid by card, so the items can't be changed here. Please ask the customer to call the subsales administrator at " + p + ".")
+                : "This order was paid by card, so the items can't be changed here. Please ask the customer to contact the subsales administrator.";
+        }
+
+        var timer = null;
+        function renderSms(){
+            var fd = new FormData();
+            fd.append('action', 'subsales_preview_sms_receipt');
+            fd.append('nonce', nonce);
+            fd.append('template', template);
+            fd.append('admin_phone', input.value);
+            fetch(ajaxUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function(r){ return r.json(); })
+                .then(function(j){
+                    if (!j || !j.success) { smsEl.textContent = 'Could not build a preview.'; cntEl.textContent = ''; return; }
+                    smsEl.textContent = j.data.body;
+                    cntEl.textContent = j.data.chars + ' characters, ' + j.data.segments +
+                        ' segment' + (j.data.segments === 1 ? '' : 's') + ' (' + j.data.encoding + ')';
+                })
+                .catch(function(){ smsEl.textContent = 'Could not build a preview.'; cntEl.textContent = ''; });
+        }
+
+        function refresh(){ renderLock(); clearTimeout(timer); timer = setTimeout(renderSms, 250); }
+        input.addEventListener('input', refresh);
+        refresh();
+    })();
+    </script>
+
+<?php elseif ( 8 === $step ) : ?>
 
     <?php $open = ( 1 === $status['sales_enabled'] ); ?>
     <h2>Step 7 &mdash; Open sales</h2>

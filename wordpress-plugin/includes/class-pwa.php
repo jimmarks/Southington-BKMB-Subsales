@@ -46,7 +46,11 @@ class Subsales_PWA {
             'primaryColor' => get_option( 'order_sync_primary_color', '#2d6cdf' ),
             'brandName' => get_option( 'subsales_branding', 'Subsales' ),
             'brandingImage' => $header_image_url,
-            'digitalPaymentsEnabled' => (bool) get_option( 'subsales_digital_payments_enabled', false )
+            'digitalPaymentsEnabled' => (bool) get_option( 'subsales_digital_payments_enabled', false ),
+            // Set per season (Set Up Season, step 7). Empty until an admin fills
+            // it in, in which case the seller's message says "the subsales
+            // administrator" rather than showing a blank where a number goes.
+            'adminContactPhone' => Subsales_Season_Setup::format_phone( get_option( 'subsales_admin_contact_phone', '' ) ),
         );
         // Include configured products (global, not per-team). Stored as option 'order_sync_products'.
         $settings['products'] = self::get_products_config();

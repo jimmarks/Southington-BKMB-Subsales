@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.11.0] - 2026-08-28
+
+### Added
+- **Season setup now asks who customers should call.** A new step 7 collects the subsales admin's phone number, which changes year to year as the chair rotates. It's stored per season alongside the rest of the setup.
+- **The step shows you where that number ends up**, live as you type it: the actual text receipt a customer would receive (with its real character and segment count), and a mock-up of what a seller sees when they try to change an order that was paid by card.
+- **New `{adminphone}` template token** for the receipt, documented on the Text Messages settings tab along with a note that it adds roughly 12 characters — enough to push a large order onto a second segment.
+- **The seller's locked-order message now names the number** when one is set: "…please ask the customer to call the subsales administrator at 860-418-7663." It falls back to the generic wording when no number has been entered.
+
 ## [3.10.0] - 2026-08-28
 
 ### Added

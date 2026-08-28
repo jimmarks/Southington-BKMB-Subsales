@@ -260,11 +260,24 @@ class Subsales_AJAX_Handlers {
             $qty = 1;
         }
 
+        // The season-setup wizard previews a number the admin has typed but not
+        // yet saved, so allow an override for the duration of this render only.
+        $phone_override = isset( $_POST['admin_phone'] ) ? preg_replace( '/\\D/', '', wp_unslash( $_POST['admin_phone'] ) ) : null;
+        $filter = null;
+        if ( null !== $phone_override ) {
+            $filter = function () use ( $phone_override ) { return $phone_override; };
+            add_filter( 'pre_option_subsales_admin_contact_phone', $filter );
+        }
+
         $body = Subsales_SMS_Queue::render_receipt( array(
             'customer'       => 'Sample Customer',
             'products'       => $products,
             'donationAmount' => 5,
         ), $template );
+
+        if ( $filter ) {
+            remove_filter( 'pre_option_subsales_admin_contact_phone', $filter );
+        }
 
         $counts = Subsales_SMS_Queue::segments( $body );
 

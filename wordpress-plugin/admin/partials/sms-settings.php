@@ -166,6 +166,7 @@ if ( empty( $last_drain['at'] ) ) {
                     <li><code>{items}</code> — what they bought, with how many, e.g. "2 Italian, 1 Turkey"</li>
                     <li><code>{total}</code> — what they paid, e.g. "$36.00"</li>
                     <li><code>{org}</code> — your organization name, taken from the Branding setting on the General tab</li>
+                    <li><code>{adminphone}</code> — the subsales admin's number, set per season in Set Up Season &rarr; step 7. Adds roughly 12 characters, which can push a large order onto a second segment — the preview below shows the real count.</li>
                 </ul>
                 <p class="description" style="max-width:640px">
                     <strong>Two things are added automatically if you leave them out:</strong> your organization name, and
