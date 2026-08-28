@@ -368,6 +368,14 @@ $params = array();
                 </form>
             </div>
             <div class="subsales-modal-footer">
+                <button id="subsales-refund-btn"
+                        class="button button-large subsales-refund-btn"
+                        style="display:none"
+                        onclick="SubsalesOrderEdit.refundOrder()"
+                        title="Cancel this order and refund the card in full">
+                    Cancel &amp; Refund Card
+                </button>
+                <span class="subsales-modal-footer-spacer"></span>
                 <button class="button button-large" onclick="SubsalesOrderEdit.closeEditModal()">Cancel</button>
                 <button class="button button-primary button-large" onclick="SubsalesOrderEdit.saveOrder()">Save Changes</button>
             </div>
@@ -422,8 +430,12 @@ $params = array();
         .subsales-modal-header h2 { margin: 0; }
         .subsales-modal-close { background: none; border: none; font-size: 28px; cursor: pointer; padding: 0; line-height: 1; color: #666; }
         .subsales-modal-body { padding: 24px; overflow-y: auto; flex: 1; }
-        .subsales-modal-footer { padding: 16px 24px; border-top: 1px solid #ddd; text-align: right; }
-        .subsales-modal-footer button { margin-left: 8px; }
+        /* Flex rather than text-align:right so the destructive action can be
+           pushed to the far left by .subsales-modal-footer-spacer while Cancel
+           and Save stay right-aligned. Wraps on narrow screens instead of
+           overflowing the modal. */
+        .subsales-modal-footer { padding: 16px 24px; border-top: 1px solid #ddd; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+        .subsales-modal-footer button { margin-left: 0; }
         
         .subsales-history-panel { position: fixed; top: 0; right: 0; width: 500px; height: 100%; background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.3); z-index: 100001; overflow-y: auto; }
         .subsales-history-header { padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: white; }
@@ -440,6 +452,21 @@ $params = array();
         
         .subsales-orders-meta-note { float: right; color: #666; font-size: 0.9em; }
         .subsales-edited-star { color: red; font-weight: bold; }
+        /* Refund is destructive and irreversible, so it reads as a warning and
+           sits hard left - away from Save Changes, which is where the cursor
+           naturally goes. The spacer is what pushes them apart. */
+        .subsales-modal-footer-spacer { flex: 1 1 auto; }
+        .subsales-refund-btn {
+            color: #b32d2e;
+            border-color: #b32d2e;
+            background: #fff;
+        }
+        .subsales-refund-btn:hover:not(:disabled) {
+            background: #b32d2e;
+            border-color: #b32d2e;
+            color: #fff;
+        }
+        .subsales-refund-btn:disabled { opacity: 0.6; cursor: progress; }
         /* Second line of the order cell. Deliberately narrow and truncating: the
            column must not widen enough to push the product columns off screen,
            and a wrapped 3-line address would break the row rhythm that makes an
@@ -508,6 +535,8 @@ $params = array();
         const restUrl = <?php echo json_encode( rest_url( 'order-manager/v1/orders/tally' ) ); ?>;
         const untallyUrl = <?php echo json_encode( rest_url( 'order-manager/v1/orders/untally' ) ); ?>;
         const restNonce = <?php echo json_encode( wp_create_nonce( 'wp_rest' ) ); ?>;
+        const refundUrlBase = <?php echo json_encode( rest_url( 'order-manager/v1/orders/' ) ); ?>;
+        function refundUrlFor(id){ return refundUrlBase + encodeURIComponent(id) + '/refund'; }
         
         let selectedOrderIds = new Set();
 
@@ -977,6 +1006,16 @@ $params = array();
                 // Claim edit lock before showing modal
                 await this.claimEditLock(orderDbId);
                 
+                // The refund button only exists for card-paid orders. This is the
+                // only rollback path for one - sellers cannot reach it at all.
+                const refundBtn = document.getElementById('subsales-refund-btn');
+                if (refundBtn) {
+                    const paid = data.payment === 'digital' && !!data.paid_amount;
+                    refundBtn.style.display = paid ? '' : 'none';
+                    refundBtn.dataset.orderDbId = orderDbId;
+                    refundBtn.dataset.amount = data.paid_amount || '';
+                }
+
                 // Show modal
                 document.getElementById('subsales-edit-modal').style.display = 'block';
                 
@@ -1005,6 +1044,59 @@ $params = array();
             }
         },
         
+        // The only rollback path for a card-paid order. Two deliberate gates:
+        // the fee warning (a refund costs the club money that a cash refund
+        // would not), and a typed reason that lands in the order's history.
+        async refundOrder() {
+            const btn = document.getElementById('subsales-refund-btn');
+            if (!btn) { return; }
+            const orderDbId = btn.dataset.orderDbId;
+            const amount = parseFloat(btn.dataset.amount || '0');
+            if (!orderDbId || !(amount > 0)) {
+                alert('This order has no captured card payment to refund.');
+                return;
+            }
+
+            // Square keeps its processing fee on a refund, so the club eats it.
+            const fee = (amount * 0.026) + 0.10;
+            const warning =
+                'Refund $' + amount.toFixed(2) + ' to the customer\u2019s card?\n\n' +
+                'A CASH REFUND IS PREFERRED.\n' +
+                'Square keeps its processing fee on a card refund, so this one costs the ' +
+                'band roughly $' + fee.toFixed(2) + ' that a cash refund would not.\n\n' +
+                'This also cancels the order, and the money takes 2-7 business days to ' +
+                'reach the card.\n\nContinue with the card refund?';
+            if (!confirm(warning)) { return; }
+
+            const reason = prompt('Why is this order being refunded? (recorded in the order history)');
+            if (reason === null) { return; }
+            if (!reason.trim()) { alert('A reason is required.'); return; }
+
+            btn.disabled = true;
+            const original = btn.textContent;
+            btn.textContent = 'Refunding\u2026';
+            try {
+                const resp = await fetch(refundUrlFor(orderDbId), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': restNonce },
+                    body: JSON.stringify({ reason: reason.trim() })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    alert(data.message);
+                    this.closeEditModal();
+                    fetchPage(1);
+                } else {
+                    alert('Refund failed: ' + (data.message || 'unknown error'));
+                }
+            } catch (e) {
+                alert('Refund failed: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = original;
+            }
+        },
+
         closeEditModal() {
             // Release edit lock if we have a current order
             if (this.currentOrder && this.currentOrder.id) {

@@ -173,6 +173,89 @@ class Subsales_Square_Payments {
     }
 
     /**
+     * Refund a captured payment in full.
+     *
+     * Square keeps its processing fee on a refund, so every cancelled digital
+     * order costs the organisation roughly 2.6% + 10c of the original amount.
+     * That is a business decision, not a technical one - this method just does
+     * what it is told and reports honestly.
+     *
+     * Refunds are asynchronous: Square answers PENDING and settles to COMPLETED
+     * later, so the returned status is the state at request time, not the final
+     * outcome.
+     *
+     * @param string $payment_id     Square payment id (ss_payment_attempts.square_payment_id).
+     * @param float  $amount         Amount in dollars.
+     * @param string $idempotency_key Stable key so a retry cannot double-refund.
+     * @param string $reason         Free text stored on the Square refund.
+     * @return array ['ok'=>bool,'refund_id'=>string,'status'=>string,'message'=>string]
+     */
+    public static function refund_payment( $payment_id, $amount, $idempotency_key, $reason = '' ) {
+        $settings = self::get_settings();
+        if ( ! $settings ) {
+            return array( 'ok' => false, 'refund_id' => '', 'status' => '', 'message' => 'Square is not configured.' );
+        }
+
+        $url = self::get_api_base_url( $settings['environment'] ) . '/v2/refunds';
+
+        $body = array(
+            'idempotency_key' => substr( (string) $idempotency_key, 0, 45 ),
+            'payment_id'      => (string) $payment_id,
+            'amount_money'    => array(
+                // Square works in the currency's smallest unit; round before
+                // casting so 20.00 can never arrive as 1999.
+                'amount'   => (int) round( floatval( $amount ) * 100 ),
+                'currency' => 'USD',
+            ),
+        );
+        if ( '' !== $reason ) {
+            $body['reason'] = substr( $reason, 0, 192 );
+        }
+
+        $response = wp_remote_post( $url, array(
+            'timeout' => 20,
+            'headers' => array(
+                'Authorization'  => 'Bearer ' . $settings['access_token'],
+                'Square-Version' => '2024-06-04',
+                'Content-Type'   => 'application/json',
+            ),
+            'body'    => wp_json_encode( $body ),
+        ) );
+
+        if ( is_wp_error( $response ) ) {
+            subsales_log( 'ERROR', 'square', 'Refund transport failure', array(
+                'payment_id' => $payment_id,
+                'error'      => $response->get_error_message(),
+            ) );
+            return array( 'ok' => false, 'refund_id' => '', 'status' => '', 'message' => $response->get_error_message() );
+        }
+
+        $code   = wp_remote_retrieve_response_code( $response );
+        $parsed = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( $code >= 200 && $code < 300 && isset( $parsed['refund'] ) ) {
+            return array(
+                'ok'        => true,
+                'refund_id' => isset( $parsed['refund']['id'] ) ? $parsed['refund']['id'] : '',
+                'status'    => isset( $parsed['refund']['status'] ) ? $parsed['refund']['status'] : '',
+                'message'   => '',
+            );
+        }
+
+        $detail = 'Square rejected the refund.';
+        if ( ! empty( $parsed['errors'][0]['detail'] ) ) {
+            $detail = $parsed['errors'][0]['detail'];
+        }
+        subsales_log( 'ERROR', 'square', 'Refund rejected', array(
+            'payment_id' => $payment_id,
+            'http'       => $code,
+            'detail'     => $detail,
+        ) );
+
+        return array( 'ok' => false, 'refund_id' => '', 'status' => '', 'message' => $detail );
+    }
+
+    /**
      * Verify a Square webhook signature.
      *
      * VERIFY against Square's current webhook signature documentation before

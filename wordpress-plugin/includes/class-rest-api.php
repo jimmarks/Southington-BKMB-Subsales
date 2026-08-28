@@ -85,6 +85,14 @@ class Subsales_REST_API {
             'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
         ));
 
+        // Cancel + full card refund. Admin only, and the only rollback path for a
+        // digital order - see Subsales_Orders::refund_order().
+        register_rest_route( 'order-manager/v1', '/orders/(?P<id>\d+)/refund', array(
+            'methods' => 'POST',
+            'callback' => array( 'Subsales_Orders', 'refund_order' ),
+            'permission_callback' => array( __CLASS__, 'check_admin_permissions' ),
+        ));
+
         // Reverse a tally - see Subsales_Orders::untally_orders().
         register_rest_route( 'order-manager/v1', '/orders/untally', array(
             'methods' => 'POST',

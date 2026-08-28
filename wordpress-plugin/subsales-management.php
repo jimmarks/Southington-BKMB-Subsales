@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.11.2
+ * Version: 3.12.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.11.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.12.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2900,6 +2900,12 @@ function order_sync_fetch_orders_ajax() {
             'donation_amount' => $donation,
             'payment' => $payment,
             'payment_display' => $payment ? ucfirst($payment) : '',
+            // Present only when a card payment was actually captured. Drives the
+            // Cancel & Refund button, which must never appear for cash or check.
+            'paid_amount' => ( function() use ( $od ) {
+                $a = Subsales_Orders::captured_digital_payment( $od );
+                return $a ? number_format( floatval( $a['total_amount'] ), 2, '.', '' ) : '';
+            } )(),
             'edited' => $edited,
             'deleted' => isset( $r['deleted'] ) && intval( $r['deleted'] ) === 1,
             'tallied' => $tallied,

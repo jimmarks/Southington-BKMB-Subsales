@@ -939,6 +939,119 @@ class Subsales_Orders {
     }
 
     /**
+     * Cancel a card-paid order and refund it in full. Admin only.
+     *
+     * This is the single rollback path for a digital order - sellers cannot
+     * reach it, by design, because the money has already moved. The order is
+     * soft-deleted rather than erased so it stays in history and in the audit
+     * trail alongside the refund.
+     *
+     * @param WP_REST_Request $request
+     * @return WP_REST_Response
+     */
+    public static function refund_order( $request ) {
+        global $wpdb;
+        $orders_table   = $wpdb->prefix . 'ss_orders';
+        $attempts_table = $wpdb->prefix . 'ss_payment_attempts';
+        $current_user   = wp_get_current_user();
+
+        $db_id  = intval( $request->get_param( 'id' ) );
+        $body   = (array) $request->get_json_params();
+        $reason = isset( $body['reason'] ) ? sanitize_textarea_field( $body['reason'] ) : '';
+
+        if ( '' === trim( $reason ) ) {
+            return new WP_REST_Response( array( 'success' => false, 'message' => 'A reason is required to refund an order.' ), 400 );
+        }
+
+        $order = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$orders_table} WHERE id = %d", $db_id ), ARRAY_A );
+        if ( ! $order ) {
+            return new WP_REST_Response( array( 'success' => false, 'message' => 'Order not found.' ), 404 );
+        }
+
+        $order_data = json_decode( $order['order_data'], true );
+        $attempt    = self::captured_digital_payment( $order_data );
+        if ( ! $attempt ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'This order has no captured card payment, so there is nothing to refund. Cash and check orders are corrected by editing or deleting them.',
+            ), 409 );
+        }
+        if ( ! empty( $attempt['refund_id'] ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'This payment has already been refunded (' . $attempt['refund_id'] . ').',
+            ), 409 );
+        }
+
+        $amount = floatval( $attempt['total_amount'] );
+
+        // Keyed on the attempt, so a double-click or a retried request can never
+        // produce a second refund - Square treats the repeat as the same call.
+        $result = Subsales_Square_Payments::refund_payment(
+            $attempt['square_payment_id'],
+            $amount,
+            'refund-' . $attempt['attempt_uid'],
+            $reason
+        );
+
+        if ( empty( $result['ok'] ) ) {
+            return new WP_REST_Response( array(
+                'success' => false,
+                'message' => 'Square did not accept the refund: ' . $result['message'],
+            ), 502 );
+        }
+
+        $now = current_time( 'mysql' );
+        $wpdb->update(
+            $attempts_table,
+            array( 'status' => 'refunded', 'refund_id' => $result['refund_id'], 'refunded_at' => $now ),
+            array( 'id' => intval( $attempt['id'] ) ),
+            array( '%s', '%s', '%s' ),
+            array( '%d' )
+        );
+
+        $wpdb->update(
+            $orders_table,
+            array( 'deleted' => 1, 'deleted_at' => $now, 'delete_reason' => 'Refunded: ' . $reason ),
+            array( 'id' => $db_id ),
+            array( '%d', '%s', '%s' ),
+            array( '%d' )
+        );
+
+        Subsales_Database::log_order_change(
+            $order['id'],
+            $order['order_id'],
+            $order_data,
+            $order_data,
+            'update',
+            $current_user->ID,
+            $current_user->display_name,
+            sprintf( 'Refunded $%s to the card and cancelled the order. Reason: %s', number_format( $amount, 2 ), $reason ),
+            'admin'
+        );
+
+        subsales_log( 'WARNING', 'orders', 'Digital order refunded and cancelled', array(
+            'order_id'  => $order['order_id'],
+            'amount'    => $amount,
+            'refund_id' => $result['refund_id'],
+            'status'    => $result['status'],
+            'by'        => $current_user->display_name,
+        ) );
+
+        return new WP_REST_Response( array(
+            'success'   => true,
+            'refund_id' => $result['refund_id'],
+            'status'    => $result['status'],
+            'amount'    => number_format( $amount, 2 ),
+            'message'   => sprintf(
+                'Refunded $%s. Square reports the refund as %s; it usually reaches the card in 2-7 business days.',
+                number_format( $amount, 2 ),
+                strtolower( $result['status'] ?: 'pending' )
+            ),
+        ), 200 );
+    }
+
+    /**
      * Clear the tallied flag on one or more orders.
      *
      * Tallying was one-way: there was no path back anywhere in the codebase, so

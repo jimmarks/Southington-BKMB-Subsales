@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.12.0] - 2026-08-28
+
+### Added
+- **Cancel & Refund, on the admin order edit screen.** Card-paid orders can now be rolled back — the card is refunded in full and the order is cancelled. It appears only for orders with a captured card payment, only for admins, and it is the single rollback path for a digital order.
+- **It asks twice, on purpose.** The confirmation states plainly that a cash refund is preferred, and shows what the card refund will cost the band in Square fees for that specific order. A written reason is then required and recorded in the order's history.
+
 ## [3.11.2] - 2026-08-28
 
 ### Fixed
