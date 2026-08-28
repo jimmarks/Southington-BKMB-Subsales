@@ -176,9 +176,20 @@ class Subsales_Teams {
             $user_teams_table = $wpdb->prefix . 'ss_user_teams';
             $teams_table = $wpdb->prefix . 'ss_teams';
             
+            // ss_user_teams is deliberately cross-season (persistent roster), so it
+            // must be filtered through the team's own season here. Unfiltered, a
+            // returning child was offered every team they had ever been on; picking
+            // last year's wrote orders against a retired team_id whose rows then
+            // vanished from every team-keyed report.
             $team_ids = $wpdb->get_col( $wpdb->prepare(
-                "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-                $user['id']
+                "SELECT ut.team_id
+                   FROM {$user_teams_table} ut
+                   INNER JOIN {$teams_table} t ON ut.team_id = t.id
+                  WHERE ut.user_id = %d
+                    AND t.season_id = %d
+                    AND t.status = 'active'",
+                $user['id'],
+                intval( get_option( 'subsales_current_season_id' ) )
             ));
             
             // In individual mode (team_id = -1 or 0 requested), user doesn't need team assignment

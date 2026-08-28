@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.7.0] - 2026-08-28
+
+### Fixed
+- **Kids' signup buttons worked again, and the roster gate is back in force.** Five endpoints were registered twice — once in `class-rest-api.php` and once in `class-signups.php`. WordPress keeps whichever registers first, which was the older pre-seasons version, so the season-aware handlers never ran. The signup page's Change Team and Remove Registration buttons 404'd because the page reads `signup_id` and only the newer handler returns it. More seriously, the live signup endpoint created a member for any unknown phone number instead of rejecting it — the roster pre-load requirement was not actually being enforced. Removed the duplicate registrations so the correct handlers take over.
+- **Two endpoints that would have crashed if anything reached them** (`DELETE`/`PUT /signup/{id}`) pointed at callbacks that were never written. Removed.
+- **A returning child was offered every team they had ever been on.** Team membership is deliberately kept across seasons, but the login screen never filtered it by season, so picking last year's team wrote orders against a retired team that then vanished from team reports.
+- **"Change team" reattached to last season's team of the same name**, and any team it created was stamped with no season — which meant starting a new season never retired it, so it stayed in the picker permanently. Now uses the same season-aware team resolver as the rest of the signup flow.
+- **"My registrations" listed every season's signups**, not just this year's.
+- **Points Report totals now match between the screen and the CSV export.** Neither was season-scoped, and the two were read at different moments, so they disagreed. The report also seeded a row per member per season, inflating team member counts.
+
 ## [3.6.0] - 2026-08-27
 
 ### Added

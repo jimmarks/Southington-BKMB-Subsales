@@ -226,28 +226,16 @@ class Subsales_Signups {
             return new WP_Error( 'missing_team', 'Team name is required', array( 'status' => 400 ) );
         }
         
-        $teams_table = $wpdb->prefix . 'ss_teams';
         $signups_table = $wpdb->prefix . 'ss_signups';
         
-        // Get or create new team (case-insensitive lookup)
-        $team = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, name FROM {$teams_table} WHERE LOWER(name) = LOWER(%s)",
-            $new_team_name
-        ) );
-        
-        if ( ! $team ) {
-            $access_code = strtoupper( substr( md5( $new_team_name . time() ), 0, 6 ) );
-            $wpdb->insert( $teams_table, array(
-                'name' => $new_team_name,
-                'access_code' => $access_code,
-                'status' => 'active'
-            ), array( '%s', '%s', '%s' ) );
-            $team_id = $wpdb->insert_id;
-        } else {
-            $team_id = $team->id;
-            // Use the existing team's name (preserves original casing)
-            $new_team_name = $team->name;
-        }
+        // Reuses the canonical resolver, which is already season-scoped and
+        // stamps season_id on create. The copy that used to live here did
+        // neither: switching to "Bulldogs" matched last season's Bulldogs, and
+        // any team it created landed on season 0 - which start_new_season()
+        // never deactivates, so it stayed in the picker forever.
+        $team          = Subsales_Database::get_or_create_team( $new_team_name );
+        $team_id       = $team['id'];
+        $new_team_name = $team['name'];
         
         // Update signup
         $wpdb->update(

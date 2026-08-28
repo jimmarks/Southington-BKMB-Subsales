@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.6.0
+ * Version: 3.7.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.6.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.7.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4366,24 +4366,40 @@ if ( ! function_exists( 'subsales_build_team_sales_report' ) ) {
         $campaigns_table = $wpdb->prefix . 'ss_campaigns';
         $products_config = order_sync_get_products_config();
         
+        // Both the on-screen report and the CSV export call this one builder, so
+        // scoping here keeps the two totals identical by construction - they used
+        // to disagree because neither was scoped and each was read at a different
+        // time. Signups scope through the team (ss_signups has no season_id);
+        // unscoped they seeded a row per member per season, inflating team counts.
+        $season_id = intval( get_option( 'subsales_current_season_id' ) );
+
         // Get all non-deleted orders with necessary fields
         $orders = $wpdb->get_results(
-            "SELECT id, order_data, created_at, team_id, user_id FROM {$orders_table} WHERE deleted = 0 ORDER BY created_at DESC",
+            $wpdb->prepare(
+                "SELECT id, order_data, created_at, team_id, user_id
+                   FROM {$orders_table}
+                  WHERE deleted = 0 AND season_id = %d
+                  ORDER BY created_at DESC",
+                $season_id
+            ),
             ARRAY_A
         );
         
         // Get all active signups with campaign dates to ensure everyone signed up gets included
         $signups = $wpdb->get_results(
-            "SELECT s.user_id, s.team_id, 
-                    c.campaign_date as date,
-                    t.name as team_name,
-                    u.name as person_name
-             FROM {$signups_table} s
-             JOIN {$campaigns_table} c ON s.campaign_id = c.id
-             JOIN {$teams_table} t ON s.team_id = t.id
-             JOIN {$members_table} u ON s.user_id = u.id
-             WHERE s.status = 'active'
-             ORDER BY c.campaign_date, t.name, u.name",
+            $wpdb->prepare(
+                "SELECT s.user_id, s.team_id, 
+                        c.campaign_date as date,
+                        t.name as team_name,
+                        u.name as person_name
+                 FROM {$signups_table} s
+                 JOIN {$campaigns_table} c ON s.campaign_id = c.id
+                 JOIN {$teams_table} t ON s.team_id = t.id
+                 JOIN {$members_table} u ON s.user_id = u.id
+                 WHERE s.status = 'active' AND t.season_id = %d
+                 ORDER BY c.campaign_date, t.name, u.name",
+                $season_id
+            ),
             ARRAY_A
         );
         

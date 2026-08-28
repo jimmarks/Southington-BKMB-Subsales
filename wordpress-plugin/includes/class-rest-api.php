@@ -266,53 +266,25 @@ class Subsales_REST_API {
             'permission_callback' => '__return_true',
         ));
         
-        register_rest_route( 'order-manager/v1', '/signup', array(
-            'methods' => 'POST',
-            'callback' => 'subsales_rest_submit_signup',
-            'permission_callback' => '__return_true',
-        ));
-        
-        register_rest_route( 'order-manager/v1', '/my-signups', array(
-            'methods' => 'POST',
-            'callback' => 'subsales_rest_get_my_signups',
-            'permission_callback' => '__return_true',
-        ));
-        
-        register_rest_route( 'order-manager/v1', '/signup/(?P<id>\d+)', array(
-            'methods' => 'DELETE',
-            'callback' => 'subsales_rest_delete_signup',
-            'permission_callback' => '__return_true',
-        ));
-        
-        register_rest_route( 'order-manager/v1', '/signup/(?P<id>\d+)', array(
-            'methods' => 'PUT',
-            'callback' => 'subsales_rest_update_signup',
-            'permission_callback' => '__return_true',
-        ));
-        
-        register_rest_route( 'order-manager/v1', '/team-roster', array(
-            'methods' => 'GET',
-            'callback' => 'subsales_rest_get_team_roster',
-            'permission_callback' => '__return_true',
-        ));
-        
-        register_rest_route( 'order-manager/v1', '/team-driver', array(
-            'methods' => 'PUT',
-            'callback' => 'subsales_rest_update_team_driver',
-            'permission_callback' => '__return_true',
-        ));
-        
+        // These routes are registered by Subsales_Signups::register_rest_routes()
+        // (includes/class-signups.php). They used to be declared here too; WordPress
+        // keeps whichever registered first, which was this file, so the pre-seasons
+        // hand-written SQL below won and the season-aware handlers never ran. That
+        // is why the signup page's buttons 404'd - the front end reads signup_id and
+        // only the canonical handler returns it. Removed 2026-08-28:
+        //   POST /signup, POST /my-signups, GET /team-roster,
+        //   PUT /team-driver, GET /signup/settings
+        // Also removed DELETE|PUT /signup/{id}, whose callbacks
+        // (subsales_rest_delete_signup / subsales_rest_update_signup) were never
+        // defined anywhere and would have been fatal if reached. The real ones are
+        // DELETE|PUT /my-signups/{id} in class-signups.php.
+
         register_rest_route( 'order-manager/v1', '/signup/check-name', array(
             'methods' => 'GET',
             'callback' => 'subsales_rest_check_name',
             'permission_callback' => '__return_true',
         ));
         
-        register_rest_route( 'order-manager/v1', '/signup/settings', array(
-            'methods' => 'GET',
-            'callback' => 'subsales_rest_signup_settings',
-            'permission_callback' => '__return_true',
-        ));
 
         // Digital payments (Square)
         register_rest_route( 'order-manager/v1', '/digital-payments/checkout', array(

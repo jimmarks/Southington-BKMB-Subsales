@@ -3308,6 +3308,12 @@ class Subsales_Database {
      *
      * @return array List of signup rows
      */
+    /**
+     * Season scope comes from the team, not the signup: ss_signups has no
+     * season_id column, so t.season_id is the only way to tell this year's
+     * registrations from last year's. Without it a returning family saw every
+     * season's signups stacked together.
+     */
     public static function get_member_signups( $user_id ) {
         global $wpdb;
         $signups_table   = $wpdb->prefix . 'ss_signups';
@@ -3322,8 +3328,10 @@ class Subsales_Database {
              INNER JOIN {$teams_table} t ON s.team_id = t.id
              INNER JOIN {$campaigns_table} c ON s.campaign_id = c.id
              WHERE s.user_id = %d AND s.status = 'active'
+               AND t.season_id = %d
              ORDER BY c.campaign_date ASC, t.name ASC",
-            $user_id
+            $user_id,
+            intval( get_option( 'subsales_current_season_id' ) )
         ), ARRAY_A );
 
         return $rows ? $rows : array();
