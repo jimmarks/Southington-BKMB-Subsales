@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.12.2
+ * Version: 3.13.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.12.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.13.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2565,7 +2565,14 @@ function subsales_get_order_by_db_id_ajax() {
     
     // Parse order_data JSON
     $order['order_data'] = json_decode( $order['order_data'], true );
-    
+
+    // What was actually captured on a card, if anything. The edit screen needs
+    // this to decide whether to offer Cancel & Refund - it cannot be read from
+    // order_data, which is the seller's device's account of the order, not ours.
+    $attempt = Subsales_Orders::captured_digital_payment( $order['order_data'] );
+    $order['paid_amount'] = $attempt ? number_format( floatval( $attempt['total_amount'] ), 2, '.', '' ) : '';
+    $order['refund_id']   = $attempt && ! empty( $attempt['refund_id'] ) ? $attempt['refund_id'] : '';
+
     wp_send_json_success( $order );
 }
 

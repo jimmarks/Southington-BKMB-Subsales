@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.13.0] - 2026-08-28
+
+### Fixed
+- **The Cancel & Refund button never appeared.** It checked fields that only exist on the orders *list*, not on the single order the edit screen loads, so it was hidden on every order including card-paid ones. It now reads whether a payment was actually captured from our own payment records — and stays hidden on an order that has already been refunded.
+- **Switching an order to Individual and back to Team lost the team.** The team was cleared on the way out and never restored, so an accidental tap left the order unassigned on save. The previous team is now remembered and put back.
+- **Opening the edit screen repeatedly stacked up duplicate event handlers** — the code that was meant to remove the old one could never match it.
+
+### Changed
+- **Tidied the Edit Order form.** It was using WordPress's full-page table styling inside a 700px dialog, which produced very wide fields and large gaps, and the products block was wrapped in a heavy blue outline. Labels and fields are now sized for the dialog, quantity boxes are small, and the products group is a quiet panel.
+
 ## [3.12.2] - 2026-08-28
 
 ### Fixed

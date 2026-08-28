@@ -332,10 +332,12 @@ $params = array();
                         </tr>
                     </table>
                     
-                    <h3 style="border: 2px solid #0073aa; padding: 10px; background: #f0f6fc; margin: 15px 0 5px 0; border-radius: 4px;">Products</h3>
-                    <table class="form-table" style="border: 2px solid #0073aa; margin-bottom: 15px; border-radius: 4px;">
-                        <tbody id="subsales-edit-products"></tbody>
-                    </table>
+                    <h3 class="subsales-products-heading">Products</h3>
+                    <div class="subsales-products-group">
+                        <table class="form-table">
+                            <tbody id="subsales-edit-products"></tbody>
+                        </table>
+                    </div>
                     
                     <table class="form-table">
                         <tr>
@@ -429,7 +431,60 @@ $params = array();
         .subsales-modal-header { padding: 20px 24px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; }
         .subsales-modal-header h2 { margin: 0; }
         .subsales-modal-close { background: none; border: none; font-size: 28px; cursor: pointer; padding: 0; line-height: 1; color: #666; }
-        .subsales-modal-body { padding: 24px; overflow-y: auto; flex: 1; }
+        .subsales-modal-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+
+        /* WordPress's .form-table is sized for a full-width settings page: a
+           200px label column, 20px row padding, and inputs that stretch to the
+           container. Inside a 700px modal that reads as enormous gaps and
+           over-wide fields. These rules are scoped to the modal only, so the
+           filter form on the page itself is untouched. */
+        .subsales-modal-body .form-table { margin: 0; }
+        .subsales-modal-body .form-table th {
+            width: 150px;
+            padding: 10px 12px 10px 0;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.4;
+            vertical-align: middle;
+        }
+        .subsales-modal-body .form-table th label { font-weight: 600; }
+        .subsales-modal-body .form-table td {
+            padding: 8px 0;
+            vertical-align: middle;
+        }
+        /* One consistent field width instead of .regular-text (25em) fighting
+           .large-text (100%) - the mix is what made the column look ragged. */
+        .subsales-modal-body .form-table td input[type="text"],
+        .subsales-modal-body .form-table td input[type="tel"],
+        .subsales-modal-body .form-table td input[type="number"],
+        .subsales-modal-body .form-table td select,
+        .subsales-modal-body .form-table td textarea {
+            width: 100%;
+            max-width: 380px;
+            box-sizing: border-box;
+        }
+        .subsales-modal-body .form-table td textarea { min-height: 60px; }
+        /* Quantity boxes are small numbers; a 380px field for "4" is absurd. */
+        .subsales-modal-body #subsales-edit-products input[type="number"] { max-width: 90px; text-align: center; }
+        .subsales-modal-body #subsales-edit-products td { padding: 5px 0; }
+        .subsales-modal-body #subsales-edit-products th { width: 150px; font-weight: 500; }
+        /* The products block is a grouped sub-table - give it a quiet frame
+           rather than the heavy blue outline it inherits when focused. */
+        .subsales-modal-body .subsales-products-heading {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #50575e;
+            margin: 18px 0 6px;
+        }
+        .subsales-modal-body .subsales-products-group {
+            border: 1px solid #dcdcde;
+            border-radius: 4px;
+            padding: 4px 12px;
+            margin: 2px 0;
+            background: #f6f7f7;
+        }
         /* Flex rather than text-align:right so the destructive action can be
            pushed to the far left by .subsales-modal-footer-spacer while Cancel
            and Save stay right-aligned. Wraps on narrow screens instead of
@@ -992,6 +1047,7 @@ $params = array();
                     sellingModeToggle.checked = true;
                     teamSelect.style.display = 'inline-block';
                     teamSelect.value = teamId;
+                    teamSelect.dataset.lastTeam = teamId;
                 }
                 
                 // Check if someone else is currently editing
@@ -1010,34 +1066,50 @@ $params = array();
                 // only rollback path for one - sellers cannot reach it at all.
                 const refundBtn = document.getElementById('subsales-refund-btn');
                 if (refundBtn) {
-                    const paid = data.payment === 'digital' && !!data.paid_amount;
+                    // order.paid_amount comes from ss_payment_attempts, not from
+                    // order_data - the seller's device says paymentMethod, but
+                    // only our own record says money was actually captured.
+                    const alreadyRefunded = !!order.refund_id;
+                    const paid = !!order.paid_amount && !alreadyRefunded;
                     refundBtn.style.display = paid ? '' : 'none';
                     refundBtn.dataset.orderDbId = orderDbId;
-                    refundBtn.dataset.amount = data.paid_amount || '';
+                    refundBtn.dataset.amount = order.paid_amount || '';
+                    if (alreadyRefunded) {
+                        console.log('Order already refunded:', order.refund_id);
+                    }
                 }
 
                 // Show modal
                 document.getElementById('subsales-edit-modal').style.display = 'block';
                 
                 // Setup toggle switch listener (after modal is visible)
-                const toggleListener = function() {
-                    const teamSelect = document.getElementById('edit-team-select');
-                    if (this.checked) {
-                        // Team mode
-                        teamSelect.style.display = 'inline-block';
-                        if (!teamSelect.value) {
-                            teamSelect.focus();
+                // Attached once for the life of the page. The previous code built a
+                // fresh closure on every open and called removeEventListener() with
+                // it, which never matched the one already bound - so handlers piled
+                // up, one more per order opened.
+                if (!sellingModeToggle.dataset.listenerBound) {
+                    sellingModeToggle.dataset.listenerBound = '1';
+                    sellingModeToggle.addEventListener('change', function() {
+                        const teamSelect = document.getElementById('edit-team-select');
+                        if (!teamSelect) { return; }
+                        if (this.checked) {
+                            teamSelect.style.display = 'inline-block';
+                            // Restore what was selected before the switch to
+                            // Individual, so a mis-tap does not silently drop the
+                            // team and leave the order unassigned on save.
+                            if (!teamSelect.value && teamSelect.dataset.lastTeam) {
+                                teamSelect.value = teamSelect.dataset.lastTeam;
+                            }
+                            if (!teamSelect.value) { teamSelect.focus(); }
+                        } else {
+                            if (teamSelect.value) {
+                                teamSelect.dataset.lastTeam = teamSelect.value;
+                            }
+                            teamSelect.style.display = 'none';
+                            teamSelect.value = '';
                         }
-                    } else {
-                        // Individual mode
-                        teamSelect.style.display = 'none';
-                        teamSelect.value = '';
-                    }
-                };
-                
-                // Remove old listener if exists, add new one
-                sellingModeToggle.removeEventListener('change', toggleListener);
-                sellingModeToggle.addEventListener('change', toggleListener);
+                    });
+                }
             } catch (error) {
                 console.error('Edit order error:', error);
                 alert('Failed to load order: ' + error.message);
