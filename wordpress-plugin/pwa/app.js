@@ -307,6 +307,12 @@
       }catch(e){}
       // address: set canonical and try to populate visible autocomplete widget
       try{ const addr = orderObj.address || orderObj.formatted_address || ''; if (qs('#address')) qs('#address').value = addr; populateAddressWidget(addr); }catch(e){}
+      // A card payment is already captured on this order, so what was bought is
+      // fixed - all money settles on sales day and there is no later step that
+      // could absorb a difference. Delivery details stay editable. The server
+      // rejects the change too (a device is not a trust boundary); this is only
+      // so the seller sees why before they try.
+      try{ applyPaidOrderLock(orderObj); }catch(e){}
       // mark editing state
       try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
   // mark document as being in edit mode so UI can show a watermark or other affordances
@@ -1588,6 +1594,8 @@
       try{ computeTotal(); }catch(e){}
       // remove edit-mode UI marker when clearing the form
       try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
+      // release any paid-order lock, or it would carry into the next order
+      try{ applyPaidOrderLock(null); }catch(e){}
     }catch(e){ /* silent */ }
   }
 
@@ -1707,6 +1715,26 @@
   // Builds the exact same order object the cash/check Save path builds (same id pattern, same
   // full field set), for a NEW order. Shared by the Save-button handler and the digital "paid"
   // handler so there is exactly one place that constructs a new order object.
+  // Lock the "what was bought" fields when an order already carries a captured
+  // digital payment. Cash and check orders are untouched - nothing has been
+  // charged, so a seller correcting them costs nobody anything.
+  function applyPaidOrderLock(orderObj){
+    const paid = orderObj && orderObj.paymentMethod === 'digital' && !!(orderObj.digitalAttemptId || orderObj.digital_attempt_id);
+    const note = qs('#paidOrderLockNote');
+    const lockable = []
+      .concat(Array.from(document.querySelectorAll('input[data-product-id]')))
+      .concat([qs('#donationAmount'), qs('#checkNumber')].filter(Boolean));
+
+    lockable.forEach(function(el){
+      el.readOnly = paid;
+      el.disabled = paid;
+      el.style.backgroundColor = paid ? '#f5f5f5' : '';
+      el.style.cursor = paid ? 'not-allowed' : '';
+    });
+
+    if (note) { note.style.display = paid ? '' : 'none'; }
+  }
+
   async function buildNewOrderObject(paymentMethod, data, extra){
     extra = extra || {};
     const pos = await getCurrentPositionPromise(5000);

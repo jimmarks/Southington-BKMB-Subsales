@@ -174,6 +174,53 @@ class Subsales_Orders {
     }
 
     /**
+     * The captured Square payment behind an order, if there is one.
+     *
+     * Authority is the ss_payment_attempts row, never the order JSON: the order
+     * arrives from a child's device and could claim anything. The order only
+     * supplies the attempt id to look up.
+     *
+     * @param array $order_data Decoded order_data.
+     * @return array|null The paid attempt row, or null if no captured payment.
+     */
+    public static function captured_digital_payment( $order_data ) {
+        if ( ! is_array( $order_data ) ) {
+            return null;
+        }
+
+        $attempt_uid = '';
+        foreach ( array( 'digitalAttemptId', 'digital_attempt_id', 'attempt_id' ) as $k ) {
+            if ( ! empty( $order_data[ $k ] ) ) {
+                $attempt_uid = (string) $order_data[ $k ];
+                break;
+            }
+        }
+        if ( '' === $attempt_uid ) {
+            return null;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'ss_payment_attempts';
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE attempt_uid = %s AND status = %s",
+            $attempt_uid,
+            'paid'
+        ), ARRAY_A );
+
+        return $row ? $row : null;
+    }
+
+    /**
+     * Fields a non-admin may not change once money has been captured.
+     *
+     * All money is settled on sales day, so there is no "balance due later"
+     * model to fall back on - if what was bought changes after the card was
+     * charged, the only correct fix is an admin refund. Delivery details stay
+     * editable because correcting those is the whole point of the receipt.
+     */
+    const PAYMENT_LOCKED_FIELDS = array( 'products', 'donationAmount', 'donation', 'paymentMethod', 'checkNumber', 'price_snapshot' );
+
+    /**
      * Get single order by ID
      *
      * @param WP_REST_Request $request REST request object
@@ -386,6 +433,21 @@ class Subsales_Orders {
          * @param int    $new_order_db_id Row id in ss_orders.
          * @param array  $data            The submitted order payload.
          */
+        // Close the payment-attempt -> order link. finalized_order_id has existed
+        // in the schema since digital payments were added but was never written,
+        // so a captured payment had no recorded connection to the order it paid
+        // for - which the edit lock and any future refund both need.
+        $captured = self::captured_digital_payment( $data );
+        if ( $captured && empty( $captured['finalized_order_id'] ) ) {
+            $wpdb->update(
+                $wpdb->prefix . 'ss_payment_attempts',
+                array( 'finalized_order_id' => $order_id ),
+                array( 'id' => intval( $captured['id'] ) ),
+                array( '%s' ),
+                array( '%d' )
+            );
+        }
+
         do_action( 'subsales_order_created', $order_id, $new_order_db_id, $data );
 
         return new WP_REST_Response( array( 'message' => 'Order created successfully', 'id' => $new_order_db_id ), 201 );
@@ -453,6 +515,39 @@ class Subsales_Orders {
             $before_data = array(); // Ensure it's always an array
         }
         $after_data = $data;
+
+        // Once a card has actually been charged, a seller may no longer change
+        // what was bought - all money is settled on sales day, so there is no
+        // later reconciliation that could absorb a difference. Delivery details
+        // stay editable; correcting those is the point of the text receipt.
+        // Admins are exempt: fixing a wrong order is their job, and the refund
+        // path is admin-only by design.
+        if ( 'admin' !== $auth_source ) {
+            $captured = self::captured_digital_payment( $before_data );
+            if ( $captured ) {
+                $changed = array();
+                foreach ( self::PAYMENT_LOCKED_FIELDS as $field ) {
+                    $was = isset( $before_data[ $field ] ) ? $before_data[ $field ] : null;
+                    $now = isset( $after_data[ $field ] ) ? $after_data[ $field ] : null;
+                    if ( wp_json_encode( $was ) !== wp_json_encode( $now ) ) {
+                        $changed[] = $field;
+                    }
+                }
+                if ( $changed ) {
+                    Subsales_Database::log( 'WARNING', 'orders', 'Blocked edit to a paid digital order', array(
+                        'order_id' => $order_id,
+                        'fields'   => $changed,
+                    ), $auth_source, $user_id, $user_name );
+
+                    return new WP_REST_Response( array(
+                        'success' => false,
+                        'code'    => 'payment_locked',
+                        'message' => 'This order has already been paid by card and cannot be changed here. Please ask the customer to contact the subsales administrator.',
+                        'fields'  => $changed,
+                    ), 403 );
+                }
+            }
+        }
         
         // Get edit reason from request
         $edit_reason = isset( $data['_edit_reason'] ) ? sanitize_textarea_field( $data['_edit_reason'] ) : '';

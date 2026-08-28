@@ -109,6 +109,22 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   padding:0 2px;
 }
 
+/* Shown above the product inputs when the order already has a captured card
+   payment. Amber rather than red: nothing is broken, the seller just cannot be
+   the one to fix it. Full width of the single-column form, wraps to 2-3 lines
+   on a phone, and sits directly above the inputs it is explaining - it must not
+   be mistaken for a note about the field below it. */
+.paid-order-lock-note{
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: #7a5b00;
+  background: #fff8e1;
+  border: 1px solid #ffe08a;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 4px 0 10px 0;
+}
+
 /* Donation checkbox - mobile-friendly styling with iOS compatibility */
 .donation-checkbox-label{
   display:-webkit-box;

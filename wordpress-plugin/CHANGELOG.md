@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.10.0] - 2026-08-28
+
+### Added
+- **Orders paid by card can no longer have their contents changed by a seller.** All money is settled on sales day, so if what was bought changes after the card is charged there is no later step that could absorb the difference. Sellers can still correct the address, phone number and notes — that's the point of the text receipt — but the items, donation and payment method are fixed. Admins can still change anything. Cash and check orders are unaffected.
+- The order form now explains this rather than just refusing: *"This order was paid by card, so the items can't be changed here. Please ask the customer to contact the subsales administrator."*
+
+### Fixed
+- **Captured payments are now linked to the order they paid for.** `finalized_order_id` has existed since digital payments were added but was never written, so nothing connected a Square payment to its order — which both the edit lock and any future refund need.
+
 ## [3.9.0] - 2026-08-28
 
 ### Security
