@@ -89,178 +89,12 @@ class Subsales_Delivery {
         $configured_products = order_sync_get_products_config();
 
         // NEW LOGIC: Distribute orders based on campaign signups
-        // Step 1: Parse all orders into standardized format
-        $parsed_orders = array();
-        foreach ( $rows as $r ) {
-            $od = json_decode( $r['order_data'], true );
-            if ( ! is_array( $od ) ) continue;
-
-            // Parse order details
-            $address = ! empty( $r['address'] ) ? $r['address'] : ( ! empty( $od['address'] ) ? $od['address'] : '' );
-            
-            // Coordinates come from the shared resolver, which canonicalises
-            // suffixes and falls back to doorstep GPS. The exact-match SQL that
-            // used to live here missed every "52 pine Holw Dr" and "43 W Ridge
-            // Rd", and those orders were then dumped on whoever entered them.
-            $resolved = Subsales_Address_Helper::resolve_delivery_point( $r );
-            $lat = $resolved['lat'];
-            $lng = $resolved['lng'];
-
-            if ( null === $lat && 'donation' !== $resolved['source'] ) {
-                // Logged, not echoed. This used to write an HTML comment straight
-                // into the response, which lands in the middle of the generated
-                // manifest - and on the no-orders path, ahead of a redirect.
-                subsales_log( 'WARNING', 'delivery', "No location for order {$r['order_id']}: {$address}" );
-            }
-
-            $order_entry = array(
-                'id' => $r['id'],
-                'order_id' => $r['order_id'],
-                'team_id' => ! empty( $r['team_id'] ) ? intval( $r['team_id'] ) : 0,
-                'entered_by_id' => ! empty( $od['entered_by_id'] ) ? intval( $od['entered_by_id'] ) : ( ! empty( $r['user_id'] ) ? intval( $r['user_id'] ) : 0 ),
-                'created_at' => $r['created_at'],
-                'order_date' => date( 'Y-m-d', strtotime( $r['created_at'] ) ),
-                'found_in_db' => ( $lat !== null && $lng !== null ), // Track if address was found in database
-                'address' => $address,
-                'customer' => ! empty( $od['customer'] ) ? $od['customer'] : '',
-                'phone' => ! empty( $od['cellNumber'] ) ? $od['cellNumber'] : '',
-                'lat' => $lat,
-                'lng' => $lng,
-                'products' => array()
-            );
-
-            // Handle products
-            if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
-                foreach ( $od['products'] as $product ) {
-                    if ( isset( $product['id'] ) && isset( $product['qty'] ) ) {
-                        $pid = $product['id'];
-                        $qty = intval( $product['qty'] );
-                        if ( $qty > 0 ) {
-                            $pname = $pid;
-                            foreach ( $configured_products as $pconf ) {
-                                if ( isset( $pconf['id'] ) && $pconf['id'] === $pid ) {
-                                    $pname = $pconf['name'];
-                                    break;
-                                }
-                            }
-                            $order_entry['products'][ $pid ] = array( 'name' => $pname, 'qty' => $qty );
-                        }
-                    }
-                }
-            } else {
-                foreach ( $configured_products as $pconf ) {
-                    if ( ! isset( $pconf['id'] ) ) continue;
-                    $pid = $pconf['id'];
-                    $qty = isset( $od[ $pid ] ) ? intval( $od[ $pid ] ) : 0;
-                    if ( $qty > 0 ) {
-                        $order_entry['products'][ $pid ] = array( 'name' => $pconf['name'], 'qty' => $qty );
-                    }
-                }
-            }
-
-            // Skip donation-only orders (no physical products to deliver)
-            if ( empty( $order_entry['products'] ) ) {
-                subsales_log( 'INFO', 'delivery', "Skipping donation-only order #{$r['order_id']} (no products to deliver)" );
-                continue;
-            }
-
-            $parsed_orders[] = $order_entry;
-        }
-
-        subsales_log( 'INFO', 'delivery', 'Parsed ' . count( $parsed_orders ) . ' orders with products' );
-
-        // Step 2: split team orders from individual orders.
-        //
-        // Only the entry mode decides this. A team order whose address we cannot
-        // locate is still a team order - the previous code reassigned those to
-        // whoever entered them, which quietly moved someone else's sale onto one
-        // kid's manifest because of a typo.
-        $team_groups       = array();
-        $individual_orders = array();
-
-        foreach ( $parsed_orders as $order ) {
-            if ( $order['team_id'] > 0 ) {
-                $key = $order['order_date'] . '_' . $order['team_id'];
-                if ( ! isset( $team_groups[ $key ] ) ) {
-                    $team_groups[ $key ] = array(
-                        'date'    => $order['order_date'],
-                        'team_id' => $order['team_id'],
-                        'orders'  => array(),
-                    );
-                }
-                $team_groups[ $key ]['orders'][] = $order;
-            } else {
-                $individual_orders[] = $order;
-            }
-        }
-
-        ksort( $team_groups );
-        subsales_log( 'INFO', 'delivery', 'Separated into ' . count( $team_groups ) . ' team/day groups and ' . count( $individual_orders ) . ' individual orders' );
-
-        // Step 3: for each sale day, for each team, divide that day's orders
-        // evenly across the members who signed up for that team that day.
-        //
-        // Each day/team group is split on its own. Carrying a running total
-        // across days would mean a member who sold a lot on day 1 receives
-        // almost nothing on day 2, which is not an even division of day 2.
-        $member_orders = array();
-
-        foreach ( $team_groups as $group ) {
-            $campaign_id = $wpdb->get_var( $wpdb->prepare(
-                "SELECT id FROM {$wpdb->prefix}ss_campaigns WHERE campaign_date = %s",
-                $group['date']
-            ) );
-
-            if ( ! $campaign_id ) {
-                subsales_log( 'WARNING', 'delivery', "No campaign for {$group['date']}, skipping " . count( $group['orders'] ) . ' orders' );
-                continue;
-            }
-
-            $member_ids = $wpdb->get_col( $wpdb->prepare(
-                "SELECT user_id FROM {$wpdb->prefix}ss_signups
-                 WHERE campaign_id = %d AND team_id = %d AND status = 'active'
-                 ORDER BY user_id ASC",
-                $campaign_id,
-                $group['team_id']
-            ) );
-            $member_ids = array_map( 'intval', $member_ids );
-
-            if ( empty( $member_ids ) ) {
-                subsales_log( 'WARNING', 'delivery', "No signups for campaign {$campaign_id} team {$group['team_id']}, skipping " . count( $group['orders'] ) . ' orders' );
-                continue;
-            }
-
-            // Deal round-robin over the sorted roster. Even, and the same every
-            // run - a printed manifest has to survive being regenerated.
-            $orders = $group['orders'];
-            usort( $orders, function ( $a, $b ) {
-                return strcmp( (string) $a['order_id'], (string) $b['order_id'] );
-            } );
-
-            foreach ( $orders as $i => $order ) {
-                $member_id = $member_ids[ $i % count( $member_ids ) ];
-                $member_orders[ $member_id ][] = $order;
-            }
-
-            subsales_log( 'INFO', 'delivery', sprintf(
-                'Divided %d orders across %d members for %s team %d',
-                count( $orders ), count( $member_ids ), $group['date'], $group['team_id']
-            ) );
-        }
-
-        // Step 4: append each individual order to whoever entered it, on top of
-        // whatever they already picked up from the team days.
-        foreach ( $individual_orders as $order ) {
-            $member_id = $order['entered_by_id'];
-            if ( $member_id > 0 ) {
-                $member_orders[ $member_id ][] = $order;
-            } else {
-                subsales_log( 'WARNING', 'delivery', "Order {$order['order_id']} has no entered_by_id, skipping" );
-            }
-        }
-
-        subsales_log( 'INFO', 'delivery', 'Final distribution: ' . count( $member_orders ) . ' members with orders' );
-
+        // Parsing and distribution are shared with the Distribution Breakdown
+        // screen. They used to be two separate copies of the same algorithm, so
+        // the screen an admin checks for fairness showed a split nobody received.
+        $parsed_orders = self::parse_orders_for_delivery( $rows, $configured_products );
+        $dist          = self::distribute_orders( $parsed_orders );
+        $member_orders = $dist['by_member'];
 
         // Step 5: Build by_individual array for manifest generation (convert to expected format)
         $by_individual = array();
@@ -955,6 +789,237 @@ class Subsales_Delivery {
      * @return array Optimized orders in optimal delivery sequence
      * @since 2.4.53
      */
+    /**
+     * Parse raw order rows into the shape the manifest and the breakdown share.
+     *
+     * @param array $rows                Rows from ss_orders.
+     * @param array $configured_products Product config.
+     * @return array
+     */
+    public static function parse_orders_for_delivery( $rows, $configured_products ) {
+        $parsed_orders = array();
+
+            // Step 1: Parse all orders into standardized format
+            $parsed_orders = array();
+            foreach ( $rows as $r ) {
+                $od = json_decode( $r['order_data'], true );
+                if ( ! is_array( $od ) ) continue;
+
+                // Parse order details
+                $address = ! empty( $r['address'] ) ? $r['address'] : ( ! empty( $od['address'] ) ? $od['address'] : '' );
+            
+                // Coordinates come from the shared resolver, which canonicalises
+                // suffixes and falls back to doorstep GPS. The exact-match SQL that
+                // used to live here missed every "52 pine Holw Dr" and "43 W Ridge
+                // Rd", and those orders were then dumped on whoever entered them.
+                $resolved = Subsales_Address_Helper::resolve_delivery_point( $r );
+                $lat = $resolved['lat'];
+                $lng = $resolved['lng'];
+
+                if ( null === $lat && 'donation' !== $resolved['source'] ) {
+                    // Logged, not echoed. This used to write an HTML comment straight
+                    // into the response, which lands in the middle of the generated
+                    // manifest - and on the no-orders path, ahead of a redirect.
+                    subsales_log( 'WARNING', 'delivery', "No location for order {$r['order_id']}: {$address}" );
+                }
+
+                $order_entry = array(
+                    'id' => $r['id'],
+                    'order_id' => $r['order_id'],
+                    'team_id' => ! empty( $r['team_id'] ) ? intval( $r['team_id'] ) : 0,
+                    'entered_by_id' => ! empty( $od['entered_by_id'] ) ? intval( $od['entered_by_id'] ) : ( ! empty( $r['user_id'] ) ? intval( $r['user_id'] ) : 0 ),
+                    'created_at' => $r['created_at'],
+                    'order_date' => date( 'Y-m-d', strtotime( $r['created_at'] ) ),
+                    'found_in_db' => ( $lat !== null && $lng !== null ), // Track if address was found in database
+                    'address' => $address,
+                    'customer' => ! empty( $od['customer'] ) ? $od['customer'] : '',
+                    'phone' => ! empty( $od['cellNumber'] ) ? $od['cellNumber'] : '',
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'products' => array()
+                );
+
+                // Handle products
+                if ( isset( $od['products'] ) && is_array( $od['products'] ) ) {
+                    foreach ( $od['products'] as $product ) {
+                        if ( isset( $product['id'] ) && isset( $product['qty'] ) ) {
+                            $pid = $product['id'];
+                            $qty = intval( $product['qty'] );
+                            if ( $qty > 0 ) {
+                                $pname = $pid;
+                                foreach ( $configured_products as $pconf ) {
+                                    if ( isset( $pconf['id'] ) && $pconf['id'] === $pid ) {
+                                        $pname = $pconf['name'];
+                                        break;
+                                    }
+                                }
+                                $order_entry['products'][ $pid ] = array( 'name' => $pname, 'qty' => $qty );
+                            }
+                        }
+                    }
+                } else {
+                    foreach ( $configured_products as $pconf ) {
+                        if ( ! isset( $pconf['id'] ) ) continue;
+                        $pid = $pconf['id'];
+                        $qty = isset( $od[ $pid ] ) ? intval( $od[ $pid ] ) : 0;
+                        if ( $qty > 0 ) {
+                            $order_entry['products'][ $pid ] = array( 'name' => $pconf['name'], 'qty' => $qty );
+                        }
+                    }
+                }
+
+                // Skip donation-only orders (no physical products to deliver)
+                if ( empty( $order_entry['products'] ) ) {
+                    subsales_log( 'INFO', 'delivery', "Skipping donation-only order #{$r['order_id']} (no products to deliver)" );
+                    continue;
+                }
+
+                $parsed_orders[] = $order_entry;
+            }
+
+            subsales_log( 'INFO', 'delivery', 'Parsed ' . count( $parsed_orders ) . ' orders with products' );
+
+        return $parsed_orders;
+    }
+
+    /**
+     * Divide orders across the members who worked each team-day.
+     *
+     * For each sale day, for each team, that day's orders are divided across the
+     * members signed up for that team that day; then individual orders are
+     * appended to whoever entered them.
+     *
+     * @param array $parsed_orders From parse_orders_for_delivery().
+     * @return array {
+     *   @type array $by_member  member_id => orders
+     *   @type array $groups     per team-day stats, for the breakdown screen
+     *   @type array $unassigned orders that could not be placed, with a reason
+     * }
+     */
+    public static function distribute_orders( $parsed_orders ) {
+        global $wpdb;
+
+        $groups_out = array();
+        $unassigned = array();
+
+            // Step 2: split team orders from individual orders.
+            //
+            // Only the entry mode decides this. A team order whose address we cannot
+            // locate is still a team order - the previous code reassigned those to
+            // whoever entered them, which quietly moved someone else's sale onto one
+            // kid's manifest because of a typo.
+            $team_groups       = array();
+            $individual_orders = array();
+
+            foreach ( $parsed_orders as $order ) {
+                if ( $order['team_id'] > 0 ) {
+                    $key = $order['order_date'] . '_' . $order['team_id'];
+                    if ( ! isset( $team_groups[ $key ] ) ) {
+                        $team_groups[ $key ] = array(
+                            'date'    => $order['order_date'],
+                            'team_id' => $order['team_id'],
+                            'orders'  => array(),
+                        );
+                    }
+                    $team_groups[ $key ]['orders'][] = $order;
+                } else {
+                    $individual_orders[] = $order;
+                }
+            }
+
+            ksort( $team_groups );
+            subsales_log( 'INFO', 'delivery', 'Separated into ' . count( $team_groups ) . ' team/day groups and ' . count( $individual_orders ) . ' individual orders' );
+
+            // Step 3: for each sale day, for each team, divide that day's orders
+            // evenly across the members who signed up for that team that day.
+            //
+            // Each day/team group is split on its own. Carrying a running total
+            // across days would mean a member who sold a lot on day 1 receives
+            // almost nothing on day 2, which is not an even division of day 2.
+            $member_orders = array();
+
+            foreach ( $team_groups as $group ) {
+                $campaign_id = $wpdb->get_var( $wpdb->prepare(
+                    "SELECT id FROM {$wpdb->prefix}ss_campaigns WHERE campaign_date = %s",
+                    $group['date']
+                ) );
+
+                if ( ! $campaign_id ) {
+                    subsales_log( 'WARNING', 'delivery', "No campaign for {$group['date']}, skipping " . count( $group['orders'] ) . ' orders' );
+                    foreach ( $group['orders'] as $o ) {
+                        $unassigned[] = array( 'order' => $o, 'reason' => 'No sale day on file for ' . $group['date'] );
+                    }
+                    continue;
+                }
+
+                // Drivers are excluded: they sign up to drive on the day, not to
+                // take a share of the deliveries. get_campaign_team_members()
+                // drops the driver by default and already filters to active signups.
+                $roster     = Subsales_Database::get_campaign_team_members( $group['team_id'], $campaign_id );
+                $member_ids = array_map( 'intval', wp_list_pluck( $roster, 'id' ) );
+                $names      = wp_list_pluck( $roster, 'name', 'id' );
+                sort( $member_ids );
+
+                if ( empty( $member_ids ) ) {
+                    subsales_log( 'WARNING', 'delivery', "No sellers for campaign {$campaign_id} team {$group['team_id']}, skipping " . count( $group['orders'] ) . ' orders' );
+                    foreach ( $group['orders'] as $o ) {
+                        $unassigned[] = array( 'order' => $o, 'reason' => 'Nobody signed up to sell for this team that day' );
+                    }
+                    continue;
+                }
+
+                // Deal round-robin over the sorted roster. Even, and the same every
+                // run - a printed manifest has to survive being regenerated.
+                $orders = $group['orders'];
+                usort( $orders, function ( $a, $b ) {
+                    return strcmp( (string) $a['order_id'], (string) $b['order_id'] );
+                } );
+
+                $per_member = array_fill_keys( $member_ids, 0 );
+                foreach ( $orders as $i => $order ) {
+                    $member_id = $member_ids[ $i % count( $member_ids ) ];
+                    $member_orders[ $member_id ][] = $order;
+                    $per_member[ $member_id ]++;
+                }
+
+                $groups_out[] = array(
+                    'date'       => $group['date'],
+                    'team_id'    => $group['team_id'],
+                    'orders'     => count( $orders ),
+                    'members'    => $member_ids,
+                    'names'      => $names,
+                    'per_member' => $per_member,
+                    'even_share' => count( $orders ) / count( $member_ids ),
+                );
+
+                subsales_log( 'INFO', 'delivery', sprintf(
+                    'Divided %d orders across %d sellers for %s team %d',
+                    count( $orders ), count( $member_ids ), $group['date'], $group['team_id']
+                ) );
+            }
+
+            // Step 4: append each individual order to whoever entered it, on top of
+            // whatever they already picked up from the team days.
+            foreach ( $individual_orders as $order ) {
+                $member_id = $order['entered_by_id'];
+                if ( $member_id > 0 ) {
+                    $member_orders[ $member_id ][] = $order;
+                } else {
+                    subsales_log( 'WARNING', 'delivery', "Order {$order['order_id']} has no entered_by_id, skipping" );
+                    $unassigned[] = array( 'order' => $order, 'reason' => 'Individual order with nobody recorded as having entered it' );
+                }
+            }
+
+            subsales_log( 'INFO', 'delivery', 'Final distribution: ' . count( $member_orders ) . ' members with orders' );
+
+
+        return array(
+            'by_member'  => $member_orders,
+            'groups'     => $groups_out,
+            'unassigned' => $unassigned,
+        );
+    }
+
     public static function optimize_route( $orders, $start_coords ) {
         if ( empty( $orders ) ) return array();
 
