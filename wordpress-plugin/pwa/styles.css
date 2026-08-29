@@ -396,3 +396,14 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   .dm-digital{display:none}
 }
 
+
+/* Policy links on the sign-in screen - the only publicly reachable surface of
+   the app, so they have to live here rather than behind the login. */
+.sm-policy-links{
+  margin:18px 0 4px;
+  text-align:center;
+  font-size:0.74rem;
+  color:#777;
+}
+.sm-policy-links a{ color:#5a6b7d; text-decoration:underline; }
+.sm-policy-links span{ margin:0 5px; }
