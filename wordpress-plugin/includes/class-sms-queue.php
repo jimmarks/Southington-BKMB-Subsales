@@ -85,7 +85,12 @@ class Subsales_SMS_Queue {
 
     const DEFAULT_TEMPLATE = "Thanks {customer}! {org} has your order: {items}. Total {total}. We'll be in touch about delivery. Reply STOP to opt out.";
 
-    const DEFAULT_CONSENT_WORDING = "We'll text you a receipt and delivery updates. Reply STOP anytime.";
+    // Carriers reject an opt-in flow that does not state, at the point of
+    // consent: who is texting, what the messages are, how often they come,
+    // that rates may apply, and how to stop. A2P campaign rejection 30924.
+    // The brand here must be the registered A2P Brand (Southington BKMB),
+    // not the app's display name, or the reviewer cannot match the two.
+    const DEFAULT_CONSENT_WORDING = "By providing your phone number you agree to receive text messages from Southington BKMB about this sub order: your order receipt and delivery updates. Message frequency varies, about 2-4 messages per order. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help.";
 
     /**
      * Register hooks.

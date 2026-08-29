@@ -102,11 +102,14 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
    it tied to the phone field rather than floating between it and the products
    row. Full width comes from the single-column flex form, so no width rule. */
 .sms-consent-note{
-  font-size:0.78rem;
-  line-height:1.35;
-  color:#666;
-  margin:-4px 0 10px 0;
-  padding:0 2px;
+  font-size:0.72rem;
+  line-height:1.45;
+  color:#555;
+  margin:-2px 0 10px 0;
+  padding:7px 9px;
+  background:#f6f7f8;
+  border-left:3px solid #c8cdd2;
+  border-radius:3px;
 }
 
 /* Shown above the product inputs when the order already has a captured card
