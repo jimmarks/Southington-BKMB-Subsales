@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.20.1
+ * Version: 3.20.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.20.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.20.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2507,6 +2507,13 @@ function subsales_sanitize_team_code( $code ) {
  * @return string Sanitized user name
  */
 function subsales_sanitize_user_name( $name ) {
+    // Strip a slash left in front of a quote or another slash. Two names
+    // reached the database as "Finn O\'Toole" because the import round-tripped
+    // through $_POST and something added slashes twice while only one level was
+    // stripped. No real name contains a backslash, so removing one before a
+    // quote costs nothing and stops that class of bug reaching a child's name.
+    $name = preg_replace( '/\\\\(?=[\'"\\\\])/', '', (string) $name );
+
     // Use WordPress sanitize_text_field which removes line breaks and control chars
     // but preserves all printable characters including special symbols
     $name = sanitize_text_field( $name );
