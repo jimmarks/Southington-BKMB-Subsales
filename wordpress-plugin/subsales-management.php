@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.19.1
+ * Version: 3.20.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.19.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.20.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -6956,66 +6956,33 @@ function subsales_export_users_teams() {
  * Process import file and generate preview
  */
 /**
- * Write a roster CSV in the shape the importer reads back.
+ * Write a seller sheet: one header row, one row per person.
  *
- * The importer only recognises a section marker on a line beginning with '#',
- * and treats every other '#' line as a comment - so the notes and the markers
- * share that prefix, and the instructions travel inside the file. They are
- * still there when the admin reopens it in Excel a week later.
- *
- * @param array  $teams Rows of [name, access_code, status].
- * @param array  $users Rows of [name, phone, email, status, team, team, ...].
- * @param string $org
- * @param string $intro First comment line.
+ * Deliberately a plain spreadsheet rather than the sectioned format the older
+ * importer reads. It is meant to be mailed to the band director, edited, and
+ * pasted back into Set Up Season - so it carries only what identifies a seller.
+ * Team membership is not in here: that comes from who signs up for which team
+ * on which sale day.
  */
-function subsales_write_roster_csv( $teams, $users, $org, $intro ) {
+function subsales_write_seller_csv( $rows ) {
     $out = fopen( 'php://output', 'w' );
-
-    foreach ( array(
-        '# ' . $intro,
-        '# Edit this file, then upload it in Set Up Season, step 3.',
-        '# Lines starting with # are ignored, so these notes can stay.',
-        '#',
-        '# Teams: one row per team. status must be active or inactive.',
-        '# People: one row per person. status must be active or inactive.',
-        '# A person on more than one team gets one extra column per team.',
-        '# Every team named against a person must also appear in the teams section.',
-        '#',
-    ) as $note ) {
-        fputcsv( $out, array( $note ) );
-    }
-
-    fputcsv( $out, array( '# TEAMS SECTION' ) );
-    fputcsv( $out, array( 'team_name', 'access_code', 'status' ) );
-    if ( empty( $teams ) ) {
+    fputcsv( $out, array( 'name', 'phone', 'email' ) );
+    if ( empty( $rows ) ) {
         fputcsv( $out, array( '', '', '' ) );
     }
-    foreach ( $teams as $team ) {
-        fputcsv( $out, $team );
+    foreach ( $rows as $row ) {
+        fputcsv( $out, $row );
     }
-
-    fputcsv( $out, array( '#' ) );
-    fputcsv( $out, array( '# USERS SECTION' ) );
-    fputcsv( $out, array( 'name', 'phone', 'email', 'status', 'teams' ) );
-    if ( empty( $users ) ) {
-        fputcsv( $out, array( '', '', '', '', '' ) );
-    }
-    foreach ( $users as $user ) {
-        fputcsv( $out, $user );
-    }
-
     fclose( $out );
 }
 
-/** Filename for a roster download, named after the org rather than hardcoded. */
-function subsales_roster_filename( $suffix ) {
+/** Filename for a seller sheet, named after the org rather than hardcoded. */
+function subsales_seller_filename( $suffix ) {
     $org = get_option( 'subsales_branding', 'Subsales' );
-    return sanitize_file_name( str_replace( ' ', '-', strtolower( $org ) ) . '-roster-' . $suffix . '.csv' );
+    return sanitize_file_name( str_replace( ' ', '-', strtolower( $org ) ) . '-sellers-' . $suffix . '.csv' );
 }
 
-/**
- * Blank roster CSV, so setup can be started before the spreadsheet is ready.
- */
+/** Blank seller sheet, for sending out before anyone is in the system. */
 add_action( 'admin_post_subsales_roster_template', 'subsales_download_roster_template' );
 function subsales_download_roster_template() {
     if ( ! current_user_can( 'manage_options' ) ) {
@@ -7023,21 +6990,17 @@ function subsales_download_roster_template() {
     }
     check_admin_referer( 'subsales_roster_template' );
 
-    $org = get_option( 'subsales_branding', 'Subsales' );
     header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename=' . subsales_roster_filename( 'template' ) );
-    subsales_write_roster_csv( array(), array(), $org, $org . ' roster template' );
+    header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( 'blank' ) );
+    subsales_write_seller_csv( array() );
     exit;
 }
 
 /**
- * Export the roster already in the system, in the same format the importer reads.
+ * The sellers already on file, as a sheet to send out and get back.
  *
- * Starting a season from last year's list and editing it is the real workflow -
- * a blank file means retyping eighty people. Teams come from the current season
- * when it has any, and otherwise from the most recent season that does, which
- * is the situation right after a season is rolled and every prior team has been
- * marked inactive.
+ * Active sellers only - the point is a list to check over, and someone marked
+ * as having left last year should not reappear on it.
  */
 add_action( 'admin_post_subsales_roster_export', 'subsales_download_roster_export' );
 function subsales_download_roster_export() {
@@ -7047,74 +7010,20 @@ function subsales_download_roster_export() {
     check_admin_referer( 'subsales_roster_export' );
 
     global $wpdb;
-    $org = get_option( 'subsales_branding', 'Subsales' );
-
-    $season_id = Subsales_Database::current_season_id();
-    $has_teams = (int) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$wpdb->prefix}ss_teams WHERE season_id = %d", $season_id
-    ) );
-    if ( ! $has_teams ) {
-        $fallback = (int) $wpdb->get_var(
-            "SELECT season_id FROM {$wpdb->prefix}ss_teams GROUP BY season_id ORDER BY season_id DESC LIMIT 1"
-        );
-        if ( $fallback ) {
-            $season_id = $fallback;
-        }
-    }
-
-    $team_rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT id, name, access_code, status FROM {$wpdb->prefix}ss_teams
-         WHERE season_id = %d ORDER BY name ASC",
-        $season_id
-    ), ARRAY_A );
-
-    $teams = array();
-    foreach ( $team_rows as $team ) {
-        $teams[] = array( $team['name'], $team['access_code'], $team['status'] );
-    }
-
-    // Team names per person, from the many-to-many table the importer fills.
-    $links = $wpdb->get_results(
-        "SELECT ut.user_id, t.name
-         FROM {$wpdb->prefix}ss_user_teams ut
-         INNER JOIN {$wpdb->prefix}ss_teams t ON t.id = ut.team_id
-         ORDER BY t.name ASC",
-        ARRAY_A
-    );
-    $teams_for = array();
-    foreach ( $links as $link ) {
-        $teams_for[ intval( $link['user_id'] ) ][] = $link['name'];
-    }
-
-    $member_rows = $wpdb->get_results(
-        "SELECT id, name, phone, email, status FROM {$wpdb->prefix}ss_team_members ORDER BY name ASC",
+    $people = $wpdb->get_results(
+        "SELECT name, phone, email FROM {$wpdb->prefix}ss_team_members
+         WHERE status <> 'inactive' ORDER BY name ASC",
         ARRAY_A
     );
 
-    $users = array();
-    foreach ( $member_rows as $member ) {
-        $row = array(
-            $member['name'],
-            $member['phone'],
-            $member['email'],
-            ( 'inactive' === $member['status'] ) ? 'inactive' : 'active',
-        );
-        $mine = isset( $teams_for[ intval( $member['id'] ) ] ) ? $teams_for[ intval( $member['id'] ) ] : array();
-        $users[] = array_merge( $row, $mine ? $mine : array( '' ) );
+    $rows = array();
+    foreach ( $people as $person ) {
+        $rows[] = array( $person['name'], $person['phone'], $person['email'] );
     }
-
-    $label = $wpdb->get_var( $wpdb->prepare(
-        "SELECT label FROM {$wpdb->prefix}ss_seasons WHERE id = %d", $season_id
-    ) );
 
     header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename=' . subsales_roster_filename( 'export' ) );
-    subsales_write_roster_csv(
-        $teams,
-        $users,
-        $org,
-        sprintf( '%s roster as it stands%s, exported %s', $org, $label ? ' for ' . $label : '', wp_date( 'F j, Y' ) )
-    );
+    header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( 'current' ) );
+    subsales_write_seller_csv( $rows );
     exit;
 }
 

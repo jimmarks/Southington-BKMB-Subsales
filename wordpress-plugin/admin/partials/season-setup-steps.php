@@ -116,75 +116,146 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
 
 <?php elseif ( 3 === $step ) : ?>
 
-    <h2>Step 3 &mdash; Update the roster</h2>
+    <?php
+    $students   = isset( $args['students_preview'] ) ? $args['students_preview'] : null;
+    $paste_back = isset( $args['students_paste'] ) ? $args['students_paste'] : '';
+    if ( ! $students ) {
+        // First view: everyone is assumed to be staying, which is true of most
+        // of them - the admin only has to untick the ones who have left.
+        global $wpdb;
+        $all_ids  = $wpdb->get_col( "SELECT id FROM {$wpdb->prefix}ss_team_members WHERE status <> 'inactive'" );
+        $students = Subsales_Season_Setup::preview_students( '', $all_ids );
+    }
+    $kept_ids = wp_list_pluck( $students['returning'], 'id' );
+    ?>
+
+    <h2>Step 3 &mdash; Who is selling this year</h2>
     <p class="subsales-newseason-status">
         <span class="<?php echo $status['members'] > 0 ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $status['members'] > 0 ? '&#10003;' : '!'; ?></span>
-        <?php echo esc_html( $status['members'] ); ?> people on the roster across
-        <?php echo esc_html( $status['teams'] ); ?> team(s) for
-        <strong><?php echo esc_html( $season_label ); ?></strong>.
+        <?php echo esc_html( $status['members'] ); ?> people on the roster.
     </p>
-    <p>Upload this year's spreadsheet (a <code>.csv</code> file with a teams section and a people section).
-       You'll see exactly what will change before anything is saved. Nothing is ever deleted &mdash;
-       people and teams already there are updated, and new ones are added.</p>
+    <p>Sellers carry over from year to year, so this is a check of who is coming back rather than a
+       fresh list. Untick anyone who has left, paste in the new sellers, and save. Nobody is ever
+       deleted &mdash; someone who has left is just marked inactive, so last year's orders and
+       reports still show their name.</p>
 
-    <p class="subsales-newseason-template">
-        Haven't got the file yet?
-        <a href="<?php echo esc_url( wp_nonce_url(
-            admin_url( 'admin-post.php?action=subsales_roster_template' ),
-            'subsales_roster_template'
-        ) ); ?>">Download a blank roster template</a>
-        &mdash; fill it in whenever you're ready and come back to this step. Everything
-        you've set up so far is saved.
-    </p>
+    <form data-op="students_preview" class="subsales-newseason-form" enctype="multipart/form-data">
+        <input type="hidden" name="step" value="3" />
 
-    <div id="subsales-roster-upload">
-        <form data-op="roster_preview" class="subsales-newseason-form" enctype="multipart/form-data">
-            <input type="hidden" name="step" value="3" />
-            <p><input type="file" name="roster_file" accept=".csv,text/csv" required /></p>
-            <p><button type="submit" class="button">Check this file</button></p>
-        </form>
-
-        <?php $preview = isset( $args['roster_preview'] ) ? $args['roster_preview'] : null; ?>
-        <?php if ( $preview ) : ?>
-            <h3>Here's what's in the file</h3>
-            <div class="subsales-newseason-preview">
-                <h4>Teams (<?php echo count( $preview['teams'] ); ?>)</h4>
-                <table class="widefat striped">
-                    <thead><tr><th>Team</th><th>Status</th></tr></thead>
-                    <tbody>
-                    <?php foreach ( $preview['teams'] as $team ) : ?>
-                        <tr>
-                            <td><?php echo esc_html( $team['name'] ); ?></td>
-                            <td><?php echo esc_html( $team['status'] ); ?></td>
-                        </tr>
+        <?php if ( ! empty( $students['existing'] ) ) : ?>
+            <div class="subsales-students-list">
+                <p class="subsales-students-tools">
+                    <strong>Coming back this year</strong>
+                    <button type="button" class="button-link js-students-all">Tick all</button>
+                    <button type="button" class="button-link js-students-none">Untick all</button>
+                </p>
+                <ul>
+                    <?php foreach ( $students['existing'] as $person ) : ?>
+                        <li>
+                            <label>
+                                <input type="checkbox" name="keep[]" value="<?php echo esc_attr( $person['id'] ); ?>"
+                                    <?php checked( in_array( $person['id'], $kept_ids, true ) ); ?> />
+                                <span class="s-name"><?php echo esc_html( $person['name'] ); ?></span>
+                                <span class="s-meta"><?php echo esc_html( Subsales_Season_Setup::format_phone( $person['phone'] ) ); ?></span>
+                                <span class="s-meta<?php echo '' === trim( (string) $person['email'] ) ? ' s-missing' : ''; ?>">
+                                    <?php echo '' === trim( (string) $person['email'] ) ? 'no email' : esc_html( $person['email'] ); ?>
+                                </span>
+                            </label>
+                        </li>
                     <?php endforeach; ?>
-                    </tbody>
-                </table>
-
-                <h4>People (<?php echo count( $preview['users'] ); ?>)</h4>
-                <table class="widefat striped">
-                    <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Status</th><th>Teams</th></tr></thead>
-                    <tbody>
-                    <?php foreach ( $preview['users'] as $user ) : ?>
-                        <tr>
-                            <td><?php echo esc_html( $user['name'] ); ?></td>
-                            <td><?php echo esc_html( $user['phone'] ); ?></td>
-                            <td><?php echo esc_html( $user['email'] ); ?></td>
-                            <td><?php echo esc_html( $user['status'] ); ?></td>
-                            <td><?php echo esc_html( implode( ', ', (array) $user['teams'] ) ); ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+                </ul>
+                <?php if ( $students['missing_email'] > 0 ) : ?>
+                    <p class="description">
+                        <?php echo esc_html( $students['missing_email'] ); ?> of them have no email address.
+                        Paste them in below with one and it will be filled in &mdash; matching is by phone number.
+                    </p>
+                <?php endif; ?>
             </div>
-
-            <form data-op="roster_confirm" class="subsales-newseason-form">
-                <input type="hidden" name="step" value="3" />
-                <input type="hidden" name="import_data" value="<?php echo esc_attr( wp_json_encode( array( 'teams' => $preview['teams'], 'users' => $preview['users'] ) ) ); ?>" />
-                <p><button type="submit" class="button button-primary">Looks right &mdash; save the roster</button></p>
-            </form>
         <?php endif; ?>
-    </div>
+
+        <p><strong>Add sellers</strong></p>
+        <p class="description">One per line: <code>name, phone, email</code>. Copy the columns straight out of
+           a spreadsheet and paste &mdash; tabs work as well as commas. A header row is ignored.
+           Someone whose phone number is already on the list above is updated rather than duplicated.</p>
+        <p>
+            <textarea name="student_paste" rows="6" class="large-text code"
+                placeholder="Jane Doe, 860-555-1234, jane@example.com"><?php echo esc_textarea( $paste_back ); ?></textarea>
+        </p>
+        <p class="description">Got a file instead? <input type="file" name="student_file" accept=".csv,text/csv" /></p>
+
+        <p><button type="submit" class="button button-primary">Check this</button></p>
+    </form>
+
+    <?php if ( isset( $args['students_preview'] ) ) : ?>
+        <div class="subsales-newseason-preview">
+            <h3>What saving will do</h3>
+
+            <?php if ( ! empty( $students['problems'] ) ) : ?>
+                <div class="subsales-students-problems">
+                    <p><strong>These lines could not be read:</strong></p>
+                    <ul>
+                        <?php foreach ( $students['problems'] as $problem ) : ?>
+                            <li><?php echo esc_html( $problem ); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <p class="description">Everything else below can still be saved. Fix these and paste them again.</p>
+                </div>
+            <?php endif; ?>
+
+            <ul class="subsales-students-summary">
+                <li><strong><?php echo count( $students['returning'] ); ?></strong> staying on</li>
+                <li><strong><?php echo count( $students['leaving'] ); ?></strong> marked as left</li>
+                <li><strong><?php echo count( $students['new'] ); ?></strong> added</li>
+                <li><strong><?php echo count( $students['updated'] ); ?></strong> updated</li>
+            </ul>
+
+            <?php if ( ! empty( $students['new'] ) ) : ?>
+                <h4>New sellers</h4>
+                <table class="widefat striped">
+                    <thead><tr><th>Name</th><th>Phone</th><th>Email</th></tr></thead>
+                    <tbody>
+                    <?php foreach ( $students['new'] as $row ) : ?>
+                        <tr>
+                            <td><?php echo esc_html( $row['name'] ); ?></td>
+                            <td><?php echo esc_html( Subsales_Season_Setup::format_phone( $row['phone'] ) ); ?></td>
+                            <td><?php echo '' === $row['email'] ? '<span class="s-missing">none</span>' : esc_html( $row['email'] ); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+
+            <?php if ( ! empty( $students['updated'] ) ) : ?>
+                <h4>Being updated</h4>
+                <table class="widefat striped">
+                    <thead><tr><th>On file</th><th>Becomes</th><th>Changed</th></tr></thead>
+                    <tbody>
+                    <?php foreach ( $students['updated'] as $change ) : ?>
+                        <tr>
+                            <td><?php echo esc_html( $change['was']['name'] ); ?> &middot; <?php echo esc_html( $change['was']['email'] ? $change['was']['email'] : 'no email' ); ?></td>
+                            <td><?php echo esc_html( $change['now']['name'] ); ?> &middot; <?php echo esc_html( $change['now']['email'] ? $change['now']['email'] : 'no email' ); ?></td>
+                            <td><?php echo esc_html( implode( ', ', $change['changes'] ) ); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+
+            <?php if ( ! empty( $students['leaving'] ) ) : ?>
+                <h4>Marked as left (<?php echo count( $students['leaving'] ); ?>)</h4>
+                <p class="description"><?php echo esc_html( implode( ', ', wp_list_pluck( $students['leaving'], 'name' ) ) ); ?></p>
+            <?php endif; ?>
+
+            <form data-op="students_confirm" class="subsales-newseason-form">
+                <input type="hidden" name="step" value="3" />
+                <input type="hidden" name="student_paste" value="<?php echo esc_attr( $paste_back ); ?>" />
+                <?php foreach ( $kept_ids as $id ) : ?>
+                    <input type="hidden" name="keep[]" value="<?php echo esc_attr( $id ); ?>" />
+                <?php endforeach; ?>
+                <p><button type="submit" class="button button-primary">Looks right &mdash; save it</button></p>
+            </form>
+        </div>
+    <?php endif; ?>
 
 <?php elseif ( 4 === $step ) : ?>
 

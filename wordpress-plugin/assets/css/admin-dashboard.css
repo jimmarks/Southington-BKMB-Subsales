@@ -2283,3 +2283,39 @@ input:checked + .subsales-time-slider {
 .subsales-roster-prep h4 { margin: 0 0 6px; font-size: 14px; }
 .subsales-roster-prep p { margin: 0 0 10px; font-size: 13px; color: #50575e; }
 .subsales-roster-prep p:last-child { margin-bottom: 0; }
+
+/* Step 3 seller reconciliation. The list is long, so it scrolls inside the
+   modal rather than pushing the paste box off the bottom. */
+.subsales-students-list { margin: 0 0 18px; }
+.subsales-students-tools { display: flex; align-items: center; gap: 12px; margin: 0 0 6px; }
+.subsales-students-list ul {
+  margin: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #dcdcde;
+  border-radius: 3px;
+  background: #fff;
+  padding: 6px 10px;
+}
+.subsales-students-list li { margin: 0; }
+.subsales-students-list label {
+  display: grid;
+  grid-template-columns: 20px minmax(140px, 1.4fr) 120px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.subsales-students-list .s-meta { color: #646970; font-size: 12px; }
+.subsales-students-list .s-missing,
+.subsales-newseason-preview .s-missing { color: #b32d2e; }
+.subsales-students-summary { display: flex; flex-wrap: wrap; gap: 18px; margin: 8px 0 16px; }
+.subsales-students-summary li { margin: 0; font-size: 13px; }
+.subsales-students-problems {
+  border-left: 3px solid #d63638;
+  background: #fcf0f1;
+  padding: 10px 14px;
+  margin: 0 0 14px;
+  border-radius: 3px;
+}
+.subsales-students-problems ul { margin: 6px 0 6px 18px; list-style: disc; font-size: 13px; }

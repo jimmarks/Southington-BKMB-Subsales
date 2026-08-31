@@ -65,34 +65,32 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
             <h4>Start with the roster</h4>
             <?php if ( $season_setup_people > 0 ) : ?>
                 <p>
-                    There <?php echo 1 === $season_setup_people ? 'is' : 'are'; ?> already
                     <strong><?php echo esc_html( number_format_i18n( $season_setup_people ) ); ?></strong>
-                    <?php echo 1 === $season_setup_people ? 'person' : 'people'; ?> and
-                    <strong><?php echo esc_html( number_format_i18n( $season_setup_teams ) ); ?></strong>
-                    team<?php echo 1 === $season_setup_teams ? '' : 's'; ?> in the system.
-                    Download that list, edit it for this year, and have it ready before you start &mdash;
-                    step 3 asks for it. Nothing is changed until you upload it back.
+                    seller<?php echo 1 === $season_setup_people ? '' : 's'; ?> carried over from last year.
+                    Step 3 is a check of who is coming back &mdash; untick whoever has left and paste in
+                    the new ones. Send this sheet to the band director first if you need it filled in:
+                    name, phone and email, one per line.
                 </p>
                 <p>
                     <a class="button" href="<?php echo esc_url( wp_nonce_url(
                         admin_url( 'admin-post.php?action=subsales_roster_export' ),
                         'subsales_roster_export'
-                    ) ); ?>">Download the current roster</a>
+                    ) ); ?>">Download the seller sheet</a>
                     <a class="button-link" style="margin-left:10px" href="<?php echo esc_url( wp_nonce_url(
                         admin_url( 'admin-post.php?action=subsales_roster_template' ),
                         'subsales_roster_template'
-                    ) ); ?>">or start from a blank file</a>
+                    ) ); ?>">or a blank one</a>
                 </p>
             <?php else : ?>
                 <p>
-                    Step 3 asks for a roster file &mdash; the teams and the people on them.
-                    Download the blank file, fill it in, and have it ready before you start.
+                    Step 3 asks who is selling this year. Send this sheet to the band director to
+                    fill in &mdash; name, phone and email, one per line &mdash; then paste it back in.
                 </p>
                 <p>
                     <a class="button" href="<?php echo esc_url( wp_nonce_url(
                         admin_url( 'admin-post.php?action=subsales_roster_template' ),
                         'subsales_roster_template'
-                    ) ); ?>">Download a blank roster file</a>
+                    ) ); ?>">Download a blank seller sheet</a>
                 </p>
             <?php endif; ?>
         </div>
@@ -210,6 +208,14 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
     $modal.on('click', '.js-newseason-goto-addresses', function(){
         close();
         $('.nav-tab[data-target="#tab-address_extracts"]').trigger('click');
+    });
+
+    // Step 3's seller list. Most of a roster carries over, so the common edit
+    // is unticking a handful - but a whole team leaving makes "none then tick
+    // who is back" the faster way round.
+    $modal.on('click', '.js-students-all, .js-students-none', function(){
+        var on = $(this).hasClass('js-students-all');
+        $body.find('.subsales-students-list input[type="checkbox"]').prop('checked', on);
     });
 
     // Step 2's sale-day list. Delegated, so it survives every re-render.

@@ -35,7 +35,7 @@ class Subsales_Season_Setup {
         return array(
             1 => 'Start the season',
             2 => 'Sales days',
-            3 => 'Roster',
+            3 => 'Sellers',
             4 => 'Pricing',
             5 => 'Sales mode',
             6 => 'Addresses',
@@ -137,6 +137,221 @@ class Subsales_Season_Setup {
             'time' => time(),
             'user' => $user && $user->display_name ? $user->display_name : 'someone',
         ) );
+    }
+
+    /**
+     * Normalise a typed phone number to 10 digits, or '' if it cannot be.
+     *
+     * The phone IS the login credential - a seller signs in with their name and
+     * this number - so "860-555-1234", "(860) 555 1234" and "18605551234" all
+     * have to land on the same stored value or the child cannot get in.
+     */
+    public static function normalise_phone( $raw ) {
+        $digits = preg_replace( '/\D/', '', (string) $raw );
+        if ( 11 === strlen( $digits ) && '1' === $digits[0] ) {
+            $digits = substr( $digits, 1 );
+        }
+        return 10 === strlen( $digits ) ? $digits : '';
+    }
+
+    /**
+     * Parse pasted or uploaded student rows: name, phone, email.
+     *
+     * Accepts what a spreadsheet actually puts on the clipboard - tab separated
+     * - as well as comma separated, and ignores a header row if one came along.
+     *
+     * @param string $text
+     * @return array {
+     *   @type array $rows     [name, phone, email]
+     *   @type array $problems Human-readable, one per bad line.
+     * }
+     */
+    public static function parse_student_rows( $text ) {
+        $rows     = array();
+        $problems = array();
+        $seen     = array();
+        $lines    = preg_split( '/\r\n|\r|\n/', (string) $text );
+
+        foreach ( $lines as $index => $line ) {
+            if ( '' === trim( $line ) ) {
+                continue;
+            }
+
+            // A tab means it came off a spreadsheet; otherwise treat commas as
+            // the separator. str_getcsv handles quoted names containing commas.
+            $cells = ( false !== strpos( $line, "\t" ) )
+                ? explode( "\t", $line )
+                : str_getcsv( $line );
+            $cells = array_map( 'trim', $cells );
+
+            $name  = isset( $cells[0] ) ? sanitize_text_field( $cells[0] ) : '';
+            $phone = isset( $cells[1] ) ? $cells[1] : '';
+            $email_raw = isset( $cells[2] ) ? $cells[2] : '';
+            $email     = sanitize_email( $email_raw );
+
+            // Skip a header row rather than importing a student called "name".
+            if ( 0 === strcasecmp( $name, 'name' ) ) {
+                continue;
+            }
+            if ( '' === $name ) {
+                $problems[] = sprintf( 'Line %d: no name.', $index + 1 );
+                continue;
+            }
+
+            $digits = self::normalise_phone( $phone );
+            if ( '' === $digits ) {
+                $problems[] = sprintf( '%s: "%s" is not a 10-digit phone number. They will not be able to sign in without one.', $name, $phone );
+                continue;
+            }
+            if ( isset( $seen[ $digits ] ) ) {
+                $problems[] = sprintf( '%s and %s were both given the number %s. Each seller needs their own.', $seen[ $digits ], $name, self::format_phone( $digits ) );
+                continue;
+            }
+            // Test the raw cell: sanitize_email() blanks anything invalid, so
+            // checking the sanitised value would drop a typo'd address in
+            // silence instead of telling the admin about it.
+            if ( '' !== trim( $email_raw ) && ! is_email( $email ) ) {
+                $problems[] = sprintf( '%s: "%s" is not a valid email address, so it was left blank.', $name, $email_raw );
+                $email      = '';
+            }
+
+            $seen[ $digits ] = $name;
+            $rows[]          = array( 'name' => $name, 'phone' => $digits, 'email' => $email );
+        }
+
+        return array( 'rows' => $rows, 'problems' => $problems );
+    }
+
+    /**
+     * Work out what saving would do, without doing any of it.
+     *
+     * Students are not season-scoped, so a new season is a reconciliation of the
+     * people already on file - who is back, who has left, who is new - rather
+     * than a re-import of everybody.
+     *
+     * @param string $paste   Pasted/uploaded rows.
+     * @param array  $keep_ids Ids of existing students staying on.
+     * @return array
+     */
+    public static function preview_students( $paste, $keep_ids ) {
+        global $wpdb;
+
+        $parsed   = self::parse_student_rows( $paste );
+        $problems = $parsed['problems'];
+        $keep_ids = array_map( 'intval', (array) $keep_ids );
+
+        $existing = $wpdb->get_results(
+            "SELECT id, name, phone, email, status FROM {$wpdb->prefix}ss_team_members ORDER BY name ASC",
+            ARRAY_A
+        );
+
+        $by_phone = array();
+        foreach ( $existing as $person ) {
+            $digits = self::normalise_phone( $person['phone'] );
+            if ( '' !== $digits ) {
+                $by_phone[ $digits ] = $person;
+            }
+        }
+
+        $new = array();
+        $updated = array();
+        foreach ( $parsed['rows'] as $row ) {
+            if ( isset( $by_phone[ $row['phone'] ] ) ) {
+                $match = $by_phone[ $row['phone'] ];
+                $changes = array();
+                if ( 0 !== strcasecmp( $match['name'], $row['name'] ) ) {
+                    $changes[] = 'name';
+                }
+                if ( '' !== $row['email'] && 0 !== strcasecmp( (string) $match['email'], $row['email'] ) ) {
+                    $changes[] = 'email';
+                }
+                if ( $changes ) {
+                    $updated[] = array( 'id' => intval( $match['id'] ), 'was' => $match, 'now' => $row, 'changes' => $changes );
+                }
+                continue;
+            }
+            $new[] = $row;
+        }
+
+        $returning = array();
+        $leaving   = array();
+        foreach ( $existing as $person ) {
+            if ( in_array( intval( $person['id'] ), $keep_ids, true ) ) {
+                $returning[] = $person;
+            } else {
+                $leaving[] = $person;
+            }
+        }
+
+        return array(
+            'existing'  => $existing,
+            'returning' => $returning,
+            'leaving'   => $leaving,
+            'new'       => $new,
+            'updated'   => $updated,
+            'problems'  => $problems,
+            'missing_email' => count( array_filter( $existing, function ( $p ) {
+                return '' === trim( (string) $p['email'] );
+            } ) ),
+        );
+    }
+
+    /**
+     * Apply a previewed reconciliation.
+     *
+     * Nobody is ever deleted - a student who has left is marked inactive, so
+     * last season's orders, points and manifests still resolve to a name.
+     *
+     * @return array Counts actually applied.
+     */
+    public static function save_students( $paste, $keep_ids ) {
+        global $wpdb;
+        $table   = $wpdb->prefix . 'ss_team_members';
+        $preview = self::preview_students( $paste, $keep_ids );
+
+        $counts = array( 'returning' => 0, 'left' => 0, 'added' => 0, 'updated' => 0 );
+
+        foreach ( $preview['returning'] as $person ) {
+            if ( 'active' !== $person['status'] ) {
+                $wpdb->update( $table, array( 'status' => 'active' ), array( 'id' => intval( $person['id'] ) ), array( '%s' ), array( '%d' ) );
+            }
+            $counts['returning']++;
+        }
+
+        foreach ( $preview['leaving'] as $person ) {
+            if ( 'inactive' !== $person['status'] ) {
+                $wpdb->update( $table, array( 'status' => 'inactive' ), array( 'id' => intval( $person['id'] ) ), array( '%s' ), array( '%d' ) );
+            }
+            $counts['left']++;
+        }
+
+        foreach ( $preview['updated'] as $change ) {
+            $wpdb->update(
+                $table,
+                array( 'name' => $change['now']['name'], 'email' => $change['now']['email'] ),
+                array( 'id' => $change['id'] ),
+                array( '%s', '%s' ),
+                array( '%d' )
+            );
+            $counts['updated']++;
+        }
+
+        foreach ( $preview['new'] as $row ) {
+            $wpdb->insert(
+                $table,
+                array(
+                    'name'   => $row['name'],
+                    'phone'  => $row['phone'],
+                    'email'  => $row['email'],
+                    'status' => 'active',
+                ),
+                array( '%s', '%s', '%s', '%s' )
+            );
+            $counts['added']++;
+        }
+
+        subsales_log( 'INFO', 'system', 'Student roster reconciled', $counts );
+        return $counts;
     }
 
     /* -------------------------------------------------------------- actions */
@@ -351,31 +566,44 @@ class Subsales_Season_Setup {
                 $message = self::save_sales_days( isset( $_POST['dates'] ) ? (array) wp_unslash( $_POST['dates'] ) : array(), $step );
                 break;
 
-            case 'roster_preview':
-                $preview = subsales_process_import_preview( isset( $_FILES['roster_file'] ) ? $_FILES['roster_file'] : null );
-                if ( isset( $preview['error'] ) ) {
-                    self::fail( $preview['error'], $step );
-                }
-                $args['roster_preview'] = $preview;
-                $message = sprintf(
-                    'Checked your file: %d team(s) and %d person(s). Nothing has been saved yet - review below, then confirm.',
-                    count( $preview['teams'] ),
-                    count( $preview['users'] )
-                );
-                break;
+            case 'students_preview':
+            case 'students_confirm':
+                $paste = isset( $_POST['student_paste'] ) ? wp_unslash( $_POST['student_paste'] ) : '';
 
-            case 'roster_confirm':
-                $raw  = isset( $_POST['import_data'] ) ? wp_unslash( $_POST['import_data'] ) : '';
-                $data = json_decode( $raw, true );
-                if ( ! is_array( $data ) || ! isset( $data['teams'], $data['users'] ) ) {
-                    self::fail( 'The roster preview expired. Please choose the file again.', $step );
+                // An uploaded file is just another way of supplying the same
+                // rows, so it joins the pasted ones rather than taking a
+                // separate path through the parser.
+                if ( ! empty( $_FILES['student_file']['tmp_name'] ) && UPLOAD_ERR_OK === $_FILES['student_file']['error'] ) {
+                    $uploaded = file_get_contents( $_FILES['student_file']['tmp_name'] );
+                    if ( false !== $uploaded ) {
+                        $paste = trim( $paste . "\n" . $uploaded );
+                    }
                 }
-                try {
-                    subsales_process_import_confirm( $data );
-                } catch ( Throwable $e ) {
-                    self::fail( 'The roster could not be saved: ' . $e->getMessage(), $step );
+
+                $keep = isset( $_POST['keep'] ) ? (array) wp_unslash( $_POST['keep'] ) : array();
+
+                if ( 'students_preview' === $op ) {
+                    $preview = self::preview_students( $paste, $keep );
+                    $args['students_preview'] = $preview;
+                    $args['students_paste']   = $paste;
+                    $message = sprintf(
+                        '%d staying, %d leaving, %d new, %d to update. Nothing saved yet - check it, then confirm.',
+                        count( $preview['returning'] ),
+                        count( $preview['leaving'] ),
+                        count( $preview['new'] ),
+                        count( $preview['updated'] )
+                    );
+                    break;
                 }
-                $message = 'Roster updated.';
+
+                $counts  = self::save_students( $paste, $keep );
+                $message = sprintf(
+                    'Roster saved: %d staying, %d marked as left, %d added, %d updated. Nobody was deleted.',
+                    $counts['returning'],
+                    $counts['left'],
+                    $counts['added'],
+                    $counts['updated']
+                );
                 break;
 
             case 'products':
