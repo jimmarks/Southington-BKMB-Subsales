@@ -227,7 +227,12 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
     // range add can report how many it actually added.
     function addDay(date) {
         var $list = $body.find('.js-newseason-datelist');
-        if ($list.find('input[value="' + date + '"]').length) { return false; }
+        // .val() sets the property, never the attribute, so an attribute
+        // selector would not see a single row this function added.
+        var clash = $list.find('input[name="dates[]"]').filter(function(){
+            return $(this).val() === date;
+        }).length;
+        if (clash) { return false; }
 
         var label = new Date(date + 'T00:00:00')
             .toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year:'numeric' });
@@ -299,6 +304,21 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
         $(this).closest('li').remove();
         say('Removed from the list. Click "Save the sale days" to apply it.');
         paintDays();
+    });
+
+    // Saving with a date still sitting in the picker used to post an empty list
+    // and come back "0 sale day(s) added, 0 removed" - the picker is outside the
+    // form and has no name, so nothing went with it. Add it first, and refuse to
+    // post an empty list at all rather than reporting a no-op as a result.
+    $modal.on('submit', 'form[data-op="sales_days"]', function(e){
+        if ($body.find('.js-newseason-datefield').val()) {
+            $body.find('.js-newseason-adddate').trigger('click');
+        }
+        if (!$body.find('.js-newseason-datelist').children().length) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            say('Add at least one sale day first - pick a date and click Add.', true);
+        }
     });
 
     // Every step's action is a <form data-op="...">, so one handler covers them all.
