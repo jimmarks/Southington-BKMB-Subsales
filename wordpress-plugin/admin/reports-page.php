@@ -35,7 +35,7 @@ $donation_distribution = get_option( 'subsales_donation_distribution', 'team' );
 // Which season to report on. Defaults to the current one; past seasons stay
 // reachable, otherwise last year's standings vanish the moment a new season
 // starts.
-$seasons        = $wpdb->get_results( "SELECT id, name FROM {$wpdb->prefix}ss_seasons ORDER BY id DESC", ARRAY_A );
+$seasons        = Subsales_Database::get_seasons();
 $current_season = Subsales_Database::current_season_id();
 $season_id      = isset( $_GET['season_id'] ) ? intval( $_GET['season_id'] ) : $current_season;
 $valid_ids      = array_map( 'intval', wp_list_pluck( $seasons, 'id' ) );
@@ -175,7 +175,7 @@ $is_print = isset( $_GET['print'] ) && $_GET['print'] === '1';
         <select name="season_id" id="season_id" onchange="this.form.submit()">
             <?php foreach ( $seasons as $s ) : ?>
                 <option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $season_id, intval( $s['id'] ) ); ?>>
-                    <?php echo esc_html( $s['name'] ? $s['name'] : 'Season ' . $s['id'] ); ?><?php echo intval( $s['id'] ) === $current_season ? ' (current)' : ''; ?>
+                    <?php echo esc_html( ! empty( $s['label'] ) ? $s['label'] : 'Season ' . $s['id'] ); ?><?php echo intval( $s['id'] ) === $current_season ? ' (current)' : ''; ?>
                 </option>
             <?php endforeach; ?>
         </select>
