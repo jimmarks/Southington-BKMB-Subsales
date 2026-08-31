@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.18.0
+ * Version: 3.19.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.18.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.19.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -6955,6 +6955,58 @@ function subsales_export_users_teams() {
 /**
  * Process import file and generate preview
  */
+/**
+ * Blank roster CSV, so setup can be started before the spreadsheet is ready.
+ *
+ * The importer ignores every row before the first section marker, so the
+ * instructions at the top ride along in the file itself and cannot be parsed
+ * as data - which means the admin still has them in front of them when they
+ * open this a week later in Excel.
+ */
+add_action( 'admin_post_subsales_roster_template', 'subsales_download_roster_template' );
+function subsales_download_roster_template() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Insufficient permissions' );
+    }
+    check_admin_referer( 'subsales_roster_template' );
+
+    $org      = get_option( 'subsales_branding', 'Subsales' );
+    $filename = sanitize_file_name( str_replace( ' ', '-', strtolower( $org ) ) . '-roster-template.csv' );
+
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=' . $filename );
+
+    $out = fopen( 'php://output', 'w' );
+
+    // The importer only recognises a section marker on a line beginning with
+    // '#', and treats every other '#' line as a comment - so the notes and the
+    // markers use the same prefix, and the notes ride along harmlessly.
+    foreach ( array(
+        '# ' . $org . ' roster template',
+        '# Fill in both sections below, then upload this file in Season Setup, step 3.',
+        '# Lines starting with # are ignored, so these notes can stay.',
+        '#',
+        '# Teams: one row per team. status must be active or inactive.',
+        '# People: one row per person. status must be active or inactive.',
+        '# A person on more than one team gets one extra column per team.',
+        '# Every team named against a person must also appear in the teams section.',
+        '#',
+    ) as $note ) {
+        fputcsv( $out, array( $note ) );
+    }
+
+    fputcsv( $out, array( '# TEAMS SECTION' ) );
+    fputcsv( $out, array( 'team_name', 'access_code', 'status' ) );
+    fputcsv( $out, array( '', '', '' ) );
+    fputcsv( $out, array( '#' ) );
+    fputcsv( $out, array( '# USERS SECTION' ) );
+    fputcsv( $out, array( 'name', 'phone', 'email', 'status', 'teams' ) );
+    fputcsv( $out, array( '', '', '', '', '' ) );
+
+    fclose( $out );
+    exit;
+}
+
 function subsales_process_import_preview( $file ) {
     if ( ! $file || $file['error'] !== UPLOAD_ERR_OK ) {
         return array( 'error' => 'File upload failed. Please try again.' );

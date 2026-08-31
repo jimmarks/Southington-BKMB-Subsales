@@ -2009,6 +2009,35 @@ input:checked + .subsales-time-slider {
 }
 
 /* Step 2 - sale days: date picker + the list being built. */
+/* Weekday filter for adding a range of sale days. Hidden until a "through"
+   date is set, since it means nothing for a single day. */
+.subsales-newseason-modal .subsales-newseason-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: #646970;
+}
+.subsales-newseason-modal .subsales-weekday {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 5px;
+  border: 1px solid #c3c4c7;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+}
+.subsales-newseason-modal .subsales-weekday:has(input:checked) {
+  border-color: #2271b1;
+  background: #f0f6fc;
+  color: #1d2327;
+}
+.subsales-newseason-modal .subsales-weekday input { margin: 0; }
+
 .subsales-newseason-modal .subsales-newseason-addday {
   display: flex;
   align-items: center;

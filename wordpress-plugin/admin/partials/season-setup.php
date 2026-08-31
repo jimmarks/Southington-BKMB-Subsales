@@ -174,16 +174,11 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
         $body.find('.js-newseason-noday').toggle(!$body.find('.js-newseason-datelist').children().length);
     }
 
-    $modal.on('click', '.js-newseason-adddate', function(){
-        var $field = $body.find('.js-newseason-datefield');
-        var date = $field.val();            // <input type="date"> - always YYYY-MM-DD
-        if (!date) { say('Pick a date first.', true); return; }
-
+    // Adds one day to the list. Returns false if it was already there, so the
+    // range add can report how many it actually added.
+    function addDay(date) {
         var $list = $body.find('.js-newseason-datelist');
-        if ($list.find('input[value="' + date + '"]').length) {
-            say('That day is already on the list.', true);
-            return;
-        }
+        if ($list.find('input[value="' + date + '"]').length) { return false; }
 
         var label = new Date(date + 'T00:00:00')
             .toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric', year:'numeric' });
@@ -197,9 +192,57 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
             return $(this).find('input').val() > date;
         }).first();
         if ($after.length) { $row.insertBefore($after); } else { $list.append($row); }
+        return label;
+    }
 
-        $field.val('');
-        say('Added ' + label + '. Click "Save the sale days" when the list is right.');
+    // The weekday filter only means anything across a range.
+    $modal.on('input change', '.js-newseason-datefield-to', function(){
+        $body.find('.js-newseason-weekdays').toggle(!!$(this).val());
+    });
+
+    $modal.on('click', '.js-newseason-adddate', function(){
+        var $from = $body.find('.js-newseason-datefield');
+        var $to   = $body.find('.js-newseason-datefield-to');
+        var from  = $from.val();            // <input type="date"> - always YYYY-MM-DD
+        var to    = $to.val();
+        if (!from) { say('Pick a date first.', true); return; }
+
+        if (!to) {
+            var label = addDay(from);
+            if (label === false) { say('That day is already on the list.', true); return; }
+            $from.val('');
+            say('Added ' + label + '. Click "Save the sale days" when the list is right.');
+            paintDays();
+            return;
+        }
+
+        if (to < from) { say('The second date is before the first one.', true); return; }
+
+        var wanted = {};
+        $body.find('.js-newseason-weekday:checked').each(function(){ wanted[$(this).val()] = true; });
+        if (!Object.keys(wanted).length) { say('Tick at least one day of the week.', true); return; }
+
+        // Walk the range in UTC so a daylight-saving change cannot skip or
+        // repeat a day.
+        var cursor = new Date(from + 'T00:00:00Z');
+        var last   = new Date(to + 'T00:00:00Z');
+        var added = 0, skipped = 0, guard = 0;
+        while (cursor <= last && guard++ < 400) {
+            if (wanted[String(cursor.getUTCDay())]) {
+                if (addDay(cursor.toISOString().slice(0, 10)) === false) { skipped++; } else { added++; }
+            }
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+
+        $from.val('');
+        $to.val('').trigger('change');
+        if (!added && !skipped) {
+            say('No days in that range matched the days of the week you ticked.', true);
+        } else {
+            say('Added ' + added + ' day' + (added === 1 ? '' : 's')
+                + (skipped ? ' (' + skipped + ' already on the list)' : '')
+                + '. Click "Save the sale days" when the list is right.');
+        }
         paintDays();
     });
 

@@ -76,7 +76,25 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
         <p class="subsales-newseason-addday">
             <label for="subsales-newseason-date"><strong>Sale day</strong></label>
             <input type="date" id="subsales-newseason-date" class="js-newseason-datefield" />
+            <label for="subsales-newseason-date-to">through</label>
+            <input type="date" id="subsales-newseason-date-to" class="js-newseason-datefield-to" />
             <button type="button" class="button js-newseason-adddate">Add</button>
+        </p>
+
+        <!-- Only useful once a range is set, so it stays out of the way until then.
+             Sale days are usually the same weekday across several weeks, which a
+             plain range would fill in with every weekday between. -->
+        <p class="subsales-newseason-weekdays js-newseason-weekdays" style="display:none">
+            <span>Only these days:</span>
+            <?php
+            $weekday_names = array( 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat' );
+            foreach ( $weekday_names as $weekday_index => $weekday_name ) :
+                ?>
+                <label class="subsales-weekday">
+                    <input type="checkbox" class="js-newseason-weekday" value="<?php echo esc_attr( $weekday_index ); ?>" checked />
+                    <?php echo esc_html( $weekday_name ); ?>
+                </label>
+            <?php endforeach; ?>
         </p>
 
         <form data-op="sales_days" class="subsales-newseason-form">
@@ -108,6 +126,16 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
     <p>Upload this year's spreadsheet (a <code>.csv</code> file with a teams section and a people section).
        You'll see exactly what will change before anything is saved. Nothing is ever deleted &mdash;
        people and teams already there are updated, and new ones are added.</p>
+
+    <p class="subsales-newseason-template">
+        Haven't got the file yet?
+        <a href="<?php echo esc_url( wp_nonce_url(
+            admin_url( 'admin-post.php?action=subsales_roster_template' ),
+            'subsales_roster_template'
+        ) ); ?>">Download a blank roster template</a>
+        &mdash; fill it in whenever you're ready and come back to this step. Everything
+        you've set up so far is saved.
+    </p>
 
     <div id="subsales-roster-upload">
         <form data-op="roster_preview" class="subsales-newseason-form" enctype="multipart/form-data">
