@@ -25,6 +25,13 @@ foreach ( Subsales_Database::get_seasons() as $season_setup_row ) {
     }
 }
 $season_setup_last  = Subsales_Season_Setup::last_run_text();
+
+// The roster is the one thing an admin has to prepare outside this screen, so
+// the file to prepare is offered here rather than only inside step 3 - by the
+// time they reach that step they have already committed to a sitting.
+global $wpdb;
+$season_setup_people = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ss_team_members" );
+$season_setup_teams  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ss_teams" );
 $season_setup_steps = Subsales_Season_Setup::step_labels();
 $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
 ?>
@@ -54,6 +61,42 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
                 Setup has not been run yet.
             <?php endif; ?>
         </p>
+        <div class="subsales-roster-prep">
+            <h4>Start with the roster</h4>
+            <?php if ( $season_setup_people > 0 ) : ?>
+                <p>
+                    There <?php echo 1 === $season_setup_people ? 'is' : 'are'; ?> already
+                    <strong><?php echo esc_html( number_format_i18n( $season_setup_people ) ); ?></strong>
+                    <?php echo 1 === $season_setup_people ? 'person' : 'people'; ?> and
+                    <strong><?php echo esc_html( number_format_i18n( $season_setup_teams ) ); ?></strong>
+                    team<?php echo 1 === $season_setup_teams ? '' : 's'; ?> in the system.
+                    Download that list, edit it for this year, and have it ready before you start &mdash;
+                    step 3 asks for it. Nothing is changed until you upload it back.
+                </p>
+                <p>
+                    <a class="button" href="<?php echo esc_url( wp_nonce_url(
+                        admin_url( 'admin-post.php?action=subsales_roster_export' ),
+                        'subsales_roster_export'
+                    ) ); ?>">Download the current roster</a>
+                    <a class="button-link" style="margin-left:10px" href="<?php echo esc_url( wp_nonce_url(
+                        admin_url( 'admin-post.php?action=subsales_roster_template' ),
+                        'subsales_roster_template'
+                    ) ); ?>">or start from a blank file</a>
+                </p>
+            <?php else : ?>
+                <p>
+                    Step 3 asks for a roster file &mdash; the teams and the people on them.
+                    Download the blank file, fill it in, and have it ready before you start.
+                </p>
+                <p>
+                    <a class="button" href="<?php echo esc_url( wp_nonce_url(
+                        admin_url( 'admin-post.php?action=subsales_roster_template' ),
+                        'subsales_roster_template'
+                    ) ); ?>">Download a blank roster file</a>
+                </p>
+            <?php endif; ?>
+        </div>
+
         <p style="margin-bottom:0">
             <button type="button" class="button button-primary button-hero" id="subsales-newseason-open">
                 Set Up Season

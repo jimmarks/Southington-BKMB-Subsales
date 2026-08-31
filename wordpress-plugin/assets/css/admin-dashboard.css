@@ -2270,3 +2270,16 @@ input:checked + .subsales-time-slider {
 @media (max-width: 900px) {
   .subsales-preview-grid { grid-template-columns: 1fr; }
 }
+
+/* Roster prep block on the Set Up Season card - the file an admin has to
+   prepare before the wizard is worth doing anything with. */
+.subsales-roster-prep {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: #f6f7f8;
+  border-left: 3px solid #2271b1;
+  border-radius: 3px;
+}
+.subsales-roster-prep h4 { margin: 0 0 6px; font-size: 14px; }
+.subsales-roster-prep p { margin: 0 0 10px; font-size: 13px; color: #50575e; }
+.subsales-roster-prep p:last-child { margin-bottom: 0; }
