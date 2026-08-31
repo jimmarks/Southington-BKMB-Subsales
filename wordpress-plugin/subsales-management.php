@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.17.1
+ * Version: 3.18.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.17.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.18.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -3585,7 +3585,7 @@ function subsales_export_team_sales_report_csv() {
     check_admin_referer( 'subsales_export_report', '_wpnonce' );
     
     // Get points calculation settings
-    $points_mode = get_option( 'subsales_points_mode', 'dollar' );
+    $points_mode = get_option( 'subsales_points_mode', 'product' );
     $points_denomination = floatval( get_option( 'subsales_points_denomination', 1.0 ) );
     $points_distribution = get_option( 'subsales_points_distribution', 'individual' );
     $donation_bonus_enabled = get_option( 'subsales_donation_bonus_enabled', 0 );
@@ -3596,18 +3596,21 @@ function subsales_export_team_sales_report_csv() {
     // Same call the on-screen report makes (admin/reports-page.php), so the CSV
     // and the screen can no longer diverge - they used to run two different
     // implementations, only one of which was season-scoped.
+    $season_id = isset( $_GET['season_id'] ) ? intval( $_GET['season_id'] ) : Subsales_Database::current_season_id();
+    $org       = get_option( 'subsales_branding', 'Subsales' );
+
     $report_data = Subsales_Points_Calculator::build_report( 
         $points_mode, 
         $points_denomination, 
         $points_distribution,
         $donation_bonus_enabled,
         $donation_percentage,
-        $donation_distribution
+        $donation_distribution,
+        $season_id
     );
-    
-    // Generate filename with hyphenated date format: BKMBPointsReport1-26-26.csv
-    $date = date( 'n-j-y' ); // Single digit month/day, 2-digit year
-    $filename = 'BKMBPointsReport' . $date . '.csv';
+
+    $date     = date( 'n-j-y' );
+    $filename = sanitize_file_name( str_replace( ' ', '', $org ) . 'PointsReport' . $date . '.csv' );
     
     // Set headers for CSV download
     header( 'Content-Type: text/csv; charset=utf-8' );
@@ -3616,16 +3619,21 @@ function subsales_export_team_sales_report_csv() {
     // Open output stream
     $output = fopen( 'php://output', 'w' );
     
-    // Write header row
-    fputcsv( $output, array( 'Date', 'Team', 'Person', 'Points' ) );
-    
-    // Write data rows
+    // The same breakdown the screen shows. Exporting points alone stripped out
+    // exactly the columns that explain how a total was reached.
+    fputcsv( $output, array( 'Date', 'Team', 'Person', 'Items', 'Sales', 'Donations', 'Orders', 'Points', 'Note' ) );
+
     foreach ( $report_data as $row ) {
         fputcsv( $output, array(
             $row['date'],
             $row['team_name'],
             $row['person_name'],
-            number_format( $row['points'], 2 )
+            intval( $row['product_quantity'] ),
+            number_format( $row['sale_value'], 2, '.', '' ),
+            number_format( $row['total_donations'], 2, '.', '' ),
+            intval( $row['order_count'] ),
+            number_format( $row['points'], 2, '.', '' ),
+            empty( $row['off_roster'] ) ? '' : 'Not signed up for this team that day',
         ) );
     }
     
