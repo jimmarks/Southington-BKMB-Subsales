@@ -2011,10 +2011,17 @@
       if (!expiry) return false;
       const exp = new Date(expiry).getTime();
       if (!exp || exp <= Date.now()) return false;
-      const teamCode = localStorage.getItem('teamCode');
-      const teamName = localStorage.getItem('teamName');
-      const memberId = localStorage.getItem('teamMemberId');
-      return !!((teamName && teamCode) || memberId);
+
+      // Mirror restoreSession() exactly, including which keys each mode uses.
+      // A check that only understood team mode reported "not signed in" for
+      // every user-mode seller, which is what put the login form back on top
+      // of their order screen.
+      if ((localStorage.getItem('loginMode') || 'legacy') === 'user') {
+        return !!(localStorage.getItem('userId')
+               && localStorage.getItem('userName')
+               && localStorage.getItem('userPhone'));
+      }
+      return !!(localStorage.getItem('teamName') && localStorage.getItem('teamCode'));
     }catch(e){ return false; }
   }
   window.smHasLiveSession = hasLiveSession;
