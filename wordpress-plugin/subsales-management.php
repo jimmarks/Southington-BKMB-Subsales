@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.21.1
+ * Version: 3.21.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.21.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.21.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4239,9 +4239,16 @@ function subsales_serve_portal_assets() {
                 }
             }
             $html = $new_html;
-            // Serve index publicly so the portal can be loaded without authentication
+            // Serve index publicly so the portal can be loaded without authentication.
+            //
+            // Never cache the shell. It carries the ?v= that points at this
+            // release's app.js, so a cached copy keeps handing sellers the
+            // previous release's code - for five minutes here, and indefinitely
+            // once a proxy or the browser holds it. The assets it references are
+            // versioned and can be cached hard; this document cannot.
             header( 'Content-Type: text/html; charset=utf-8' );
-            header( 'Cache-Control: public, max-age=300' );
+            header( 'Cache-Control: no-cache, no-store, must-revalidate, max-age=0' );
+            header( 'Pragma: no-cache' );
             header( 'Access-Control-Allow-Origin: *' );
             echo $html; exit;
         }
