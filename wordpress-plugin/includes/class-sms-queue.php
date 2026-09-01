@@ -90,7 +90,7 @@ class Subsales_SMS_Queue {
     // that rates may apply, and how to stop. A2P campaign rejection 30924.
     // The brand here must be the registered A2P Brand (Southington BKMB),
     // not the app's display name, or the reviewer cannot match the two.
-    const DEFAULT_CONSENT_WORDING = "By providing your phone number you agree to receive text messages from Southington BKMB about this sub order: your order receipt and delivery updates. Message frequency varies, about 2-4 messages per order. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help.";
+    const DEFAULT_CONSENT_WORDING = "Text me about this sub order: my order receipt and delivery updates from Southington BKMB. Message frequency varies, about 2-4 messages per order. Message and data rates may apply. Reply STOP to unsubscribe or HELP for help.";
 
     /**
      * Register hooks.
@@ -265,9 +265,25 @@ class Subsales_SMS_Queue {
             return;
         }
 
-        // Consent is recorded whether or not sending is switched on - the
-        // customer was shown the wording and gave the number either way, and
-        // that record is what an A2P registration or an attorney asks about.
+        // No tick, no text. Consent to be messaged cannot be a condition of
+        // buying (TCPA 64.1200(a)(2)), so the phone number is required for the
+        // delivery while agreeing to be texted is a separate, optional act.
+        // Giving the number used to be treated as the agreement, which is a
+        // forced-consent violation and what the A2P campaign was rejected for.
+        if ( empty( $data['smsConsent'] ) ) {
+            self::enqueue( array(
+                'order_id'    => $order_id,
+                'phone'       => $phone,
+                'body'        => '',
+                'status'      => 'skipped',
+                'skip_reason' => 'no_consent',
+            ) );
+            return;
+        }
+
+        // Only now is there consent to record: the customer ticked the box and
+        // was shown the wording next to it. That record is what an A2P
+        // registration or an attorney asks about.
         $opted_out = self::upsert_contact( $phone );
 
         $body = self::render_receipt( $data );

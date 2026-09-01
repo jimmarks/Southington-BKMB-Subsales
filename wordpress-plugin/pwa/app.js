@@ -1763,6 +1763,9 @@
       customer: data.customer,
       address: data.address,
       cellNumber: data.cell,
+      // Whether the customer actually agreed to be texted. The number alone is
+      // not consent - it is required so the delivery can be coordinated.
+      smsConsent: !!data.smsConsent,
       products: data.products,
       price_snapshot: data.priceSnapshot,
       donationAmount: data.donation,
@@ -1860,6 +1863,7 @@
       const unitFloorApt = qs('#unitFloorApt') && qs('#unitFloorApt').value.trim();
       if (unitFloorApt) { address = address + (address ? ' ' : '') + unitFloorApt; }
       const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
+      const smsConsent = !!(qs('#smsConsent') && qs('#smsConsent').checked);
 
       if (!customer || !address) { alert('Customer and address required'); return; }
       if (!cell) { alert('Phone number is required'); return; }
@@ -1895,7 +1899,7 @@
 
       // Snapshot now — this is what gets used to build the real order later, at "paid" time,
       // not whatever the DOM happens to hold then.
-      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode };
+      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode, smsConsent };
 
       const url = apiBase ? (apiBase + '/digital-payments/checkout') : '/wp-json/order-manager/v1/digital-payments/checkout';
       const resp = await fetch(url, {
@@ -2914,7 +2918,8 @@
   const notesInput = qs('#notes');
   const checkNumberInput = qs('#checkNumber');
   const donationOnlyCheckbox = qs('#donationOnly');
-  const smsConsentNote = qs('#smsConsentNote');
+  const smsConsentRow = qs('#smsConsentRow');
+  const smsConsentSkip = qs('#smsConsentSkip');
 
   // Donation-only mode toggle handler
   donationOnlyCheckbox && donationOnlyCheckbox.addEventListener('change', function() {
@@ -2939,7 +2944,9 @@
       }
       // No receipt is sent for donation-only orders (the queue skips them), so
       // don't leave a promise of one on screen.
-      if (smsConsentNote) smsConsentNote.style.display = 'none';
+      if (smsConsentRow) smsConsentRow.style.display = 'none';
+      if (smsConsentSkip) smsConsentSkip.style.display = 'none';
+      if (qs('#smsConsent')) qs('#smsConsent').checked = false;
 
       // Disable and clear all product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {
@@ -2974,7 +2981,8 @@
         cellInput.readOnly = false;
         cellInput.style.backgroundColor = '';
       }
-      if (smsConsentNote) smsConsentNote.style.display = '';
+      if (smsConsentRow) smsConsentRow.style.display = '';
+      if (smsConsentSkip) smsConsentSkip.style.display = '';
 
       // Re-enable product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {
@@ -3193,10 +3201,12 @@
       // where the customer would not give a number.
       const donationOnly = !!(qs('#donationOnly') && qs('#donationOnly').checked);
 
+      const smsConsent = !!(qs('#smsConsent') && qs('#smsConsent').checked);
+
       order = await buildNewOrderObject(paymentMethod, {
         customer, address, cell, products, priceSnapshot, donation, chkNumber, notes,
         subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode,
-        donationOnly
+        donationOnly, smsConsent
       });
     }
     
