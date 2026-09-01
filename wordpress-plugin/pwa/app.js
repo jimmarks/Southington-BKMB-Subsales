@@ -971,17 +971,9 @@
     const list = await Storage.all();
     const tbody = qs('#inlayTableBody'); if (!tbody) return;
     // Only show queued-orders inlay when an authenticated session exists
-    function isAuthenticated(){
-      try{
-        const team = localStorage.getItem('teamName');
-        const code = localStorage.getItem('teamCode');
-        const expiry = localStorage.getItem('sessionExpiry');
-        if (!team || !code) return false;
-        if (!expiry) return false;
-        const exp = new Date(expiry).getTime();
-        return exp && exp > Date.now();
-      }catch(e){ return false; }
-    }
+    // Delegates to the module-level check so there is one definition of a live
+    // session; this copy only knew about team mode and missed individual mode.
+    const isAuthenticated = () => (window.smHasLiveSession ? window.smHasLiveSession() : false);
 
     if (!isAuthenticated()) {
       // if not authenticated, hide the open-inlay control and avoid exposing queued orders
@@ -2010,6 +2002,23 @@
   }
   // session duration will be provided by server-localized config as milliseconds (cfg.sessionDuration)
 
+  // One definition of "is somebody signed in". Team mode stores a team name and
+  // code; individual mode stores a member id. Either way the session is only
+  // live while sessionExpiry is still in the future.
+  function hasLiveSession(){
+    try{
+      const expiry = localStorage.getItem('sessionExpiry');
+      if (!expiry) return false;
+      const exp = new Date(expiry).getTime();
+      if (!exp || exp <= Date.now()) return false;
+      const teamCode = localStorage.getItem('teamCode');
+      const teamName = localStorage.getItem('teamName');
+      const memberId = localStorage.getItem('teamMemberId');
+      return !!((teamName && teamCode) || memberId);
+    }catch(e){ return false; }
+  }
+  window.smHasLiveSession = hasLiveSession;
+
   function showSalesClosed(reason){
     salesEnabled = false;
     const msg = reason || 'Sales are closed right now. Please check back later.';
@@ -2024,7 +2033,14 @@
     salesEnabled = true;
     if (salesClosedSection) { salesClosedSection.classList.add('hidden'); try{ salesClosedSection.style.display='none'; }catch(e){} }
     try { localStorage.setItem('salesEnabled', '1'); } catch(e){}
-    if (loginSection) { loginSection.classList.remove('hidden'); try{ loginSection.style.display='block'; }catch(e){} }
+    // Only bring the login form back for someone who is not already signed in.
+    // This ran on every config fetch, so a signed-in seller had the login form
+    // reappear on top of the order screen - both visible at once, with the
+    // auth-only header buttons showing too.
+    if (loginSection && !hasLiveSession()) {
+      loginSection.classList.remove('hidden');
+      try{ loginSection.style.display='block'; }catch(e){}
+    }
   }
 
   const cachedSalesFlag = localStorage.getItem('salesEnabled');
