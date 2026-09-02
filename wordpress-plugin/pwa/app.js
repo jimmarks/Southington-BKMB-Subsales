@@ -1094,10 +1094,11 @@
     });
   }
   window.smPaintPayOptions = paintPayOptions;
-  [payCheck, payCash, payDigital].forEach(function(box){
-    if (box) box.addEventListener('change', paintPayOptions);
-  });
   paintPayOptions();
+  // The listeners are attached further down, AFTER the handlers that clear the
+  // other two options. Registered here they ran first, read the state before
+  // those handlers had unchecked anything, and left the previous option looking
+  // selected - two blue buttons at once.
 
   let digitalPollInterval = null;
   let digitalWaitingMsgInterval = null;
@@ -1667,6 +1668,11 @@
     } else {
       hideDigitalPanel();
     }
+  });
+
+  // Last, so the repaint sees the final state of all three.
+  [payCheck, payCash, payDigital].forEach(function(box){
+    if (box) box.addEventListener('change', paintPayOptions);
   });
 
   // ---- Digital payment (Square QR) flow — Phase 5 ----

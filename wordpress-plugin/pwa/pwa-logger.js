@@ -233,32 +233,87 @@
         instrumentUI() {
             const logger = this;
 
-            // Log all button clicks (check debugEnabled at click time, not setup time)
-            document.addEventListener('click', function(e) {
-                const button = e.target.closest('button');
-                if (button) {
-                    console.warn('[PWA Logger] Button clicked:', button.textContent.trim().substring(0, 50), 'debugEnabled:', logger.debugEnabled);
-                    if (logger.debugEnabled) {
-                        logger.logButtonClick(
-                            button.id || 'unnamed',
-                            button.textContent.trim().substring(0, 50)
-                        );
+            // What a control is actually called, in the order a person would
+            // name it. "Button clicked: +" told nobody which product was tapped.
+            function describe(el) {
+                if (!el) return 'unknown control';
+                const aria = el.getAttribute && el.getAttribute('aria-label');
+                if (aria) return aria.trim();
+
+                // a wrapping <label>, or one pointing at this id
+                const wrap = el.closest && el.closest('label');
+                if (wrap) {
+                    const t = wrap.textContent.replace(/\s+/g, ' ').trim();
+                    if (t) return t.substring(0, 60);
+                }
+                if (el.id) {
+                    const forLabel = document.querySelector('label[for="' + el.id + '"]');
+                    if (forLabel) {
+                        const t = forLabel.textContent.replace(/\s+/g, ' ').trim();
+                        if (t) return t.substring(0, 60);
                     }
                 }
+                const own = (el.textContent || '').replace(/\s+/g, ' ').trim();
+                if (own) return own.substring(0, 60);
+                return el.placeholder || el.name || el.id || (el.tagName || '').toLowerCase();
+            }
+
+            // Anything a customer told the seller stays out of the log; that a
+            // field was filled in is the useful part, not what was typed.
+            const PRIVATE_FIELDS = ['customerName', 'address', 'unitFloorApt', 'cellNumber', 'checkNumber', 'notes'];
+
+            document.addEventListener('click', function(e) {
+                const button = e.target.closest('button');
+                if (!button || !logger.debugEnabled) return;
+                logger.log('ui', 'Tapped ' + describe(button), {
+                    control: button.id || null,
+                    screen: document.getElementById('appSection') &&
+                            !document.getElementById('appSection').classList.contains('hidden')
+                            ? 'order' : 'login'
+                });
             });
 
-            // Log input changes (debounced)
             let inputTimeout;
             document.addEventListener('input', function(e) {
-                if (e.target.matches('input, textarea, select') && logger.debugEnabled) {
-                    clearTimeout(inputTimeout);
-                    inputTimeout = setTimeout(() => {
-                        logger.logInput(
-                            e.target.name || e.target.id || 'unnamed',
-                            e.target.type || e.target.tagName.toLowerCase(),
-                            e.target.value
-                        );
-                    }, 500);
+                const el = e.target;
+                if (!el.matches('input, textarea, select') || !logger.debugEnabled) return;
+                clearTimeout(inputTimeout);
+                inputTimeout = setTimeout(function() {
+                    const productId = el.getAttribute && el.getAttribute('data-product-id');
+                    const label = describe(el);
+
+                    if (productId) {
+                        // Quantities are the thing worth reading back later, and
+                        // there is nothing private about them.
+                        logger.log('ui', label.replace(/ quantity$/, '') + ' set to ' + (el.value === '' ? '0' : el.value), {
+                            product: productId,
+                            value: el.value === '' ? 0 : Number(el.value)
+                        });
+                        return;
+                    }
+
+                    const isPrivate = PRIVATE_FIELDS.indexOf(el.id) !== -1;
+                    logger.log('ui', isPrivate
+                        ? label + ' filled in'
+                        : label + ' set to ' + (el.value || '(cleared)'), {
+                        field: el.id || el.name || null,
+                        type: el.type || el.tagName.toLowerCase(),
+                        length: isPrivate ? (el.value || '').length : undefined
+                    });
+                }, 500);
+            });
+
+            // Checkboxes and the payment buttons fire change, not input.
+            document.addEventListener('change', function(e) {
+                const el = e.target;
+                if (!el.matches('input[type="checkbox"], input[type="radio"], select') || !logger.debugEnabled) return;
+                const label = describe(el);
+                if (el.type === 'checkbox' || el.type === 'radio') {
+                    logger.log('ui', label + (el.checked ? ' selected' : ' cleared'), {
+                        field: el.id || null, checked: !!el.checked
+                    });
+                } else {
+                    logger.log('ui', label + ' set to ' + (el.value || '(none)'), { field: el.id || null });
                 }
             });
 
