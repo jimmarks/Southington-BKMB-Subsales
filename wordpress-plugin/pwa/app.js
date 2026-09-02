@@ -69,6 +69,29 @@
     });
   }
 
+  // Initialise the logger on load, not only when someone clicks Login.
+  //
+  // Both init() calls used to live inside the two login button handlers, so a
+  // restored session - a reload, or reopening the installed app - never
+  // initialised it. log() requires initialized, so everything was discarded for
+  // the life of that page however the heartbeat had set debugEnabled. The login
+  // handlers still run init afterwards to attach the seller's name to it.
+  (async function bootstrapLogger(){
+    const lg = await awaitLogger();
+    if (!lg) return;
+    try {
+      await lg.init({
+        apiBase: apiBase,
+        teamName: localStorage.getItem('selectedTeamName') || localStorage.getItem('teamName') || '',
+        userName: localStorage.getItem('userName') || localStorage.getItem('teamMemberName') || '',
+        sessionId: localStorage.getItem('pwaSessionId') || ''
+      });
+      lg.instrumentUI();
+    } catch (e) {
+      console.warn('[PWA] logger bootstrap failed', e);
+    }
+  })();
+
   function loadAddressAutocomplete() {
     if (addressAutocompleteReady || addressAutocompleteLoading) {
 

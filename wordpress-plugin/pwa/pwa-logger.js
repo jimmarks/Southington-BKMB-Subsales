@@ -12,6 +12,7 @@
         userName: '',
         sessionId: '',
         initialized: false,
+        _uiInstrumented: false,
 
         /**
          * Initialize the logger with API configuration
@@ -232,6 +233,14 @@
          */
         instrumentUI() {
             const logger = this;
+
+            // Called from the page-load bootstrap and again from whichever login
+            // handler runs, so it has to be idempotent - a second set of
+            // listeners would log every tap twice.
+            if (this._uiInstrumented) {
+                return;
+            }
+            this._uiInstrumented = true;
 
             // What a control is actually called, in the order a person would
             // name it. "Button clicked: +" told nobody which product was tapped.
