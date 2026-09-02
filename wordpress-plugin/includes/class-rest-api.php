@@ -537,8 +537,32 @@ class Subsales_REST_API {
             $context['source'] = $source;
         }
         
+        // A watched seller's DEBUG entries have to survive the global gate in
+        // log(), or turning logging on for one person changes nothing that can
+        // be read back. Identify them by the session the client reports, and
+        // fall back to their name when the logger initialised before login and
+        // has no session id yet.
+        $watch_session = isset( $context['session_id'] ) ? sanitize_text_field( $context['session_id'] ) : '';
+        $watch_user    = 0;
+
+        if ( $watch_session ) {
+            $row = Subsales_Database::get_pwa_session( $watch_session );
+            if ( $row && ! empty( $row['user_id'] ) ) {
+                $watch_user = intval( $row['user_id'] );
+            }
+        }
+        if ( ! $watch_user && $user_name ) {
+            global $wpdb;
+            $watch_user = intval( $wpdb->get_var( $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}ss_team_members WHERE name = %s LIMIT 1",
+                $user_name
+            ) ) );
+        }
+
+        $force = Subsales_Database::is_debug_watched( $watch_session, $watch_user );
+
         // Log to database
-        Subsales_Database::log( $level, $category, $message, $context, $source, null, $user_name );
+        Subsales_Database::log( $level, $category, $message, $context, $source, null, $user_name, $force );
         
         return rest_ensure_response( array(
             'success' => true,

@@ -1616,7 +1616,7 @@ class Subsales_Database {
      * @param int $user_id Optional user ID
      * @param string $user_name Optional user name
      */
-    public static function log( $level, $category, $message, $context = array(), $source = 'admin', $user_id = null, $user_name = '' ) {
+    public static function log( $level, $category, $message, $context = array(), $source = 'admin', $user_id = null, $user_name = '', $force = false ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_logs';
         
@@ -1632,8 +1632,12 @@ class Subsales_Database {
         // Only DEBUG level logs are marked as debug logs
         $is_debug = ( $level === 'DEBUG' ) ? 1 : 0;
         
-        // Skip DEBUG logs if debug mode is not enabled
-        if ( $level === 'DEBUG' && ! $debug_enabled ) {
+        // Skip DEBUG logs if debug mode is not enabled.
+        //
+        // $force is how a watched seller gets through: the client sends every UI
+        // event at DEBUG, so watching one person turned their device on and this
+        // gate then threw the entries away because the global switch was off.
+        if ( $level === 'DEBUG' && ! $debug_enabled && ! $force ) {
             return;
         }
         
