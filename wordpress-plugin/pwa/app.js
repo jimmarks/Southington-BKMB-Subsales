@@ -49,6 +49,26 @@
   });
   
   // Load address autocomplete module dynamically (only after login)
+  // pwa-logger.js is appended to <head> asynchronously, so a plain
+  // `if (window.PWALogger)` loses a race with it and skips initialisation
+  // altogether - leaving the logger permanently uninitialised, and log() then
+  // discards everything even once the heartbeat has switched debug on. Wait for
+  // it briefly instead of testing once.
+  function awaitLogger(timeoutMs) {
+    if (window.PWALogger) return Promise.resolve(window.PWALogger);
+    const deadline = Date.now() + (timeoutMs || 3000);
+    return new Promise(resolve => {
+      (function poll(){
+        if (window.PWALogger) return resolve(window.PWALogger);
+        if (Date.now() > deadline) {
+          console.warn('[PWA] logger never loaded; UI logging is off for this session');
+          return resolve(null);
+        }
+        setTimeout(poll, 50);
+      })();
+    });
+  }
+
   function loadAddressAutocomplete() {
     if (addressAutocompleteReady || addressAutocompleteLoading) {
 
@@ -2460,7 +2480,7 @@
         }
         
         // Re-initialize PWA Logger with authenticated credentials
-        if (window.PWALogger) {
+        if (await awaitLogger()) {
 
           try {
             await window.PWALogger.init({
@@ -2823,7 +2843,7 @@
       const salesMode = (config && config.salesMode) || 'legacy';
 
       // Initialize PWA Logger early (before login) so we can log login attempts
-      if (window.PWALogger) {
+      if (await awaitLogger()) {
         try {
           await window.PWALogger.init({
             apiBase: apiBase,
