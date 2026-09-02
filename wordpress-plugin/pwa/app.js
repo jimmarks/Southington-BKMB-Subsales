@@ -59,12 +59,18 @@
     
     return new Promise((resolve, reject) => {
       try {
-        // Find the base path from app.js
-        const appScript = document.querySelector('script[src$="app.js"]');
-        const base = appScript ? appScript.src.replace(/app\.js(\?.*)?$/, '') : './';
-        
+        // pluginBase is localised by PHP and points straight at the pwa
+        // directory, so it needs no guessing. What used to be here matched the
+        // script tag with [src$="app.js"] - "ends with" - which stopped
+        // matching the moment assets gained a ?v= cache-buster. It then fell
+        // back to './', resolved against the portal URL, and asked the site
+        // root for the module: 404, no autocomplete, no "use my location".
         const script = document.createElement('script');
-        script.src = base + 'address-autocomplete.js';
+        const fallback = document.querySelector('script[src*="app.js"]');
+        const base = pluginBase
+            || (fallback && fallback.src ? fallback.src.replace(/app\.js(\?.*)?$/, '') : './');
+        const ver = cfg.assetVersion ? ('?v=' + encodeURIComponent(cfg.assetVersion)) : '';
+        script.src = base + 'address-autocomplete.js' + ver;
         script.onload = () => {
 
           resolve();
