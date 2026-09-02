@@ -92,10 +92,7 @@ input[type="tel"]:user-invalid{border-color:#dc2626}
 input[type="tel"]:invalid:focus{border-color:#2563eb}
 input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,38,0.06)}
 
-/* Payment options layout - improved alignment */
-.pay-options{margin-top:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-.pay-options label{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap;margin:0}
-.pay-options input[type="checkbox"]{margin:0;width:18px;height:18px;flex-shrink:0}
+/* Payment options: see the segmented control at the end of this file. */
 .check-number-row{margin-top:8px}
 
 /* SMS consent notice, sits directly under #cellNumber. Negative top margin keeps
@@ -228,7 +225,6 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 @media (max-width:600px){
 	.row{flex-direction:column}
 	.sm-aside{width:100%;min-width:0;margin-top:12px}
-	.pay-options{flex-direction:column;align-items:flex-start}
 }
 
 /* iPad and tablet optimizations (768px - 1024px) */
@@ -237,7 +233,6 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 	.sm-header-right{gap:6px}
 	.sm-header-right .sm-btn{font-size:0.85rem;padding:7px 10px}
 	.sm-brand-name{font-size:1rem}
-	.pay-options{gap:20px}
 }
 
 /* Small mobile phones */
@@ -289,12 +284,12 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 /* Small spacing utilities used in the template */
 .row-spaced{margin-top:6px;margin-bottom:6px}
 .order-total{margin-top:6px}
-.pay-options{margin-top:8px;display:flex;gap:12px}
+.pay-options{margin-top:8px}
 .check-number-row{margin-top:6px}
 .btn-row{margin-top:10px}
 .row-spaced{margin-top:6px;margin-bottom:6px}
 .order-total{margin-top:6px}
-.pay-options{margin-top:8px;display:flex;gap:12px}
+.pay-options{margin-top:8px}
 .check-number-row{margin-top:6px}
 .btn-row{margin-top:10px}
 
@@ -493,11 +488,11 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 
 /* Payment method as a segmented control. The inputs stay checkboxes because
    every handler reads .checked; only their presentation changes. */
-.pay-options-label{ margin-top:14px; }
 .pay-options{
   display:flex;
+  flex-wrap:nowrap;      /* one line, always - a stacked list was three rows */
   gap:8px;
-  margin:4px 0 10px;
+  margin:10px 0;
 }
 .pay-option{
   flex:1 1 0;
@@ -505,12 +500,14 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   align-items:center;
   justify-content:center;
   min-height:46px;
+  min-width:0;           /* let the label ellipsis rather than force a wrap */
   margin:0;
-  padding:0 6px;
+  padding:0 4px;
   background:#fff;
   border:2px solid #ccd6e6;
   border-radius:10px;
-  font-size:0.95rem;
+  font-size:0.9rem;
+  white-space:nowrap;
   font-weight:600;
   color:#41546b;
   cursor:pointer;
