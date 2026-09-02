@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.26.4
+ * Version: 3.27.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.26.4' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.27.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5910,6 +5910,114 @@ function subsales_handle_debug_watch() {
 }
 
 /**
+ * The log list's WHERE clause, built in one place.
+ *
+ * Both the rendered page and the tail endpoint use this, so a filter can never
+ * mean one thing on screen and another in the poll that updates it.
+ *
+ * @param array $args level, category, source, date_range, search, show_debug, follow_user
+ * @return string
+ */
+function subsales_logs_where_sql( $args ) {
+    global $wpdb;
+
+    $args  = array_merge( array(
+        'level' => 'all', 'category' => 'all', 'source' => 'all',
+        'date_range' => 'today', 'search' => '', 'show_debug' => false, 'follow_user' => '',
+    ), $args );
+    $where = array( '1=1' );
+
+    if ( 'all' !== $args['level'] ) {
+        $where[] = $wpdb->prepare( 'log_level = %s', strtoupper( $args['level'] ) );
+    }
+    if ( 'all' !== $args['category'] ) {
+        $where[] = $wpdb->prepare( 'category = %s', $args['category'] );
+    }
+    if ( 'all' !== $args['source'] ) {
+        $where[] = $wpdb->prepare( 'source = %s', $args['source'] );
+    }
+
+    switch ( $args['date_range'] ) {
+        case 'hour':
+            $where[] = 'created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)';
+            break;
+        case 'today':
+            $where[] = 'DATE(created_at) = CURDATE()';
+            break;
+        case 'week':
+            $where[] = 'created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+            break;
+    }
+
+    if ( empty( $args['show_debug'] ) ) {
+        $where[] = 'is_debug = 0';
+    }
+    if ( '' !== $args['search'] ) {
+        $where[] = $wpdb->prepare( 'message LIKE %s', '%' . $wpdb->esc_like( $args['search'] ) . '%' );
+    }
+    // Watching one seller is the usual reason to be on this screen at all.
+    if ( '' !== $args['follow_user'] ) {
+        $where[] = $wpdb->prepare( 'user_name = %s', $args['follow_user'] );
+    }
+
+    return implode( ' AND ', $where );
+}
+
+/**
+ * Entries newer than the last one the page has shown.
+ *
+ * The page used to reload itself every five seconds, which threw away the
+ * reader's scroll position, closed any open context, and refetched the whole
+ * admin page to show a handful of new rows. This returns just the new ones.
+ */
+add_action( 'wp_ajax_subsales_tail_logs', 'subsales_ajax_tail_logs' );
+function subsales_ajax_tail_logs() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Insufficient permissions', 403 );
+    }
+    check_ajax_referer( 'subsales_tail_logs', 'nonce' );
+
+    global $wpdb;
+    $after_id = isset( $_POST['after_id'] ) ? intval( $_POST['after_id'] ) : 0;
+
+    $where_sql = subsales_logs_where_sql( array(
+        'level'       => isset( $_POST['level'] ) ? sanitize_text_field( wp_unslash( $_POST['level'] ) ) : 'all',
+        'category'    => isset( $_POST['category'] ) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : 'all',
+        'source'      => isset( $_POST['source'] ) ? sanitize_text_field( wp_unslash( $_POST['source'] ) ) : 'all',
+        'date_range'  => isset( $_POST['date_range'] ) ? sanitize_text_field( wp_unslash( $_POST['date_range'] ) ) : 'today',
+        'search'      => isset( $_POST['search'] ) ? sanitize_text_field( wp_unslash( $_POST['search'] ) ) : '',
+        'show_debug'  => ! empty( $_POST['show_debug'] ),
+        'follow_user' => isset( $_POST['follow_user'] ) ? sanitize_text_field( wp_unslash( $_POST['follow_user'] ) ) : '',
+    ) );
+
+    // Capped: a burst while the tab was in the background should not return the
+    // whole table, and anything past this is caught by the next poll.
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, created_at, log_level, category, source, user_name, message, context_json
+         FROM {$wpdb->prefix}ss_logs
+         WHERE {$where_sql} AND id > %d
+         ORDER BY id DESC LIMIT 200",
+        $after_id
+    ), ARRAY_A );
+
+    $out = array();
+    foreach ( array_reverse( (array) $rows ) as $row ) {
+        $out[] = array(
+            'id'      => intval( $row['id'] ),
+            'time'    => $row['created_at'],
+            'level'   => $row['log_level'],
+            'cat'     => $row['category'],
+            'source'  => $row['source'],
+            'user'    => $row['user_name'] ? $row['user_name'] : '-',
+            'message' => $row['message'],
+            'context' => $row['context_json'],
+        );
+    }
+
+    wp_send_json_success( array( 'rows' => $out ) );
+}
+
+/**
  * Tab bar shared by the Logs page and its App Sessions tab.
  *
  * @param string $active 'logs' or 'sessions'.
@@ -5966,45 +6074,17 @@ function subsales_logs_page() {
     $show_debug_default = $debug_enabled ? '1' : '0';
     $show_debug = isset( $_GET['show_debug'] ) ? ( $_GET['show_debug'] === '1' ) : ( $show_debug_default === '1' );
     
-    // Build WHERE clause
-    $where = array( '1=1' );
-    
-    if ( $level_filter !== 'all' ) {
-        $where[] = $wpdb->prepare( 'log_level = %s', strtoupper( $level_filter ) );
-    }
-    
-    if ( $category_filter !== 'all' ) {
-        $where[] = $wpdb->prepare( 'category = %s', $category_filter );
-    }
-    
-    if ( $source_filter !== 'all' ) {
-        $where[] = $wpdb->prepare( 'source = %s', $source_filter );
-    }
-    
-    // Date range filter
-    switch ( $date_filter ) {
-        case 'hour':
-            $where[] = "created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)";
-            break;
-        case 'today':
-            $where[] = "DATE(created_at) = CURDATE()";
-            break;
-        case 'week':
-            $where[] = "created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
-            break;
-    }
-    
-    // Debug filter
-    if ( ! $show_debug ) {
-        $where[] = "is_debug = 0";
-    }
-    
-    // Search filter
-    if ( ! empty( $search_query ) ) {
-        $where[] = $wpdb->prepare( 'message LIKE %s', '%' . $wpdb->esc_like( $search_query ) . '%' );
-    }
-    
-    $where_sql = implode( ' AND ', $where );
+    $follow_user = isset( $_GET['follow_user'] ) ? sanitize_text_field( $_GET['follow_user'] ) : '';
+
+    $where_sql = subsales_logs_where_sql( array(
+        'level'       => $level_filter,
+        'category'    => $category_filter,
+        'source'      => $source_filter,
+        'date_range'  => $date_filter,
+        'search'      => $search_query,
+        'show_debug'  => $show_debug,
+        'follow_user' => $follow_user,
+    ) );
     
     // Pagination
     $per_page = 500;
@@ -6030,6 +6110,11 @@ function subsales_logs_page() {
     <div class="wrap subsales-logs-page">
         <h1>System Logs</h1>
         <?php subsales_logs_nav_tabs( 'logs' ); ?>
+        <style>
+          /* New rows arrive at the top and fade their highlight, so a long watch
+             does not end up entirely yellow. */
+          #logs-table-body tr.logs-new{ background:#fff8dc !important; transition:background 1.2s ease-out; }
+        </style>
 
         <!-- Debug Diagnostics -->
         <?php if ( isset( $_GET['diagnostics'] ) && $_GET['diagnostics'] === '1' ): ?>
@@ -6181,8 +6266,25 @@ function subsales_logs_page() {
                 </div>
                 
                 <div>
+                    <?php
+                    // Watching one seller is the usual reason to be on this
+                    // screen, so make it a filter rather than something to scan
+                    // for. Names come from who has actually logged something.
+                    global $wpdb;
+                    $log_users = $wpdb->get_col( "SELECT DISTINCT user_name FROM {$wpdb->prefix}ss_logs WHERE user_name <> '' ORDER BY user_name ASC" );
+                    ?>
+                    <label for="follow-user-select"><strong>Follow seller</strong></label><br>
+                    <select id="follow-user-select" name="follow_user" style="min-width:170px">
+                        <option value="">Everyone</option>
+                        <?php foreach ( $log_users as $log_user ) : ?>
+                            <option value="<?php echo esc_attr( $log_user ); ?>" <?php selected( $follow_user, $log_user ); ?>><?php echo esc_html( $log_user ); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div>
                     <label>
-                        <input type="checkbox" name="show_debug" value="1" <?php checked( $show_debug ); ?>>
+                        <input type="checkbox" id="show-debug-toggle" name="show_debug" value="1" <?php checked( $show_debug ); ?>>
                         Include DEBUG Logs
                     </label>
                     <?php if ( $debug_enabled ): ?>
@@ -6224,15 +6326,15 @@ function subsales_logs_page() {
                         <th style="width: 60px;">Details</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="logs-table-body">
                     <?php if ( empty( $logs ) ): ?>
-                        <tr><td colspan="7" style="text-align: center; padding: 40px;">No logs found matching your filters.</td></tr>
+                        <tr class="logs-empty"><td colspan="7" style="text-align: center; padding: 40px;">No logs found matching your filters.</td></tr>
                     <?php else: ?>
                         <?php foreach ( $logs as $log ): 
                             $level_class = 'log-level-' . strtolower( $log['log_level'] );
                             $has_context = ! empty( $log['context_json'] );
                         ?>
-                            <tr class="<?php echo esc_attr( $level_class ); ?>">
+                            <tr class="<?php echo esc_attr( $level_class ); ?>" data-log-id="<?php echo intval( $log['id'] ); ?>">
                                 <td><?php echo esc_html( $log['created_at'] ); ?></td>
                                 <td><span class="log-badge log-badge-<?php echo esc_attr( strtolower( $log['log_level'] ) ); ?>"><?php echo esc_html( $log['log_level'] ); ?></span></td>
                                 <td><?php echo esc_html( $log['category'] ); ?></td>
@@ -6366,11 +6468,76 @@ function subsales_logs_page() {
         let refreshInterval = null;
         let refreshCountdown = 5;
         
+        // Newest id currently on screen; the tail asks for anything past it.
+        function newestLogId() {
+            let max = 0;
+            $('#logs-table-body tr[data-log-id]').each(function(){
+                const id = parseInt($(this).attr('data-log-id'), 10);
+                if (id > max) max = id;
+            });
+            return max;
+        }
+
+        function currentFilters() {
+            const p = new URLSearchParams(window.location.search);
+            return {
+                level:       p.get('level') || 'all',
+                category:    p.get('category') || 'all',
+                source:      p.get('source') || 'all',
+                date_range:  p.get('date_range') || 'today',
+                search:      p.get('search') || '',
+                show_debug:  $('#show-debug-toggle').length ? ($('#show-debug-toggle').is(':checked') ? 1 : 0)
+                                                            : (p.get('show_debug') === '1' ? 1 : 0),
+                follow_user: p.get('follow_user') || ''
+            };
+        }
+
+        function escapeCell(v) {
+            return $('<div>').text(v == null ? '' : String(v)).html();
+        }
+
+        // Pull only what is new and put it on top, rather than rebuilding the
+        // page - a reload every five seconds threw away the reader's scroll
+        // position and closed whatever context they had open.
+        function tailLogs() {
+            const after = newestLogId();
+            $.post(ajaxurl, $.extend({
+                action: 'subsales_tail_logs',
+                nonce: '<?php echo esc_js( wp_create_nonce( 'subsales_tail_logs' ) ); ?>',
+                after_id: after
+            }, currentFilters())).done(function(resp){
+                if (!resp || !resp.success || !resp.data || !resp.data.rows.length) return;
+                const $body = $('#logs-table-body');
+                $body.find('tr.logs-empty').remove();
+                resp.data.rows.forEach(function(r){
+                    const ctx = r.context
+                        ? '<button class="button button-small view-context-btn" data-context="' + escapeCell(r.context) + '">View</button>'
+                        : '';
+                    $('<tr class="log-level-' + escapeCell(String(r.level).toLowerCase()) + ' logs-new" data-log-id="' + r.id + '">' +
+                        '<td>' + escapeCell(r.time) + '</td>' +
+                        '<td><span class="log-badge log-badge-' + escapeCell(String(r.level).toLowerCase()) + '">' + escapeCell(r.level) + '</span></td>' +
+                        '<td>' + escapeCell(r.cat) + '</td>' +
+                        '<td>' + escapeCell(r.source) + '</td>' +
+                        '<td>' + escapeCell(r.user) + '</td>' +
+                        '<td>' + escapeCell(r.message) + '</td>' +
+                        '<td>' + ctx + '</td>' +
+                      '</tr>').prependTo($body);
+                });
+                // Fades on its own so a long watch does not end up all-yellow.
+                setTimeout(function(){ $body.find('tr.logs-new').removeClass('logs-new'); }, 2500);
+            }).fail(function(){
+                // If the poll cannot run, fall back to what the page did before
+                // rather than quietly going stale.
+                location.reload();
+            });
+        }
+
         function startAutoRefresh() {
             if (refreshInterval) return;
             refreshInterval = setInterval(function() {
                 if (refreshCountdown <= 0) {
-                    location.reload();
+                    tailLogs();
+                    refreshCountdown = 5;
                 } else {
                     refreshCountdown--;
                 }
