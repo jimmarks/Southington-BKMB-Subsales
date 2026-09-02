@@ -593,3 +593,47 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 
 /* Stops the form scrolling underneath the overlay on iOS. */
 body.sm-modal-open{ overflow:hidden; }
+
+/* ---- Address block: unit + phone stacked, locate button beside them --------
+   Unit is a few characters and a phone is ten, so a full row each was wasted
+   height. The button belongs next to the address it fills in. */
+.addr-row{
+  display:flex;
+  align-items:stretch;
+  gap:8px;
+  margin:0 0 8px;
+}
+.addr-fields{
+  flex:1 1 auto;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.addr-fields input{ margin:0; }
+.addr-locate{
+  flex:0 0 108px;
+  display:flex;
+}
+/* Spans both stacked inputs, so the tap target is large despite the narrow
+   column - it is pressed one-handed, outdoors, standing at a door. */
+#subsales-location-btn{
+  width:100%;
+  min-height:100%;
+  margin:0;
+  padding:6px 4px;
+  border:1px solid #ccd6e6;
+  border-radius:8px;
+  background:#f2f5fa;
+  color:#2d4a73;
+  font-size:0.76rem;
+  font-weight:600;
+  line-height:1.25;
+  text-align:center;
+  white-space:normal;      /* wraps to two lines in the narrow column */
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+#subsales-location-btn:active{ background:#e2e9f5; }
+#subsales-location-btn:disabled{ opacity:0.6; cursor:not-allowed; }

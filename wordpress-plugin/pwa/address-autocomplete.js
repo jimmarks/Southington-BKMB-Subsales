@@ -1000,21 +1000,15 @@
     btn.id = 'subsales-location-btn';
     btn.type = 'button';
     btn.innerHTML = '📍 Use my location';
-    btn.style.display = 'block';
-    btn.style.margin = '0 auto';
-    btn.style.padding = '10px 16px';
-    btn.style.borderRadius = '8px';
-    btn.style.fontSize = '15px';
-    btn.style.border = '1px solid rgba(0,0,0,0.2)';
-    btn.style.background = '#fff';
-    btn.style.cursor = 'pointer';
+    // Styling lives in styles.css now. Inline styles here beat any rule the
+    // stylesheet sets, which stopped the button fitting its slot in the form.
     btn.setAttribute('aria-label','Use GPS to fill address');
     
     // Check GPS permission status and update button accordingly
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'geolocation' }).then((result) => {
         if (result.state === 'denied') {
-          btn.innerHTML = '🚫 Location access not allowed';
+          btn.innerHTML = '🚫 Location off';
           btn.style.background = '#f8d7da';
           btn.style.color = '#721c24';
           btn.style.cursor = 'not-allowed';
@@ -1023,7 +1017,7 @@
         // Listen for permission changes
         result.addEventListener('change', () => {
           if (result.state === 'denied') {
-            btn.innerHTML = '🚫 Location access not allowed';
+            btn.innerHTML = '🚫 Location off';
             btn.style.background = '#f8d7da';
             btn.style.color = '#721c24';
             btn.style.cursor = 'not-allowed';
@@ -1095,7 +1089,7 @@
         let errorMsg = 'Could not get your location.';
         if (error.code === 1) { // PERMISSION_DENIED
           errorMsg = 'Location access denied. Please enable location in your browser settings.';
-          btn.innerHTML = '🚫 Location access not allowed';
+          btn.innerHTML = '🚫 Location off';
           btn.style.background = '#f8d7da';
           btn.style.color = '#721c24';
           btn.style.cursor = 'not-allowed';
@@ -1116,7 +1110,11 @@
     });
     
     // Insert button BEFORE the input field to avoid click-through issues
-    inputEl.parentNode && inputEl.parentNode.insertBefore(btn, inputEl);
+    // The form gives it a home beside the unit/phone column; falling back to
+    // sitting above the address field keeps this working if that slot is gone.
+    var slot = document.getElementById('locationBtnSlot');
+    if (slot) { slot.appendChild(btn); }
+    else { inputEl.parentNode && inputEl.parentNode.insertBefore(btn, inputEl); }
   }
 
   // Show a reload/prefetch button to populate local ZIP datasets when no local data is present

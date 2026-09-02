@@ -1659,8 +1659,33 @@
 
   if (payCheck) payCheck.addEventListener('change', ()=>{ if (payCheck.checked) { checkNumberRow && checkNumberRow.classList.remove('hidden'); if (payCash) payCash.checked=false; if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } else { checkNumberRow && checkNumberRow.classList.add('hidden'); } });
   if (payCash) payCash.addEventListener('change', ()=>{ if (payCash.checked) { if (payCheck) { payCheck.checked=false; checkNumberRow && checkNumberRow.classList.add('hidden'); } if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } });
+  // Who the order is for, before asking a customer to scan anything. Starting
+  // the digital flow first meant the seller got as far as holding out a QR code
+  // before the form told them the address was missing, and backing out of that
+  // is a worse moment than being stopped up front.
+  function buyerDetailsMissing(){
+    const donationOnly = !!(qs('#donationOnly') && qs('#donationOnly').checked);
+    if (donationOnly) return null;   // nobody to deliver to; no details needed
+    const customer = (qs('#customerName') && qs('#customerName').value || '').trim();
+    const address  = (qs('#address') && qs('#address').value || '').trim();
+    if (!customer && !address) return 'Enter the customer name and address before taking a digital payment.';
+    if (!customer) return 'Enter the customer name before taking a digital payment.';
+    if (!address)  return 'Enter the address before taking a digital payment.';
+    return null;
+  }
+
   if (payDigital) payDigital.addEventListener('change', ()=>{
     if (payDigital.checked) {
+      const missing = buyerDetailsMissing();
+      if (missing) {
+        payDigital.checked = false;
+        try{ if (window.smPaintPayOptions) window.smPaintPayOptions(); }catch(e){}
+        alert(missing);
+        const focusOn = (qs('#customerName') && !qs('#customerName').value.trim())
+          ? qs('#customerName') : qs('#address');
+        try{ focusOn && focusOn.focus(); }catch(e){}
+        return;
+      }
       if (payCheck) payCheck.checked = false;
       if (payCash) payCash.checked = false;
       checkNumberRow && checkNumberRow.classList.add('hidden');

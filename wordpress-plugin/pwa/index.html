@@ -121,15 +121,22 @@
       <section id="appSection" class="hidden sm-auth-hidden" style="display:none">
         <div class="row">
           <div class="col-2">
-            <h2>Create Order</h2>
             <label class="donation-checkbox-label">
               <input type="checkbox" id="donationOnly" />
               <span>Anonymous Donation (no customer details needed)</span>
             </label>
             <input id="customerName" placeholder="Customer name" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" class="sm-auth-hidden" />
             <input id="address" placeholder="Address" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
-            <input id="unitFloorApt" placeholder="Unit / Floor / Apt (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
-            <input id="cellNumber" type="tel" inputmode="numeric" placeholder="Phone Number (for delivery)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" required />
+            <!-- Unit is a few characters and a phone is ten, so neither needs a
+                 full row. Stacking them frees the space beside for the location
+                 button, which belongs next to the address it fills in. -->
+            <div class="addr-row">
+              <div class="addr-fields">
+                <input id="unitFloorApt" placeholder="Unit / Floor / Apt (optional)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" />
+                <input id="cellNumber" type="tel" inputmode="numeric" placeholder="Phone Number (for delivery)" autocomplete="new-password" autocorrect="off" autocapitalize="off" spellcheck="false" required />
+              </div>
+              <div id="locationBtnSlot" class="addr-locate"></div>
+            </div>
             <!-- Opting in has to be a separate, optional act: consent to be
                  texted cannot be a condition of buying (TCPA 64.1200(a)(2)).
                  The number itself is still required - it is how the delivery
