@@ -17,6 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 class Subsales_Database {
+
+    /** Per-session / per-user debug logging watch list. */
+    const DEBUG_WATCH_OPTION = 'subsales_debug_watch';
     
     /**
      * Initialize database hooks
@@ -1737,6 +1740,99 @@ class Subsales_Database {
     }
     
     /**
+     * Who is currently being watched, pruned of anything that has expired.
+     *
+     * Debug logging used to be one global switch: turn it on to look at one
+     * child and every seller on every device starts shipping UI events. This
+     * narrows it to a named session or a named person for a set time.
+     *
+     * @return array{sessions:array,users:array}
+     */
+    public static function get_debug_watch() {
+        $watch = get_option( self::DEBUG_WATCH_OPTION, array() );
+        if ( ! is_array( $watch ) ) {
+            $watch = array();
+        }
+        $watch = array_merge( array( 'sessions' => array(), 'users' => array() ), $watch );
+
+        $now     = time();
+        $changed = false;
+        foreach ( array( 'sessions', 'users' ) as $bucket ) {
+            foreach ( (array) $watch[ $bucket ] as $key => $entry ) {
+                $until = isset( $entry['until'] ) ? intval( $entry['until'] ) : 0;
+                if ( $until > 0 && $until < $now ) {
+                    unset( $watch[ $bucket ][ $key ] );
+                    $changed = true;
+                }
+            }
+        }
+        if ( $changed ) {
+            update_option( self::DEBUG_WATCH_OPTION, $watch, false );
+        }
+        return $watch;
+    }
+
+    /**
+     * Start watching a session, or a person for a period.
+     *
+     * @param string $type    'session' or 'user'
+     * @param string $id      Session id, or member id.
+     * @param int    $until   Unix time to stop, or 0 to run until stopped.
+     * @param string $label   Who it is, for the admin list.
+     */
+    public static function start_debug_watch( $type, $id, $until = 0, $label = '' ) {
+        $watch  = self::get_debug_watch();
+        $bucket = ( 'user' === $type ) ? 'users' : 'sessions';
+        $user   = wp_get_current_user();
+
+        $watch[ $bucket ][ (string) $id ] = array(
+            'until' => intval( $until ),
+            'by'    => $user && $user->display_name ? $user->display_name : 'admin',
+            'at'    => time(),
+            'label' => $label,
+        );
+        update_option( self::DEBUG_WATCH_OPTION, $watch, false );
+
+        self::log( 'INFO', 'pwa', 'Debug logging turned on', array(
+            'type'  => $bucket,
+            'id'    => $id,
+            'label' => $label,
+            'until' => $until ? gmdate( 'c', $until ) : 'until stopped',
+        ), 'admin' );
+    }
+
+    /** Stop watching a session or a person. */
+    public static function stop_debug_watch( $type, $id ) {
+        $watch  = self::get_debug_watch();
+        $bucket = ( 'user' === $type ) ? 'users' : 'sessions';
+        if ( isset( $watch[ $bucket ][ (string) $id ] ) ) {
+            unset( $watch[ $bucket ][ (string) $id ] );
+            update_option( self::DEBUG_WATCH_OPTION, $watch, false );
+            self::log( 'INFO', 'pwa', 'Debug logging turned off', array( 'type' => $bucket, 'id' => $id ), 'admin' );
+        }
+    }
+
+    /**
+     * Should this heartbeat be told to log?
+     *
+     * The global switch still wins if it is on, so nothing about the existing
+     * behaviour changes; this only adds a way to say "just this one".
+     */
+    public static function is_debug_watched( $session_id, $user_id = 0 ) {
+        if ( get_option( 'subsales_debug_logging_enabled', false ) ) {
+            return true;
+        }
+        $watch = self::get_debug_watch();
+        if ( $session_id && isset( $watch['sessions'][ (string) $session_id ] ) ) {
+            return true;
+        }
+        if ( $user_id && isset( $watch['users'][ (string) $user_id ] ) ) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Log order changes to edit history table with field-by-field comparison
      * 
      * @param int $order_db_id Database ID of the order
@@ -2192,6 +2288,22 @@ class Subsales_Database {
      * @param string $session_id Session identifier
      * @return bool Success
      */
+    /**
+     * One session row by its id. Used by the heartbeat to find out whose
+     * session it is, so a per-person watch can be applied to it.
+     */
+    public static function get_pwa_session( $session_id ) {
+        global $wpdb;
+        if ( empty( $session_id ) ) {
+            return null;
+        }
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}ss_pwa_sessions WHERE session_id = %s LIMIT 1",
+            $session_id
+        ), ARRAY_A );
+        return $row ? $row : null;
+    }
+
     public static function end_pwa_session( $session_id ) {
         global $wpdb;
         $table_name = $wpdb->prefix . 'ss_pwa_sessions';

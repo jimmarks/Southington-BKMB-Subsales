@@ -449,10 +449,20 @@ class Subsales_REST_API {
             return new WP_Error( 'heartbeat_error', 'Heartbeat error: ' . $e->getMessage(), array( 'status' => 500 ) );
         }
         
+        // The heartbeat is the control channel: the client already applies
+        // whatever comes back here, so turning logging on for one seller from
+        // the App Sessions screen reaches their device on their next ping,
+        // without them doing anything or knowing about it.
+        $watched_user = 0;
+        $session_row  = Subsales_Database::get_pwa_session( $session_id );
+        if ( $session_row && ! empty( $session_row['user_id'] ) ) {
+            $watched_user = intval( $session_row['user_id'] );
+        }
+
         return rest_ensure_response( array(
-            'success' => true,
-            'message' => 'Heartbeat updated',
-            'debugEnabled' => (bool) get_option( 'subsales_debug_logging_enabled', false )
+            'success'      => true,
+            'message'      => 'Heartbeat updated',
+            'debugEnabled' => Subsales_Database::is_debug_watched( $session_id, $watched_user ),
         ) );
     }
     

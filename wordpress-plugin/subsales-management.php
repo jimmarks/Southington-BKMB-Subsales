@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.25.0
+ * Version: 3.26.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.25.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.26.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5866,6 +5866,50 @@ function subsales_order_entry_distance_page() {
 }
 
 /**
+ * Turn debug logging on or off for one session or one seller.
+ *
+ * The heartbeat already carries the answer back to the device, so this takes
+ * effect on that seller's next ping - within thirty seconds - without them
+ * doing anything or being told.
+ */
+add_action( 'admin_post_subsales_debug_watch', 'subsales_handle_debug_watch' );
+function subsales_handle_debug_watch() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( 'Insufficient permissions' );
+    }
+    check_admin_referer( 'subsales_debug_watch' );
+
+    $op    = isset( $_POST['op'] ) ? sanitize_text_field( wp_unslash( $_POST['op'] ) ) : '';
+    $type  = isset( $_POST['type'] ) && 'user' === $_POST['type'] ? 'user' : 'session';
+    $id    = isset( $_POST['id'] ) ? sanitize_text_field( wp_unslash( $_POST['id'] ) ) : '';
+    $label = isset( $_POST['label'] ) ? sanitize_text_field( wp_unslash( $_POST['label'] ) ) : '';
+
+    if ( '' !== $id ) {
+        if ( 'stop' === $op ) {
+            Subsales_Database::stop_debug_watch( $type, $id );
+            $notice = 'stopped';
+        } else {
+            // "All day" means the rest of today in the site's own timezone, not
+            // a rolling 24 hours - an admin watching a sale day expects it to
+            // stop when the day does.
+            $until = ( 'user' === $type )
+                ? strtotime( 'tomorrow midnight', current_time( 'timestamp' ) ) - current_time( 'timestamp' ) + time()
+                : 0;
+            Subsales_Database::start_debug_watch( $type, $id, $until, $label );
+            $notice = ( 'user' === $type ) ? 'started_day' : 'started_session';
+        }
+    } else {
+        $notice = 'error';
+    }
+
+    wp_safe_redirect( add_query_arg(
+        array( 'page' => 'subsales-logs', 'watch' => $notice ),
+        admin_url( 'admin.php' )
+    ) );
+    exit;
+}
+
+/**
  * Tab bar shared by the Logs page and its App Sessions tab.
  *
  * @param string $active 'logs' or 'sessions'.
@@ -5873,8 +5917,8 @@ function subsales_order_entry_distance_page() {
 function subsales_logs_nav_tabs( $active ) {
     ?>
     <h2 class="nav-tab-wrapper">
-        <a href="?page=subsales-logs" class="nav-tab <?php echo $active === 'logs' ? 'nav-tab-active' : ''; ?>">System Logs</a>
-        <a href="?page=subsales-logs&amp;tab=sessions" class="nav-tab <?php echo $active === 'sessions' ? 'nav-tab-active' : ''; ?>">App Sessions</a>
+        <a href="?page=subsales-logs" class="nav-tab <?php echo $active === 'sessions' ? 'nav-tab-active' : ''; ?>">App Sessions</a>
+        <a href="?page=subsales-logs&amp;tab=logs" class="nav-tab <?php echo $active === 'logs' ? 'nav-tab-active' : ''; ?>">System Logs</a>
     </h2>
     <?php
 }
@@ -5891,7 +5935,9 @@ function subsales_logs_page() {
         wp_die( __( 'You do not have sufficient permissions to access this page.' ) );
     }
 
-    if ( isset( $_GET['tab'] ) && $_GET['tab'] === 'sessions' ) {
+    // App Sessions is where an admin starts: who is on the app right now, and
+    // the controls for watching one of them. System Logs is where you go after.
+    if ( ! isset( $_GET['tab'] ) || 'logs' !== $_GET['tab'] ) {
         subsales_pwa_sessions_page();
         return;
     }
@@ -6449,6 +6495,20 @@ function subsales_pwa_sessions_page() {
             App Client Sessions
         </h1>
         <?php subsales_logs_nav_tabs( 'sessions' ); ?>
+        <?php if ( isset( $_GET['watch'] ) ) :
+            $watch_notices = array(
+                'started_session' => array( 'success', 'Logging this session. It starts on their next heartbeat, within about 30 seconds.' ),
+                'started_day'     => array( 'success', 'Logging this seller for the rest of today, on whatever device they use.' ),
+                'stopped'         => array( 'success', 'Stopped logging. Their next heartbeat turns it off on the device.' ),
+                'error'           => array( 'error',   'Nothing was changed - no session or seller was identified.' ),
+            );
+            $wn = isset( $watch_notices[ $_GET['watch'] ] ) ? $watch_notices[ $_GET['watch'] ] : null;
+            if ( $wn ) : ?>
+            <div class="notice notice-<?php echo esc_attr( $wn[0] ); ?> is-dismissible"><p><?php echo esc_html( $wn[1] ); ?></p></div>
+        <?php endif; endif; ?>
+        <style>
+          .subsales-watch-on{ display:inline-block; margin-right:8px; color:#b26a00; font-weight:600; font-size:12px; }
+        </style>
 
         <?php if ( isset( $_GET['debug'] ) && $_GET['debug'] === '1' ): ?>
         <div class="notice notice-info" style="padding: 15px; margin: 20px 0;">
@@ -6544,20 +6604,18 @@ function subsales_pwa_sessions_page() {
         <table class="wp-list-table widefat fixed striped">
             <thead>
                 <tr>
-                    <th style="width: 120px;">Session ID</th>
-                    <th style="width: 150px;">User/Team</th>
-                    <th style="width: 120px;">Login</th>
-                    <th style="width: 120px;">Last Heartbeat</th>
-                    <th style="width: 120px;">Logout</th>
-                    <th style="width: 80px;">Duration</th>
-                    <th style="width: 80px;">Status</th>
-                    <th>User Agent</th>
-                    <th style="width: 100px;">IP</th>
+                    <th>User / Team</th>
+                    <th style="width: 130px;">Login</th>
+                    <th style="width: 130px;">Last heartbeat</th>
+                    <th style="width: 90px;">Duration</th>
+                    <th style="width: 90px;">Status</th>
+                    <th style="width: 110px;">IP</th>
+                    <th style="width: 230px;">Debug logging</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ( empty( $sessions ) ): ?>
-                    <tr><td colspan="9" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
+                    <tr><td colspan="7" style="text-align: center; padding: 40px;">No sessions found.</td></tr>
                 <?php else: ?>
                     <?php foreach ( $sessions as $session ): 
                         $login_time = strtotime( $session['login_at'] );
@@ -6575,33 +6633,61 @@ function subsales_pwa_sessions_page() {
                         );
                         $status_color = isset( $status_colors[ $display_status ] ) ? $status_colors[ $display_status ] : '#ccc';
                     ?>
+                    <?php
+                        $sid          = $session['session_id'];
+                        $member_id    = intval( $session['user_id'] );
+                        $watch_now    = Subsales_Database::get_debug_watch();
+                        $on_session   = isset( $watch_now['sessions'][ $sid ] );
+                        $on_user      = $member_id && isset( $watch_now['users'][ (string) $member_id ] );
+                        $watch_action = admin_url( 'admin-post.php' );
+                    ?>
                     <tr>
-                        <td><small style="font-family: monospace;"><?php echo esc_html( substr( $session['session_id'], 0, 16 ) . '...' ); ?></small></td>
                         <td>
                             <strong><?php echo esc_html( $session['user_name'] ?: '(Unknown)' ); ?></strong><br>
                             <small style="color: #666;"><?php echo esc_html( $session['team_name'] ?: 'No Team' ); ?></small>
                         </td>
                         <td><?php echo date( 'M j, g:i a', $login_time ); ?></td>
                         <td><?php echo date( 'M j, g:i a', strtotime( $session['last_heartbeat'] ) ); ?></td>
-                        <td><?php echo $logout_time ? date( 'M j, g:i a', $logout_time ) : '—'; ?></td>
                         <td><?php echo gmdate( 'H:i:s', $duration ); ?></td>
                         <td>
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?php echo $status_color; ?>; margin-right: 5px;"></span>
                             <?php echo esc_html( ucfirst( $display_status ) ); ?>
                         </td>
-                        <td>
-                            <small style="font-family: monospace; font-size: 11px;">
-                                <?php 
-                                $ua = $session['user_agent'];
-                                if ( preg_match( '/(iPhone|iPad|Android|Windows|Mac|Linux)/i', $ua, $matches ) ) {
-                                    echo esc_html( $matches[1] );
-                                } else {
-                                    echo esc_html( substr( $ua, 0, 30 ) . '...' );
-                                }
-                                ?>
-                            </small>
-                        </td>
                         <td><small><?php echo esc_html( $session['ip_address'] ); ?></small></td>
+                        <td>
+                            <?php if ( $on_session || $on_user ) : ?>
+                                <span class="subsales-watch-on">&#9679; logging<?php echo $on_user ? ' (all day)' : ' (this session)'; ?></span>
+                                <form method="post" action="<?php echo esc_url( $watch_action ); ?>" style="display:inline">
+                                    <?php wp_nonce_field( 'subsales_debug_watch' ); ?>
+                                    <input type="hidden" name="action" value="subsales_debug_watch" />
+                                    <input type="hidden" name="op" value="stop" />
+                                    <input type="hidden" name="type" value="<?php echo $on_user ? 'user' : 'session'; ?>" />
+                                    <input type="hidden" name="id" value="<?php echo esc_attr( $on_user ? $member_id : $sid ); ?>" />
+                                    <button type="submit" class="button button-small">Stop</button>
+                                </form>
+                            <?php else : ?>
+                                <form method="post" action="<?php echo esc_url( $watch_action ); ?>" style="display:inline">
+                                    <?php wp_nonce_field( 'subsales_debug_watch' ); ?>
+                                    <input type="hidden" name="action" value="subsales_debug_watch" />
+                                    <input type="hidden" name="op" value="start" />
+                                    <input type="hidden" name="type" value="session" />
+                                    <input type="hidden" name="id" value="<?php echo esc_attr( $sid ); ?>" />
+                                    <input type="hidden" name="label" value="<?php echo esc_attr( $session['user_name'] ); ?>" />
+                                    <button type="submit" class="button button-small">This session</button>
+                                </form>
+                                <?php if ( $member_id ) : ?>
+                                <form method="post" action="<?php echo esc_url( $watch_action ); ?>" style="display:inline">
+                                    <?php wp_nonce_field( 'subsales_debug_watch' ); ?>
+                                    <input type="hidden" name="action" value="subsales_debug_watch" />
+                                    <input type="hidden" name="op" value="start" />
+                                    <input type="hidden" name="type" value="user" />
+                                    <input type="hidden" name="id" value="<?php echo esc_attr( $member_id ); ?>" />
+                                    <input type="hidden" name="label" value="<?php echo esc_attr( $session['user_name'] ); ?>" />
+                                    <button type="submit" class="button button-small">All day</button>
+                                </form>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>
