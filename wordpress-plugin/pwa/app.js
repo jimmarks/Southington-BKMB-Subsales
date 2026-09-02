@@ -1685,11 +1685,19 @@
     return headers;
   }
 
+  // The panel sits over the page rather than in the form. A customer is being
+  // asked to scan it from a phone held up to them, so it should not be a strip
+  // the seller has to keep scrolled into view mid-transaction.
+  function lockPageScroll(on){
+    try{ document.body.classList.toggle('sm-modal-open', !!on); }catch(e){}
+  }
+
   function showDigitalConfirmPanel(){
     if (!digitalPaymentPanel) return;
     digitalPaymentPanel.classList.remove('hidden');
     if (digitalConfirmPanel) digitalConfirmPanel.classList.remove('hidden');
     if (digitalQrPanel) digitalQrPanel.classList.add('hidden');
+    lockPageScroll(true);
   }
 
   function stopDigitalPolling(){
@@ -1702,6 +1710,7 @@
   // clearOrderForm() themselves (which itself calls this function).
   function hideDigitalPanel(){
     stopDigitalPolling();
+    lockPageScroll(false);
     if (digitalPaymentPanel) digitalPaymentPanel.classList.add('hidden');
     if (digitalConfirmPanel) digitalConfirmPanel.classList.remove('hidden');
     if (digitalQrPanel) digitalQrPanel.classList.add('hidden');

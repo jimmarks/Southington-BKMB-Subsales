@@ -534,3 +534,62 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   color:#fff;
 }
 .pay-option.hidden{ display:none; }
+
+/* ---- Digital payment: an overlay, not a strip in the form ----------------
+   The seller holds the phone out for the customer to scan, so the QR has to be
+   the whole screen rather than something kept scrolled into view. .hidden still
+   closes it, so every existing show/hide path works unchanged. */
+.digital-payment-panel{
+  position:fixed;
+  inset:0;
+  z-index:1000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:16px;
+  background:rgba(16,24,40,0.72);
+  -webkit-backdrop-filter:blur(2px);
+  backdrop-filter:blur(2px);
+  overflow-y:auto;
+}
+.digital-payment-panel.hidden{ display:none; }
+
+/* Both steps share the card treatment; only one is ever visible. */
+#digitalConfirmPanel,
+#digitalQrPanel{
+  width:100%;
+  max-width:380px;
+  background:#fff;
+  border-radius:14px;
+  padding:20px 18px;
+  box-shadow:0 18px 50px rgba(0,0,0,0.3);
+  text-align:center;
+}
+#digitalConfirmPanel.hidden,
+#digitalQrPanel.hidden{ display:none; }
+
+#digitalConfirmPanel p{ font-size:1.05rem; font-weight:600; margin:4px 0 16px; }
+#digitalStatusText{ font-size:1rem; font-weight:600; margin:0 0 12px; }
+#digitalExpiryText{ font-size:0.8rem; color:#667085; margin:12px 0 0; }
+
+/* Bigger than the old 250px cap: this is being scanned off someone else's
+   phone, at arm's length, outdoors. */
+#digitalQrImg{
+  display:block;
+  margin:0 auto;
+  width:min(68vw, 300px);
+  height:auto;
+  image-rendering:pixelated;   /* keep the modules crisp when scaled up */
+  background:#fff;
+  border-radius:8px;
+}
+
+.digital-payment-panel .btn-row{
+  display:flex;
+  gap:10px;
+  margin-top:16px;
+}
+.digital-payment-panel .btn-row .sm-btn{ flex:1 1 0; min-height:46px; }
+
+/* Stops the form scrolling underneath the overlay on iOS. */
+body.sm-modal-open{ overflow:hidden; }
