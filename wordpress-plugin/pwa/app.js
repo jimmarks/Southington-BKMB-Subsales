@@ -1110,14 +1110,55 @@
         try{
           if (p.visible === 0 || p.visible === '0' || p.visible === false) return; // skip hidden
           const pid = String(p.id || p.name).replace(/[^a-z0-9-_]/ig,'_');
-          const label = document.createElement('label'); label.textContent = p.name;
-          const wrapper = document.createElement('div'); wrapper.className = 'col-2';
-          const input = document.createElement('input'); input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1'; input.placeholder = '0'; input.setAttribute('data-product-id', p.id); input.setAttribute('data-product-price', String(p.price||'0')); input.id = 'product_' + pid + '_qty';
+
+          // One row per product: name on the left, stepper on the right. This
+          // used to be a label stacked over a full-width box, about 95px each -
+          // fine for three products, but a season can carry ten, and ten came
+          // to roughly 950px. That is one and a half screens on the 360x640
+          // viewport the measured sessions bottom out at, before the donation
+          // field is even reached. A row is ~44px, so ten now cost ~440px.
+          const row = document.createElement('div'); row.className = 'product-row';
+
+          const name = document.createElement('span'); name.className = 'product-name';
+          name.textContent = p.name;
+
+          const stepper = document.createElement('div'); stepper.className = 'product-stepper';
+
+          const input = document.createElement('input');
+          input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1';
+          input.placeholder = '0';
+          input.setAttribute('data-product-id', p.id);
+          input.setAttribute('data-product-price', String(p.price||'0'));
+          input.id = 'product_' + pid + '_qty';
           input.className = 'product-qty-input';
+          input.setAttribute('aria-label', p.name + ' quantity');
           input.addEventListener('input', computeTotal);
-          wrapper.appendChild(label);
-          wrapper.appendChild(input);
-          container.appendChild(wrapper);
+
+          // Tapping beats typing here: the number pad shoves the layout around,
+          // and a slipped keystroke is how an order ends up with ten of one sub.
+          const step = (delta) => {
+            const current = parseInt(input.value, 10);
+            const next = Math.max(0, (isNaN(current) ? 0 : current) + delta);
+            input.value = next ? String(next) : '';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+
+          const minus = document.createElement('button');
+          minus.type = 'button'; minus.className = 'qty-btn qty-minus'; minus.textContent = '\u2212';
+          minus.setAttribute('aria-label', 'One less ' + p.name);
+          minus.addEventListener('click', () => step(-1));
+
+          const plus = document.createElement('button');
+          plus.type = 'button'; plus.className = 'qty-btn qty-plus'; plus.textContent = '+';
+          plus.setAttribute('aria-label', 'One more ' + p.name);
+          plus.addEventListener('click', () => step(1));
+
+          stepper.appendChild(minus);
+          stepper.appendChild(input);
+          stepper.appendChild(plus);
+          row.appendChild(name);
+          row.appendChild(stepper);
+          container.appendChild(row);
         }catch(e){}
       });
     }catch(e){ console.warn('renderProducts failed', e); }
@@ -2948,7 +2989,6 @@
   const checkNumberInput = qs('#checkNumber');
   const donationOnlyCheckbox = qs('#donationOnly');
   const smsConsentRow = qs('#smsConsentRow');
-  const smsConsentSkip = qs('#smsConsentSkip');
 
   // Donation-only mode toggle handler
   donationOnlyCheckbox && donationOnlyCheckbox.addEventListener('change', function() {
@@ -2974,7 +3014,6 @@
       // No receipt is sent for donation-only orders (the queue skips them), so
       // don't leave a promise of one on screen.
       if (smsConsentRow) smsConsentRow.style.display = 'none';
-      if (smsConsentSkip) smsConsentSkip.style.display = 'none';
       if (qs('#smsConsent')) qs('#smsConsent').checked = false;
 
       // Disable and clear all product inputs
@@ -3011,7 +3050,6 @@
         cellInput.style.backgroundColor = '';
       }
       if (smsConsentRow) smsConsentRow.style.display = '';
-      if (smsConsentSkip) smsConsentSkip.style.display = '';
 
       // Re-enable product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {

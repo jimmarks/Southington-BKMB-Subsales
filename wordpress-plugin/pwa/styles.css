@@ -427,3 +427,66 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 }
 .sm-policy-links a{ color:#5a6b7d; text-decoration:underline; }
 .sm-policy-links span{ margin:0 5px; }
+
+/* One product per row: name left, stepper right. Sized against the measured
+   session data - 547 phone sessions, 10th percentile 360x640 - so ten products
+   fit without the list becoming the whole screen. */
+.product-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-height:44px;
+  padding:2px 0;
+  border-bottom:1px solid #eef0f2;
+}
+.product-row:last-child{ border-bottom:0; }
+.product-name{
+  flex:1 1 auto;
+  min-width:0;
+  font-size:0.95rem;
+  font-weight:600;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.product-stepper{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:0;
+}
+/* 44px is the smallest comfortable touch target; the row is built around it. */
+.qty-btn{
+  width:44px;
+  height:40px;
+  font-size:1.25rem;
+  line-height:1;
+  font-weight:700;
+  color:#2d6cdf;
+  background:#f2f5fa;
+  border:1px solid #ccd6e6;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;
+}
+.qty-minus{ border-radius:8px 0 0 8px; }
+.qty-plus{ border-radius:0 8px 8px 0; }
+.qty-btn:active{ background:#e2e9f5; }
+.product-stepper .product-qty-input{
+  width:52px;
+  height:40px;
+  margin:0;
+  border-radius:0;
+  border-left:0;
+  border-right:0;
+  text-align:center;
+  font-size:1rem;
+  font-weight:600;
+  -moz-appearance:textfield;
+}
+/* The native spinners duplicate the buttons and shrink the tap area. */
+.product-stepper .product-qty-input::-webkit-outer-spin-button,
+.product-stepper .product-qty-input::-webkit-inner-spin-button{
+  -webkit-appearance:none;
+  margin:0;
+}
