@@ -149,10 +149,14 @@
             <label>Donation amount (USD)</label>
             <input id="donationAmount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0.00" />
             <div class="order-total"><strong>Order total: <span id="orderTotal">$0.00</span></strong></div>
-            <div class="pay-options">
-              <label><input type="checkbox" id="payCheck" /> <span>Pay by check</span></label>
-              <label><input type="checkbox" id="payCash" /> <span>Pay by cash</span></label>
-              <label id="payDigitalOption" class="hidden"><input type="checkbox" id="payDigital" /> <span>Pay by Digital (QR Code)</span></label>
+            <label class="pay-options-label">Payment</label>
+            <!-- Still checkboxes underneath: every handler reads .checked, and
+                 the selected state is painted from those. Swapping them for
+                 buttons would have meant rewiring the digital flow too. -->
+            <div class="pay-options" role="group" aria-label="Payment method">
+              <label class="pay-option"><input type="checkbox" id="payCheck" /> <span>Check</span></label>
+              <label class="pay-option"><input type="checkbox" id="payCash" /> <span>Cash</span></label>
+              <label class="pay-option hidden" id="payDigitalOption"><input type="checkbox" id="payDigital" /> <span>Digital</span></label>
             </div>
             <div id="checkNumberRow" class="check-number-row hidden"><label>Check number</label><input id="checkNumber" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Check number" /></div>
             <div id="digitalPaymentPanel" class="digital-payment-panel hidden">
@@ -279,33 +283,28 @@
     </script>
     <script src="app.js"></script>
     <script>
-      // Dynamically load session-tracking.js relative to app.js location
-      // NOTE: address-autocomplete.js is now loaded ONLY after login (in app.js) to speed up initial load
+      // session-tracking.js and pwa-logger.js load from pluginBase, which PHP
+      // injects just above as the pwa directory.
+      //
+      // This used to find its base by matching the app.js tag with
+      // [src$="app.js"] - "ends with". Assets carry a ?v= cache-buster, so the
+      // src ends with the version and that stopped matching, dropping into a
+      // fallback that used bare relative paths. Those resolved to the site root
+      // and 404'd, which is why session tracking and logging silently stopped.
       (function(){
         try{
-          var appScript = document.querySelector('script[src$="app.js"]');
-          if(appScript){
-            var base = appScript.src.replace(/app\.js(\?.*)?$/,'');
-            
-            // Version-stamped so a released change is fetched rather than
-            // served from the previous release's service-worker cache.
-            var _v = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.assetVersion)
-              ? ('?v=' + encodeURIComponent(window.SUBSALES_PWA_CONFIG.assetVersion)) : '';
+          var cfg = window.SUBSALES_PWA_CONFIG || {};
+          var fallback = document.querySelector('script[src*="app.js"]');
+          var base = cfg.pluginBase
+            || (fallback && fallback.src ? fallback.src.replace(/app\.js(\?.*)?$/, '') : './');
+          var _v = cfg.assetVersion ? ('?v=' + encodeURIComponent(cfg.assetVersion)) : '';
 
-            // Load session-tracking.js
-            var sessionScript = document.createElement('script');
-            sessionScript.src = base + 'session-tracking.js' + _v;
-            document.head.appendChild(sessionScript);
-            
-            // Load pwa-logger.js
-            var loggerScript = document.createElement('script');
-            loggerScript.src = base + 'pwa-logger.js' + _v;
-            document.head.appendChild(loggerScript);
-          } else {
-            // fallback to relative paths
-            var st = document.createElement('script'); st.src = 'session-tracking.js'; document.head.appendChild(st);
-            var logger = document.createElement('script'); logger.src = 'pwa-logger.js'; document.head.appendChild(logger);
-          }
+          ['session-tracking.js', 'pwa-logger.js'].forEach(function(file){
+            var el = document.createElement('script');
+            el.src = base + file + _v;
+            el.onerror = function(){ console.error('[PWA] failed to load ' + file + ' from ' + el.src); };
+            document.head.appendChild(el);
+          });
         }catch(e){ console.warn('failed to load scripts dynamically', e); }
       })();
     </script>

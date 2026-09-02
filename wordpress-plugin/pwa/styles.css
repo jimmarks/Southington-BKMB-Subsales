@@ -490,3 +490,50 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   -webkit-appearance:none;
   margin:0;
 }
+
+/* Payment method as a segmented control. The inputs stay checkboxes because
+   every handler reads .checked; only their presentation changes. */
+.pay-options-label{ margin-top:14px; }
+.pay-options{
+  display:flex;
+  gap:8px;
+  margin:4px 0 10px;
+}
+.pay-option{
+  flex:1 1 0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:46px;
+  margin:0;
+  padding:0 6px;
+  background:#fff;
+  border:2px solid #ccd6e6;
+  border-radius:10px;
+  font-size:0.95rem;
+  font-weight:600;
+  color:#41546b;
+  cursor:pointer;
+  user-select:none;
+  -webkit-tap-highlight-color:transparent;
+  text-align:center;
+}
+.pay-option input[type="checkbox"]{
+  position:absolute;
+  opacity:0;
+  width:0;
+  height:0;
+  margin:0;
+}
+.pay-option.is-selected{
+  background:#2d6cdf;
+  border-color:#2d6cdf;
+  color:#fff;
+}
+/* Progressive: browsers with :has() style correctly even before the class lands. */
+.pay-option:has(input:checked){
+  background:#2d6cdf;
+  border-color:#2d6cdf;
+  color:#fff;
+}
+.pay-option.hidden{ display:none; }

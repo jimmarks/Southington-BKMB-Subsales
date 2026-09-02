@@ -1082,6 +1082,23 @@
   const digitalPaymentsEnabled = !!(cfg.digitalPaymentsEnabled || (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.digitalPaymentsEnabled));
   if (payDigitalOption) { if (digitalPaymentsEnabled) payDigitalOption.classList.remove('hidden'); else payDigitalOption.classList.add('hidden'); }
 
+  // The options look like buttons now, so the selected one has to look picked.
+  // Driven off the checkboxes rather than click handlers, so every existing
+  // path that sets .checked - including the digital flow backing out to
+  // cash/check - repaints without needing to know about this.
+  function paintPayOptions(){
+    [payCheck, payCash, payDigital].forEach(function(box){
+      if (!box) return;
+      const holder = box.closest('.pay-option');
+      if (holder) holder.classList.toggle('is-selected', !!box.checked);
+    });
+  }
+  window.smPaintPayOptions = paintPayOptions;
+  [payCheck, payCash, payDigital].forEach(function(box){
+    if (box) box.addEventListener('change', paintPayOptions);
+  });
+  paintPayOptions();
+
   let digitalPollInterval = null;
   let digitalWaitingMsgInterval = null;
   let digitalCurrentAttemptId = null;
@@ -1625,6 +1642,7 @@
       // clear any dynamic product qty inputs
       try{ const prodInputs = document.querySelectorAll('input[data-product-id]'); prodInputs.forEach(i=>{ try{ i.value=''; }catch(e){} }); }catch(e){}
       if (payCheck) payCheck.checked = false; if (payCash) payCash.checked = false; if (payDigital) payDigital.checked = false;
+      try{ if (window.smPaintPayOptions) window.smPaintPayOptions(); }catch(e){}
       try{ if (checkNumberRow) checkNumberRow.classList.add('hidden'); }catch(e){}
       try{ hideDigitalPanel(); }catch(e){}
       // reset computed total
