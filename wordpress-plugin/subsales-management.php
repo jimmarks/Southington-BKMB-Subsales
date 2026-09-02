@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.26.0
+ * Version: 3.26.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.26.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.26.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -6548,9 +6548,9 @@ function subsales_pwa_sessions_page() {
         
         <!-- Active Sessions Summary -->
         <div class="pwa-sessions-summary" style="background: <?php echo $active_count > 0 ? '#d4edda' : '#fff3cd'; ?>; border-left: 4px solid <?php echo $active_count > 0 ? '#28a745' : '#ffc107'; ?>; padding: 15px; margin: 20px 0; border-radius: 4px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="pwa-summary-row">
                 <div>
-                    <h2 style="margin: 0 0 10px 0;">
+                    <h2 style="margin: 0 0 6px 0;">
                         <span class="dashicons dashicons-yes-alt" style="color: <?php echo $active_count > 0 ? '#28a745' : '#ffc107'; ?>;"></span>
                         <strong><?php echo $active_count; ?></strong> Active Session<?php echo $active_count === 1 ? '' : 's'; ?>
                     </h2>
@@ -6559,9 +6559,20 @@ function subsales_pwa_sessions_page() {
                     </p>
                 </div>
                 <button id="refresh-sessions-btn" class="button button-primary">
-                    <span class="dashicons dashicons-update"></span> Refresh Now
+                    <span class="dashicons dashicons-update"></span><span>Refresh Now</span>
                 </button>
             </div>
+            <style>
+              /* A dashicon carries its own 20px line-height and sits on the text
+                 baseline, so a button containing one grows taller than its label
+                 and the glyph rides low. Laying the button out as a flex row
+                 centres both against each other instead. */
+              .pwa-summary-row{ display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; }
+              .pwa-summary-row h2{ display:flex; align-items:center; gap:6px; line-height:1.2; }
+              .pwa-summary-row h2 .dashicons{ line-height:1; height:auto; width:auto; font-size:22px; }
+              #refresh-sessions-btn{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+              #refresh-sessions-btn .dashicons{ line-height:1; height:auto; width:auto; font-size:17px; }
+            </style>
         </div>
         
         <!-- Filters -->
