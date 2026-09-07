@@ -181,7 +181,10 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
             <textarea name="student_paste" rows="6" class="large-text code"
                 placeholder="Jane Doe, 860-555-1234, jane@example.com"><?php echo esc_textarea( $paste_back ); ?></textarea>
         </p>
-        <p class="description">Got a file instead? <input type="file" name="student_file" accept=".csv,text/csv" /></p>
+        <p class="description">
+            Got the sheet back from the band director? Upload it here &mdash; Excel (<code>.xlsx</code>) or <code>.csv</code>.<br />
+            <input type="file" name="student_file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
+        </p>
 
         <p><button type="submit" class="button button-primary">Check this</button></p>
     </form>

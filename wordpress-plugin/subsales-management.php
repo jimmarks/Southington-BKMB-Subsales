@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.27.0
+ * Version: 3.28.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.27.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.28.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -81,6 +81,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-address-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-order-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-sheet.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
@@ -7259,9 +7260,37 @@ function subsales_write_seller_csv( $rows ) {
 }
 
 /** Filename for a seller sheet, named after the org rather than hardcoded. */
-function subsales_seller_filename( $suffix ) {
+function subsales_seller_filename( $suffix, $ext = 'xlsx' ) {
     $org = get_option( 'subsales_branding', 'Subsales' );
-    return sanitize_file_name( str_replace( ' ', '-', strtolower( $org ) ) . '-sellers-' . $suffix . '.csv' );
+    return sanitize_file_name( str_replace( ' ', '-', strtolower( $org ) ) . '-sellers-' . $suffix . '.' . $ext );
+}
+
+/**
+ * Send a seller sheet in whichever format was asked for.
+ *
+ * .xlsx by default: this goes to a band director who may have nothing set up to
+ * open a .csv, and a phone number in a csv opened by the wrong program comes
+ * back as 8.6E+09 or missing its leading zero. CSV stays available for anyone
+ * who would rather have it.
+ */
+function subsales_send_seller_sheet( $rows, $suffix ) {
+    $format = ( isset( $_GET['format'] ) && 'csv' === $_GET['format'] ) ? 'csv' : 'xlsx';
+
+    if ( 'xlsx' === $format && Subsales_Sheet::xlsx_supported() ) {
+        $data = Subsales_Sheet::write_xlsx( array( 'name', 'phone', 'email' ), $rows );
+        if ( false !== $data ) {
+            header( 'Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' );
+            header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( $suffix, 'xlsx' ) );
+            header( 'Content-Length: ' . strlen( $data ) );
+            echo $data; // phpcs:ignore WordPress.Security.EscapeOutput -- binary xlsx
+            exit;
+        }
+    }
+
+    header( 'Content-Type: text/csv; charset=utf-8' );
+    header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( $suffix, 'csv' ) );
+    subsales_write_seller_csv( $rows );
+    exit;
 }
 
 /** Blank seller sheet, for sending out before anyone is in the system. */
@@ -7272,10 +7301,7 @@ function subsales_download_roster_template() {
     }
     check_admin_referer( 'subsales_roster_template' );
 
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( 'blank' ) );
-    subsales_write_seller_csv( array() );
-    exit;
+    subsales_send_seller_sheet( array(), 'blank' );
 }
 
 /**
@@ -7303,10 +7329,7 @@ function subsales_download_roster_export() {
         $rows[] = array( $person['name'], $person['phone'], $person['email'] );
     }
 
-    header( 'Content-Type: text/csv; charset=utf-8' );
-    header( 'Content-Disposition: attachment; filename=' . subsales_seller_filename( 'current' ) );
-    subsales_write_seller_csv( $rows );
-    exit;
+    subsales_send_seller_sheet( $rows, 'current' );
 }
 
 function subsales_process_import_preview( $file ) {

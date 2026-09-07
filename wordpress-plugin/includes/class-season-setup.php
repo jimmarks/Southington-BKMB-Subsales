@@ -245,6 +245,9 @@ class Subsales_Season_Setup {
             ARRAY_A
         );
 
+        // Matched on phone, because that is what a seller signs in with. A
+        // changed number reads as a new person this season - agreed with the
+        // admin rather than guessing at a name or email match.
         $by_phone = array();
         foreach ( $existing as $person ) {
             $digits = self::normalise_phone( $person['phone'] );
@@ -571,13 +574,30 @@ class Subsales_Season_Setup {
                 $paste = isset( $_POST['student_paste'] ) ? wp_unslash( $_POST['student_paste'] ) : '';
 
                 // An uploaded file is just another way of supplying the same
-                // rows, so it joins the pasted ones rather than taking a
-                // separate path through the parser.
+                // rows, so it is flattened to tab-separated lines and joins the
+                // pasted ones rather than taking a separate path through the
+                // parser - one set of validation rules either way.
                 if ( ! empty( $_FILES['student_file']['tmp_name'] ) && UPLOAD_ERR_OK === $_FILES['student_file']['error'] ) {
-                    $uploaded = file_get_contents( $_FILES['student_file']['tmp_name'] );
-                    if ( false !== $uploaded ) {
-                        $paste = trim( $paste . "\n" . $uploaded );
+                    $sheet_rows = Subsales_Sheet::read_rows(
+                        $_FILES['student_file']['tmp_name'],
+                        isset( $_FILES['student_file']['name'] ) ? sanitize_file_name( $_FILES['student_file']['name'] ) : ''
+                    );
+
+                    if ( is_wp_error( $sheet_rows ) ) {
+                        self::fail( $sheet_rows->get_error_message(), $step );
                     }
+
+                    $lines = array();
+                    foreach ( $sheet_rows as $sheet_row ) {
+                        // Only the first three columns matter, and a stray tab
+                        // or newline inside a cell would otherwise split a row.
+                        $cells = array_slice( array_values( (array) $sheet_row ), 0, 3 );
+                        $cells = array_map( function ( $cell ) {
+                            return trim( str_replace( array( "\t", "\r", "\n" ), ' ', (string) $cell ) );
+                        }, $cells );
+                        $lines[] = implode( "\t", $cells );
+                    }
+                    $paste = trim( $paste . "\n" . implode( "\n", $lines ) );
                 }
 
                 $keep = isset( $_POST['keep'] ) ? (array) wp_unslash( $_POST['keep'] ) : array();
