@@ -1357,7 +1357,19 @@
   function showInstallPrompt() {
     try {
       // Don't show if dismissed, installed, or not supported
-      if (localStorage.getItem('pwa_install_dismissed') === 'true') return;
+      // "Not Now" used to be forever: it wrote a flag with no date, so one tap
+      // meant the offer never came back for the rest of the season - on an app
+      // that only works at a doorstep once it is installed. It backs off for a
+      // week instead. The old undated flag is treated as long expired, which
+      // un-sticks everybody it already silenced.
+      const dismissedAt = localStorage.getItem('pwa_install_dismissed_at');
+      if (dismissedAt) {
+        const days = (Date.now() - parseInt(dismissedAt, 10)) / 86400000;
+        if (days >= 0 && days < 7) return;
+      }
+      if (localStorage.getItem('pwa_install_dismissed') === 'true') {
+        try { localStorage.removeItem('pwa_install_dismissed'); } catch(e){}
+      }
       if (isAppInstalled()) return;
       
       if (installPrompt) {
@@ -1488,7 +1500,7 @@
   if (installDismissBtn) {
     installDismissBtn.addEventListener('click', () => {
       try {
-        localStorage.setItem('pwa_install_dismissed', 'true');
+        localStorage.setItem('pwa_install_dismissed_at', String(Date.now()));
         trackInstallEvent('install_dismissed');
         hideInstallPrompt();
 
@@ -1507,7 +1519,7 @@
         }
         trackInstallEvent('ios_instructions_closed');
         // Mark as shown so we don't spam
-        localStorage.setItem('pwa_install_dismissed', 'true');
+        localStorage.setItem('pwa_install_dismissed_at', String(Date.now()));
         hideInstallPrompt();
       } catch(err) {
         console.warn('iosInstallCloseBtn click error', err);
@@ -2597,7 +2609,12 @@
         });
         
         revealAuthControls();
-        if (deferredPrompt) showInstallPrompt();
+        // Offer the install after login regardless of platform. Gating this on
+        // deferredPrompt meant only Android ever saw it: deferredPrompt is set
+        // by beforeinstallprompt, which iPhones do not fire. iOS has its own
+        // path inside showInstallPrompt, which explains Share -> Add to Home
+        // Screen - and logging in is the moment a seller has a reason to.
+        showInstallPrompt();
         
       } catch(err) {
         console.error('User login error:', err);
@@ -2687,6 +2704,7 @@
       if (loginSection) { loginSection.classList.add('hidden'); loginSection.style.display='none'; }
       if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
       revealAuthControls();
+      showInstallPrompt();
       updateCurrentTeamDisplay();
       
       // Load address autocomplete module and prefetch (non-blocking - happens in background)
