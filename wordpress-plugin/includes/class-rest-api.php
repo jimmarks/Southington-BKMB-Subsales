@@ -281,6 +281,15 @@ class Subsales_REST_API {
             'callback' => 'subsales_rest_search_teams',
             'permission_callback' => '__return_true',
         ));
+
+        // Create a team as soon as the first kid names it, rather than waiting
+        // for them to finish picking dates, so the rest of the team can find it
+        // in the meantime. Gated on the caller being a real seller.
+        register_rest_route( 'order-manager/v1', '/teams', array(
+            'methods' => 'POST',
+            'callback' => 'subsales_rest_create_team',
+            'permission_callback' => '__return_true',
+        ));
         
         register_rest_route( 'order-manager/v1', '/users/search', array(
             'methods' => 'GET',

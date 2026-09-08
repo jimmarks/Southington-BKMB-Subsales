@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.36.1
+ * Version: 3.37.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.36.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.37.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5621,9 +5621,29 @@ function subsales_serve_signup_page() {
                         const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(typed));
                         const data = await response.json();
                         const match = data.find(team => team.name.trim().toLowerCase() === typed.toLowerCase());
-                        selectedTeam = match
-                            ? { id: match.id, name: match.name }
-                            : { id: null, name: typed, isNew: true };
+
+                        if (match) {
+                            selectedTeam = { id: match.id, name: match.name };
+                        } else {
+                            // Create it now rather than at Complete Signup. The rest
+                            // of the team are signing up alongside this kid, and a
+                            // team that does not exist yet is one they will type
+                            // themselves - which is how you get two teams with the
+                            // same name.
+                            const made = await fetch(apiBase + '/teams', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    team_name: typed,
+                                    user_id: userData && userData.id ? userData.id : 0,
+                                    phone: userData ? userData.phone : ''
+                                })
+                            });
+                            const madeData = await made.json();
+                            selectedTeam = made.ok && madeData && madeData.id
+                                ? { id: madeData.id, name: madeData.name }
+                                : { id: null, name: typed, isNew: true };
+                        }
                     } catch (error) {
                         console.error('Error resolving team:', error);
                         errorDiv.textContent = 'Could not check that team name. Please try again.';
@@ -9589,6 +9609,54 @@ function subsales_rest_search_teams( $request ) {
  * POST /wp-json/order-manager/v1/signup/verify-user
  * Body: {"user_id": 123, "phone": "8604187663"}
  */
+/**
+ * POST /teams - make the team exist the moment a kid names it.
+ *
+ * Teams used to be created only when a signup completed, so the first kid to
+ * name one had to finish picking dates before anybody else could find it. Their
+ * teammates, signing up alongside them, would see nothing and type the name
+ * themselves - and end up on a second team with the same name.
+ *
+ * Anyone can reach this endpoint, same as the signup it belongs to, so it is
+ * gated on the caller proving they are on the roster with the id and phone
+ * step 1 already checked. Without that this is a public write.
+ *
+ * @param WP_REST_Request $request
+ * @return WP_REST_Response|WP_Error
+ * @since 3.37.0
+ */
+function subsales_rest_create_team( $request ) {
+    global $wpdb;
+
+    $team_name = trim( (string) $request->get_param( 'team_name' ) );
+    $user_id   = intval( $request->get_param( 'user_id' ) );
+    $phone     = preg_replace( '/\D/', '', (string) $request->get_param( 'phone' ) );
+
+    if ( strlen( $team_name ) < 2 ) {
+        return new WP_Error( 'bad_name', 'A team name is required.', array( 'status' => 400 ) );
+    }
+
+    $member = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id FROM {$wpdb->prefix}ss_team_members WHERE id = %d AND phone = %s AND status = 'active'",
+        $user_id,
+        $phone
+    ), ARRAY_A );
+
+    if ( ! $member ) {
+        return new WP_Error( 'not_a_seller', 'We could not match you to the seller list.', array( 'status' => 403 ) );
+    }
+
+    $team = Subsales_Database::get_or_create_team( $team_name );
+    if ( ! $team || empty( $team['id'] ) ) {
+        return new WP_Error( 'team_failed', 'Could not set up that team. Please try again.', array( 'status' => 500 ) );
+    }
+
+    return rest_ensure_response( array(
+        'id'   => intval( $team['id'] ),
+        'name' => $team['name'],
+    ) );
+}
+
 function subsales_rest_verify_user( $request ) {
     global $wpdb;
     $table = $wpdb->prefix . 'ss_team_members';
