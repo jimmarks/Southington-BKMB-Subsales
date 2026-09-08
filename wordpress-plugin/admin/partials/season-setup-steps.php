@@ -437,7 +437,7 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
 <?php elseif ( 8 === $step ) : ?>
 
     <?php $open = ( 1 === $status['sales_enabled'] ); ?>
-    <h2>Step 7 &mdash; Open sales</h2>
+    <h2>Step 8 &mdash; Open sales</h2>
     <p class="subsales-newseason-status">
         <span class="<?php echo $open ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $open ? '&#10003;' : '!'; ?></span>
         Sales are currently <strong><?php echo $open ? 'OPEN' : 'CLOSED'; ?></strong>.
