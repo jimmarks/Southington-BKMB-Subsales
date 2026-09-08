@@ -216,9 +216,9 @@ $review_rows = $review_pending > 0
                     Look up all <?php echo esc_html( number_format( $review_pending ) ); ?>
                 </button>
                 <span style="color:#50575e; font-size:13px;">
-                    Asks Google about every address on this list in one go and fills in what it finds.
-                    About <?php echo esc_html( '$' . number_format( $review_pending * 0.005, 2 ) ); ?> in look-up charges.
-                    Anything Google can't place stays on the list for you to look at.
+                    Works through the whole list in one go. Most addresses are placed by matching them to the
+                    nearest house already on the same street, which is free; Google is only asked about the ones
+                    with nothing nearby, at half a cent each. Anything still unclear stays on the list for you.
                 </span>
             </div>
             <div id="subsales-review-bulk-log" style="display:none; margin-bottom:16px; padding:12px; background:#fff; border-left:4px solid #72aee6; font-size:13px;"></div>

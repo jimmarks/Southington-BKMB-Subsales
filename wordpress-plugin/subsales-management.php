@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.29.1
+ * Version: 3.30.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.29.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.30.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2209,6 +2209,68 @@ function subsales_review_queue_bulk_ajax() {
 }
 
 /**
+ * The ZIP of the nearest already-known address on the same street.
+ *
+ * These rows came out of the same parcel import as the rest of the book, so
+ * their own neighbours are usually sitting in ss_addresses already with a ZIP
+ * on them. 250 Gwen Rd taking the ZIP of 245 Gwen Rd, 260 feet across the
+ * road, is not a guess - and unlike a street-wide majority it stays correct on
+ * a road that genuinely spans two ZIPs, because it goes by distance.
+ *
+ * @param string $street Street name as stored (the book's own spelling).
+ * @param float  $lat    Latitude of the row needing a ZIP.
+ * @param float  $lng    Longitude of the row needing a ZIP.
+ * @param string $city   Town as the parcel layer gave it, used to scope tier two.
+ * @return array|null zip/city/house_number/street/miles, or null if nothing close.
+ * @since 3.30.0
+ */
+function subsales_neighbour_zip( $street, $city, $lat, $lng ) {
+    global $wpdb;
+
+    if ( ! is_numeric( $lat ) || ! is_numeric( $lng ) ) {
+        return null;
+    }
+
+    $table    = $wpdb->prefix . 'ss_addresses';
+    $distance = "( 3959 * ACOS( LEAST( 1, COS( RADIANS( %f ) ) * COS( RADIANS( lat ) ) * COS( RADIANS( lng ) - RADIANS( %f ) ) + SIN( RADIANS( %f ) ) * SIN( RADIANS( lat ) ) ) ) )";
+
+    // Same street first, and allow it a wider radius - a long road can run half
+    // a mile between known houses and still plainly be the same road.
+    if ( '' !== trim( (string) $street ) ) {
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT zip, city, house_number, street, {$distance} AS miles
+               FROM {$table}
+              WHERE street = %s AND lat IS NOT NULL AND lng IS NOT NULL AND zip <> ''
+           ORDER BY miles ASC
+              LIMIT 1",
+            $lat, $lng, $lat, $street
+        ), ARRAY_A );
+
+        if ( $row && floatval( $row['miles'] ) <= 0.5 ) {
+            return $row;
+        }
+    }
+
+    // Otherwise the closest known house in the same town, on any street, but
+    // held to a quarter mile. Scoping to the town is what keeps this honest:
+    // it can only ever hand back a ZIP that already belongs to this town.
+    if ( '' === trim( (string) $city ) ) {
+        return null;
+    }
+
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT zip, city, house_number, street, {$distance} AS miles
+           FROM {$table}
+          WHERE city = %s AND lat IS NOT NULL AND lng IS NOT NULL AND zip <> ''
+       ORDER BY miles ASC
+          LIMIT 1",
+        $lat, $lng, $lat, $city
+    ), ARRAY_A );
+
+    return ( $row && floatval( $row['miles'] ) <= 0.25 ) ? $row : null;
+}
+
+/**
  * One pass of the bulk look-up: up to ten pending rows placed via Google.
  *
  * Split out of the AJAX handler so it can also be driven from wp-cli without
@@ -2219,7 +2281,7 @@ function subsales_review_queue_bulk_ajax() {
  * @since 3.29.0
  */
 function subsales_review_queue_bulk_pass( $skip = array() ) {
-    $rows     = Subsales_Database::get_review_queue_rows( 40, 0, 'pending' );
+    $rows     = Subsales_Database::get_review_queue_rows( 300, 0, 'pending' );
     $rows     = array_slice( array_filter( $rows, function ( $r ) use ( $skip ) {
         return ! in_array( intval( $r['id'] ), $skip, true );
     } ), 0, 10 );
@@ -2251,6 +2313,31 @@ function subsales_review_queue_bulk_pass( $skip = array() ) {
             }
             $lat = $geo['lat'];
             $lng = $geo['lng'];
+        }
+
+        // Ask the street first. It is free, it needs no network, and it is a
+        // better answer than Google's for a rooftop on a town line.
+        $neighbour = subsales_neighbour_zip( $row['street'], $row['city'], $lat, $lng );
+        if ( $neighbour ) {
+            $result = Subsales_Database::resolve_review_queue_row( $id, array(
+                'zip'  => $neighbour['zip'],
+                'lat'  => $lat,
+                'lng'  => $lng,
+                'note' => sprintf(
+                    'Matched to %s %s (%s), %.2f miles away.',
+                    $neighbour['house_number'],
+                    $neighbour['street'],
+                    $neighbour['zip'],
+                    floatval( $neighbour['miles'] )
+                ),
+            ) );
+            if ( is_wp_error( $result ) ) {
+                $failed[] = $label . ' - ' . $result->get_error_message();
+                $stuck[]  = $id;
+                continue;
+            }
+            $resolved++;
+            continue;
         }
 
         $place = Subsales_Delivery::reverse_geocode( $lat, $lng );

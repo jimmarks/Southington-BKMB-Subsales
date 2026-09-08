@@ -216,8 +216,10 @@
             updateBadge(d.remaining);
             $log.html('<strong>Placed ' + resolvedTotal + '</strong> so far, ' + d.remaining + ' still on the list\u2026');
 
-            // A pass that placed nothing means everything left needs a person.
-            if (d.resolved > 0 && d.remaining > 0) {
+            // Keep going while the server still finds rows it hasn't already
+            // set aside. Stopping on "placed nothing" was wrong: a window full
+            // of deferrals would halt the run with placeable rows further down.
+            if (d.processed > 0 && d.remaining > 0) {
               pass();
               return;
             }
