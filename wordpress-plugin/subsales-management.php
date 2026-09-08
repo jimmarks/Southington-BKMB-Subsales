@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.35.2
+ * Version: 3.36.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.35.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.36.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5447,6 +5447,12 @@ function subsales_serve_signup_page() {
                         
                         <div style="background: #fff3cd; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
                             <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 16px;">Driver</h4>
+                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #856404; line-height: 1.4;">
+                                This is a note of who is driving. It does <strong>not</strong> sign them up.
+                                Your driver still has to register themselves at
+                                <a href="/driver-signup/" style="color: #856404; text-decoration: underline;">/driver-signup/</a>,
+                                using your name and phone number to find this team.
+                            </p>
                             <input type="text" id="driver-name-input" value="${currentDriver}" placeholder="Enter driver name..." 
                                 style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; margin-bottom: 8px;">
                             <button id="update-driver" style="background: #007bff; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%;">Update Driver</button>

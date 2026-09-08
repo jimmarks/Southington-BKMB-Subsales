@@ -846,7 +846,15 @@ class Subsales_Delivery {
                             $pid = $product['id'];
                             $qty = intval( $product['qty'] );
                             if ( $qty > 0 ) {
-                                $pname = $pid;
+                                // The order carries the item's name as it was when
+                                // it was sold, so a product removed from the
+                                // config since then still prints properly instead
+                                // of falling back to a raw id like "turkey".
+                                // Current config wins while the product exists, so
+                                // a rename shows through on this season's runs.
+                                $pname = ( isset( $product['name'] ) && '' !== trim( (string) $product['name'] ) )
+                                    ? $product['name']
+                                    : $pid;
                                 foreach ( $configured_products as $pconf ) {
                                     if ( isset( $pconf['id'] ) && $pconf['id'] === $pid ) {
                                         $pname = $pconf['name'];
