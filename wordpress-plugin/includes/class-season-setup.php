@@ -302,8 +302,11 @@ class Subsales_Season_Setup {
             'new'       => $new,
             'updated'   => $updated,
             'problems'  => $problems,
+            // Active only, to agree with the roster count in the banner above it.
+            // Counting departed sellers here made the two numbers disagree by
+            // exactly the people the roster had deliberately left out.
             'missing_email' => count( array_filter( $existing, function ( $p ) {
-                return '' === trim( (string) $p['email'] );
+                return '' === trim( (string) $p['email'] ) && 'active' === $p['status'];
             } ) ),
         );
     }
