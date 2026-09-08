@@ -1008,11 +1008,11 @@
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'geolocation' }).then((result) => {
         if (result.state === 'denied') {
+          // Shown as off, but still tappable - tapping explains how to turn it
+          // back on. A disabled button is a dead end on a phone at a doorstep.
           btn.innerHTML = '🚫 Location off';
           btn.style.background = '#f8d7da';
           btn.style.color = '#721c24';
-          btn.style.cursor = 'not-allowed';
-          btn.disabled = true;
         }
         // Listen for permission changes
         result.addEventListener('change', () => {
@@ -1020,8 +1020,6 @@
             btn.innerHTML = '🚫 Location off';
             btn.style.background = '#f8d7da';
             btn.style.color = '#721c24';
-            btn.style.cursor = 'not-allowed';
-            btn.disabled = true;
           } else {
             btn.innerHTML = '📍 Use my location';
             btn.style.background = '#fff';
@@ -1088,12 +1086,18 @@
         // Provide specific error messages based on error code
         let errorMsg = 'Could not get your location.';
         if (error.code === 1) { // PERMISSION_DENIED
-          errorMsg = 'Location access denied. Please enable location in your browser settings.';
+          // Tell them how to undo it, on the device they are holding. iOS will
+          // not ask twice - once a kid taps "Don't Allow" at a doorstep the
+          // prompt never comes back, and "enable location in your browser
+          // settings" is not a usable instruction for a twelve year old.
+          errorMsg = isIOS()
+            ? 'Location is turned off for this site.\n\nTap the "aA" or page icon at the left of the address bar, choose Website Settings, and set Location to Allow. Then tap this button again.'
+            : 'Location is turned off for this site.\n\nTap the padlock or the icon at the left of the address bar, turn Location on, then tap this button again.';
           btn.innerHTML = '🚫 Location off';
           btn.style.background = '#f8d7da';
           btn.style.color = '#721c24';
-          btn.style.cursor = 'not-allowed';
-          btn.disabled = true;
+          // Deliberately still clickable. Disabling it meant that fixing the
+          // permission in settings left a dead button until the page reloaded.
         } else if (error.code === 2) { // POSITION_UNAVAILABLE
           errorMsg = 'Location unavailable. Please try again.';
         } else if (error.code === 3) { // TIMEOUT
@@ -1101,9 +1105,9 @@
         }
         
         alert(errorMsg);
-        
+
+        btn.disabled = false;
         if (error.code !== 1) {
-          btn.disabled = false;
           btn.innerHTML = '📍 Use my location';
         }
       });
@@ -1115,6 +1119,11 @@
     var slot = document.getElementById('locationBtnSlot');
     if (slot) { slot.appendChild(btn); }
     else { inputEl.parentNode && inputEl.parentNode.insertBefore(btn, inputEl); }
+  }
+
+  function isIOS(){
+    return /iPad|iPhone|iPod/.test(navigator.userAgent || '')
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   }
 
   // Show a reload/prefetch button to populate local ZIP datasets when no local data is present
