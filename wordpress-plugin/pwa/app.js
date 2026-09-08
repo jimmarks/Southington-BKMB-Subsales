@@ -1846,6 +1846,16 @@
     digitalOrderData = null;
   }
 
+  function parseServerInstant(value){
+    if (!value) return null;
+    var v = String(value).trim();
+    if (!/[zZ]$|[+-]\d{2}:?\d{2}$/.test(v)) {
+      v = v.replace(' ', 'T') + 'Z';
+    }
+    var t = new Date(v).getTime();
+    return isNaN(t) ? null : t;
+  }
+
   function updateDigitalExpiryText(){
     if (!digitalExpiryText) return;
     if (!digitalExpiresAt) { digitalExpiryText.textContent = ''; return; }
@@ -2108,7 +2118,11 @@
 
       const data = await resp.json();
       digitalCurrentAttemptId = data.attempt_id;
-      digitalExpiresAt = data.expires_at ? new Date(data.expires_at).getTime() : null;
+      // Tolerate both shapes: an ISO instant, and the older bare
+      // "Y-m-d H:i:s" which is UTC on the server but which a browser would
+      // otherwise read as local time. An installed app can be running cached
+      // JS against a newer server, or the reverse, so accept either.
+      digitalExpiresAt = data.expires_at ? parseServerInstant(data.expires_at) : null;
 
       if (digitalConfirmPanel) digitalConfirmPanel.classList.add('hidden');
       if (digitalQrPanel) digitalQrPanel.classList.remove('hidden');

@@ -182,7 +182,11 @@ class Subsales_Payment_Attempts {
             'attempt_id'       => $attempt_uid,
             'checkout_url'     => $checkout['checkout_url'],
             'qr_code_data_uri' => $qr_code_data_uri,
-            'expires_at'       => $expires_at,
+            // ISO-8601 with the Z, not the bare "Y-m-d H:i:s" the column holds.
+            // A space-separated datetime with no zone is parsed by browsers as
+            // LOCAL time, and this one is written with gmdate, so a phone four
+            // hours behind UTC read a 15 minute window as 255 minutes.
+            'expires_at'       => gmdate( 'Y-m-d\TH:i:s\Z', strtotime( $expires_at . ' UTC' ) ),
             'amount'           => array(
                 'subtotal' => $subtotal_amount,
                 'fee'      => $convenience_fee_amount,
