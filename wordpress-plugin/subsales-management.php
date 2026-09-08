@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.32.0
+ * Version: 3.33.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.32.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.33.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4883,15 +4883,10 @@ function subsales_serve_signup_page() {
                     <!-- Add another team/date -->
                     <h3>Sign Up for Another Date</h3>
                     <div class="form-group">
-                        <label for="user-team-search">Search for Your Team</label>
-                        <input type="text" id="user-team-search" placeholder="Start typing team name...">
+                        <label for="user-team-search">Your Team</label>
+                        <input type="text" id="user-team-search" placeholder="Start typing your team name..." autocomplete="off">
                         <div id="user-team-results"></div>
-                    </div>
-                    <div class="form-group">
-                        <label for="user-new-team">Or Create New Team</label>
-                        <input type="text" id="user-new-team" placeholder="Enter new team name">
-                        <div id="user-new-team-warning" class="help-text" style="color: #d63638; display: none;"></div>
-                        <div class="help-text">New teams will be created with a default access code</div>
+                        <div class="help-text" id="user-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
                     </div>
                     <button class="btn" id="user-step2-next">Next - Select Dates</button>
                     <button class="btn btn-secondary" id="user-step2-back">Back</button>
@@ -4995,6 +4990,59 @@ function subsales_serve_signup_page() {
             }
 
             // Setup autocomplete handlers for both modes
+            function setupOneBoxTeam(fieldId, resultsId, hintId) {
+                const field = document.getElementById(fieldId);
+                const results = document.getElementById(resultsId);
+                const hint = document.getElementById(hintId);
+                let timer = null;
+
+                field.addEventListener('input', function() {
+                    const query = field.value.trim();
+
+                    // Typing again after picking means they are no longer on that
+                    // team - drop the selection so Next re-resolves what they typed.
+                    if (selectedTeam && selectedTeam.name !== query) {
+                        selectedTeam = null;
+                    }
+
+                    clearTimeout(timer);
+                    if (query.length < 2) {
+                        results.innerHTML = '';
+                        hint.textContent = "Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.";
+                        return;
+                    }
+
+                    timer = setTimeout(async function() {
+                        try {
+                            const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(query));
+                            const data = await response.json();
+
+                            if (!data.length) {
+                                results.innerHTML = '';
+                                hint.textContent = 'No team called "' + query + '" yet. Press Next and we\'ll create it.';
+                                return;
+                            }
+
+                            hint.textContent = 'Pick your team from the list, or keep typing to make a new one.';
+                            results.innerHTML = data.map(team =>
+                                `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
+                            ).join('');
+
+                            results.querySelectorAll('button').forEach(btn => {
+                                btn.addEventListener('click', function() {
+                                    selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
+                                    field.value = selectedTeam.name;
+                                    results.innerHTML = '';
+                                    hint.textContent = 'Joining ' + selectedTeam.name + '.';
+                                });
+                            });
+                        } catch (error) {
+                            console.error('Error searching teams:', error);
+                        }
+                    }, 200);
+                });
+            }
+
             function setupTeamSearch(searchFieldId, resultsFieldId, newTeamFieldId, warningFieldId) {
                 // Search field autocomplete
                 document.getElementById(searchFieldId).addEventListener('input', async function(e) {
@@ -5109,7 +5157,10 @@ function subsales_serve_signup_page() {
 
             // Setup both modes
             setupTeamSearch('legacy-team-search', 'legacy-team-results', 'legacy-new-team', 'legacy-new-team-warning');
-            setupTeamSearch('user-team-search', 'user-team-results', 'user-new-team', 'user-new-team-warning');
+            // One box for the team, not two. A kid should not have to work out
+            // whether their team counts as "search" or "create" - they type the
+            // name, and picking it from the list or making it new is our problem.
+            setupOneBoxTeam('user-team-search', 'user-team-results', 'user-team-hint');
             setupUserNameSearch('user-user-name', 'user-name-results');
 
             // ========== LEGACY MODE HANDLERS ==========
@@ -5513,31 +5564,45 @@ function subsales_serve_signup_page() {
             }
             
             // User Step 2: Team Selection → Next
-            document.getElementById('user-step2-next').addEventListener('click', function() {
-                const teamSearch = document.getElementById('user-team-search').value.trim();
-                const newTeamName = document.getElementById('user-new-team').value.trim();
+            document.getElementById('user-step2-next').addEventListener('click', async function() {
+                const typed = document.getElementById('user-team-search').value.trim();
                 const errorDiv = document.getElementById('user-step2-error');
-                const warningDiv = document.getElementById('user-new-team-warning');
-                
+                const nextBtn = this;
+
                 errorDiv.classList.add('hidden');
-                
-                if (!selectedTeam && !newTeamName) {
-                    errorDiv.textContent = 'Please select or create a team';
+
+                if (!selectedTeam && typed.length < 2) {
+                    errorDiv.textContent = 'Please type your team name';
                     errorDiv.classList.remove('hidden');
                     return;
                 }
-                
-                // Check if warning is visible (duplicate team name)
-                if (newTeamName && warningDiv.style.display !== 'none') {
-                    errorDiv.textContent = 'Cannot create duplicate team. Please select existing team from search results.';
-                    errorDiv.classList.remove('hidden');
-                    return;
+
+                // They typed rather than picked. Look the name up before creating
+                // anything: typing an existing team's name should put them on that
+                // team, not stand up a second one beside it. Duplicate teams split
+                // a delivery run in half.
+                if (!selectedTeam || selectedTeam.name !== typed) {
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Checking...';
+                    try {
+                        const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(typed));
+                        const data = await response.json();
+                        const match = data.find(team => team.name.trim().toLowerCase() === typed.toLowerCase());
+                        selectedTeam = match
+                            ? { id: match.id, name: match.name }
+                            : { id: null, name: typed, isNew: true };
+                    } catch (error) {
+                        console.error('Error resolving team:', error);
+                        errorDiv.textContent = 'Could not check that team name. Please try again.';
+                        errorDiv.classList.remove('hidden');
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Next - Select Dates';
+                        return;
+                    }
+                    nextBtn.disabled = false;
+                    nextBtn.textContent = 'Next - Select Dates';
                 }
-                
-                if (newTeamName) {
-                    selectedTeam = { id: null, name: newTeamName, isNew: true };
-                }
-                
+
                 loadCampaigns();
                 showStep(3);
             });
@@ -5618,7 +5683,6 @@ function subsales_serve_signup_page() {
                             await loadUserSignups();
                             selectedTeam = null;
                             document.getElementById('user-team-search').value = '';
-                            document.getElementById('user-new-team').value = '';
                             showStep(2);
                         }, 1500);
                     } else {
@@ -5685,7 +5749,6 @@ function subsales_serve_signup_page() {
                     document.getElementById('legacy-new-team').value = '';
                 } else {
                     document.getElementById('user-team-search').value = '';
-                    document.getElementById('user-new-team').value = '';
                 }
                 document.getElementById('mini-reg').classList.add('hidden');
                 showStep(1);

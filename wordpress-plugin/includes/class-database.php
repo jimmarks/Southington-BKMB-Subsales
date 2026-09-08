@@ -3104,15 +3104,32 @@ class Subsales_Database {
             return array( 'id' => intval( $team['id'] ), 'name' => $team['name'] );
         }
 
-        $access_code = strtoupper( substr( md5( $team_name . time() ), 0, 6 ) );
-        $wpdb->insert( $teams_table, array(
-            'name'        => $team_name,
-            'access_code' => $access_code,
-            'status'      => 'active',
-            'season_id'   => $season_id,
-        ), array( '%s', '%s', '%s', '%d' ) );
+        // access_code carries a UNIQUE index and the column is NOT NULL, so a
+        // team always needs one even though the app no longer logs anybody in
+        // with it - order_sync_login_mode 'user' authenticates on name and phone.
+        // Six hex characters do collide eventually, and an unchecked insert then
+        // returns insert_id 0, which files the kid under team_id 0 instead of
+        // failing out loud. Retry on collision, and refuse to return a team 0.
+        for ( $attempt = 0; $attempt < 5; $attempt++ ) {
+            $access_code = strtoupper( substr( md5( $team_name . microtime( true ) . wp_rand() ), 0, 8 ) );
+            $inserted    = $wpdb->insert( $teams_table, array(
+                'name'        => $team_name,
+                'access_code' => $access_code,
+                'status'      => 'active',
+                'season_id'   => $season_id,
+            ), array( '%s', '%s', '%s', '%d' ) );
 
-        return array( 'id' => intval( $wpdb->insert_id ), 'name' => $team_name );
+            if ( $inserted && $wpdb->insert_id ) {
+                return array( 'id' => intval( $wpdb->insert_id ), 'name' => $team_name );
+            }
+        }
+
+        subsales_log( 'ERROR', 'signup', 'Could not create team - access code kept colliding', array(
+            'team_name' => $team_name,
+            'season_id' => $season_id,
+        ) );
+
+        return null;
     }
 
     /**
@@ -3172,7 +3189,10 @@ class Subsales_Database {
                 return new WP_Error( 'invalid_team', 'Team not found.', array( 'status' => 404 ) );
             }
         } elseif ( ! empty( $args['team_name'] ) ) {
-            $team      = self::get_or_create_team( sanitize_text_field( $args['team_name'] ) );
+            $team = self::get_or_create_team( sanitize_text_field( $args['team_name'] ) );
+            if ( ! $team || empty( $team['id'] ) ) {
+                return new WP_Error( 'team_failed', 'Could not set up that team. Please try again.', array( 'status' => 500 ) );
+            }
             $team_id   = $team['id'];
             $team_name = $team['name'];
         } else {
