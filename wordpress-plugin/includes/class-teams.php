@@ -284,6 +284,17 @@ class Subsales_Teams {
                 'has_selected_team' => $selected_team !== null
             ), 'pwa', $user['id'], $user['name'] );
             
+            // Driving is per team, not a property of the person. Somebody who
+            // drives for one team is an ordinary seller on every other team they
+            // are in, and the tally endpoint checks it per team - so the app has
+            // to be told which teams, not just that this row says "driver".
+            // Without this the app showed a seller the driver money view and the
+            // server then refused it with a 401.
+            $driver_team_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
+                "SELECT DISTINCT team_id FROM {$wpdb->prefix}ss_signups WHERE user_id = %d AND is_driver = 1",
+                intval( $user['id'] )
+            ) ) );
+
             return new WP_REST_Response( array(
                 'success' => true,
                 'mode' => 'user',
@@ -292,7 +303,8 @@ class Subsales_Teams {
                     'name' => $user['name'],
                     'email' => $user['email'],
                     'phone' => $user['phone'],
-                    'role' => $user['role']
+                    'role' => $user['role'],
+                    'driver_team_ids' => $driver_team_ids
                 ),
                 'teams' => $teams,
                 'selected_team' => $selected_team,

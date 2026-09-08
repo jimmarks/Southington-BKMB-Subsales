@@ -618,11 +618,17 @@
     try{
       const role = localStorage.getItem('userRole');
       const teamId = localStorage.getItem('selectedTeamId');
+      // Driver of THIS team, not a driver in general.
+      let drivesThisTeam = false;
+      try {
+        const ids = JSON.parse(localStorage.getItem('driverTeamIds') || '[]');
+        drivesThisTeam = Array.isArray(ids) && ids.map(String).indexOf(String(teamId)) !== -1;
+      } catch(e){ drivesThisTeam = false; }
       const login = qs('#loginSection');
       const loginHidden = !login || login.classList.contains('hidden') || login.style.display === 'none';
       const app = qs('#appSection');
       const appVisible = app && !app.classList.contains('hidden') && app.style.display !== 'none';
-      if (role === 'driver' && teamId && teamId !== '-1' && loginHidden && appVisible) {
+      if (role === 'driver' && drivesThisTeam && teamId && teamId !== '-1' && loginHidden && appVisible) {
         enterDriverMode();
       } else {
         driverExitMode();
@@ -2427,6 +2433,14 @@
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
         // Role drives which screen we show after auth: 'driver' -> money view.
         try { localStorage.setItem('userRole', (data.user && data.user.role) ? data.user.role : 'member'); } catch(e){}
+        // Which teams they actually drive for. "role" alone is not enough: it is
+        // a property of the person, while driving is a property of the team-day,
+        // and the tally endpoint checks the team. Somebody who drives for one
+        // team is an ordinary seller everywhere else.
+        try {
+          const dt = (data.user && Array.isArray(data.user.driver_team_ids)) ? data.user.driver_team_ids : [];
+          localStorage.setItem('driverTeamIds', JSON.stringify(dt.map(String)));
+        } catch(e){}
         try { localStorage.setItem('userPhone', phoneDigits); } catch(e){}
         
         // Store team member authentication credentials for PUT requests
@@ -4340,6 +4354,7 @@
         localStorage.removeItem('selectedTeamName');
         localStorage.removeItem('userTeams');
         localStorage.removeItem('userRole');
+        localStorage.removeItem('driverTeamIds');
         // Tear down the driver money view so the next login starts clean.
         try{ driverExitMode(); }catch(e){}
 
