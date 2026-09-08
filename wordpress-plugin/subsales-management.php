@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.33.1
+ * Version: 3.35.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.33.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.35.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4743,6 +4743,91 @@ function subsales_serve_signup_page() {
                 flex-wrap: wrap;
                 gap: 10px;
             }
+            /* Date chips. Thirty checkboxes stacked down a phone is a scroll
+               nobody finishes, and the year repeated thirty times carries no
+               information - the month heading says it once. */
+            .date-month {
+                margin: 0 0 6px;
+                font-size: 13px;
+                font-weight: 700;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+                color: #50575e;
+            }
+            .date-month:not(:first-child) { margin-top: 18px; }
+            .date-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+                gap: 8px;
+            }
+            .date-chip { position: relative; display: block; cursor: pointer; }
+            .date-chip input {
+                position: absolute;
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .date-chip .chip-face {
+                display: block;
+                text-align: center;
+                padding: 9px 4px;
+                border: 2px solid #dcdcde;
+                border-radius: 10px;
+                background: #fff;
+                line-height: 1.15;
+                transition: background .12s, border-color .12s, color .12s;
+            }
+            .date-chip .chip-dow {
+                display: block;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                color: #646970;
+            }
+            .date-chip .chip-day {
+                display: block;
+                font-size: 19px;
+                font-weight: 700;
+                color: #1d2327;
+            }
+            .date-chip .chip-name {
+                display: block;
+                font-size: 10px;
+                color: #646970;
+                margin-top: 2px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .date-chip input:checked + .chip-face {
+                background: #2563eb;
+                border-color: #2563eb;
+            }
+            .date-chip input:checked + .chip-face .chip-dow,
+            .date-chip input:checked + .chip-face .chip-day,
+            .date-chip input:checked + .chip-face .chip-name { color: #fff; }
+            .date-chip input:focus-visible + .chip-face {
+                outline: 2px solid #2563eb;
+                outline-offset: 2px;
+            }
+            .date-tools {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 12px;
+                flex-wrap: wrap;
+            }
+            .date-tools button {
+                background: none;
+                border: none;
+                color: #2563eb;
+                font-size: 14px;
+                cursor: pointer;
+                padding: 4px 0;
+                text-decoration: underline;
+            }
+            #dates-count { font-size: 14px; color: #50575e; font-weight: 600; }
             .checkbox-item {
                 flex: 1 1 calc(50% - 10px);
                 min-width: 150px;
@@ -4817,15 +4902,10 @@ function subsales_serve_signup_page() {
                 <div id="legacy-step1" class="step-content hidden">
                     <h2>Step 1: Select or Create Team</h2>
                     <div class="form-group">
-                        <label for="legacy-team-search">Search for Your Team</label>
-                        <input type="text" id="legacy-team-search" placeholder="Start typing team name...">
+                        <label for="legacy-team-search">Your Team</label>
+                        <input type="text" id="legacy-team-search" placeholder="Start typing your team name..." autocomplete="off">
                         <div id="legacy-team-results"></div>
-                    </div>
-                    <div class="form-group">
-                        <label for="legacy-new-team">Or Create New Team</label>
-                        <input type="text" id="legacy-new-team" placeholder="Enter new team name">
-                        <div id="legacy-new-team-warning" class="help-text" style="color: #d63638; display: none;"></div>
-                        <div class="help-text">New teams will be created with a default access code</div>
+                        <div class="help-text" id="legacy-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
                     </div>
                     <button class="btn" id="legacy-step1-next">Next</button>
                     <div id="legacy-step1-error" class="error hidden"></div>
@@ -5043,75 +5123,6 @@ function subsales_serve_signup_page() {
                 });
             }
 
-            function setupTeamSearch(searchFieldId, resultsFieldId, newTeamFieldId, warningFieldId) {
-                // Search field autocomplete
-                document.getElementById(searchFieldId).addEventListener('input', async function(e) {
-                    const query = e.target.value.trim();
-                    if (query.length < 2) {
-                        document.getElementById(resultsFieldId).innerHTML = '';
-                        return;
-                    }
-                    
-                    try {
-                        const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(query));
-                        const data = await response.json();
-                        
-                        const resultsDiv = document.getElementById(resultsFieldId);
-                        if (data.length === 0) {
-                            resultsDiv.innerHTML = '<p class="help-text">No teams found. Create a new team below.</p>';
-                        } else {
-                            resultsDiv.innerHTML = data.map(team => 
-                                `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
-                            ).join('');
-                            
-                            resultsDiv.querySelectorAll('button').forEach(btn => {
-                                btn.addEventListener('click', function() {
-                                    selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
-                                    document.getElementById(searchFieldId).value = selectedTeam.name;
-                                    document.getElementById(newTeamFieldId).value = '';
-                                    document.getElementById(resultsFieldId).innerHTML = '';
-                                    if (warningFieldId) {
-                                        document.getElementById(warningFieldId).style.display = 'none';
-                                    }
-                                });
-                            });
-                        }
-                    } catch (error) {
-                        console.error('Error searching teams:', error);
-                    }
-                });
-                
-                // New team field - check for duplicates
-                if (warningFieldId) {
-                    document.getElementById(newTeamFieldId).addEventListener('input', async function(e) {
-                        const newName = e.target.value.trim();
-                        const warningDiv = document.getElementById(warningFieldId);
-                        
-                        if (newName.length < 2) {
-                            warningDiv.style.display = 'none';
-                            return;
-                        }
-                        
-                        try {
-                            const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(newName));
-                            const data = await response.json();
-                            
-                            // Check for case-insensitive match
-                            const exactMatch = data.find(team => team.name.toLowerCase() === newName.toLowerCase());
-                            
-                            if (exactMatch) {
-                                warningDiv.textContent = `⚠️ Team "${exactMatch.name}" already exists. Use search above to select it.`;
-                                warningDiv.style.display = 'block';
-                            } else {
-                                warningDiv.style.display = 'none';
-                            }
-                        } catch (error) {
-                            console.error('Error checking team name:', error);
-                        }
-                    });
-                }
-            }
-
             function setupUserNameSearch(nameFieldId, resultsFieldId) {
                 const field = document.getElementById(nameFieldId);
                 if (!field) return;
@@ -5156,7 +5167,7 @@ function subsales_serve_signup_page() {
             }
 
             // Setup both modes
-            setupTeamSearch('legacy-team-search', 'legacy-team-results', 'legacy-new-team', 'legacy-new-team-warning');
+            setupOneBoxTeam('legacy-team-search', 'legacy-team-results', 'legacy-team-hint');
             // One box for the team, not two. A kid should not have to work out
             // whether their team counts as "search" or "create" - they type the
             // name, and picking it from the list or making it new is our problem.
@@ -5166,31 +5177,41 @@ function subsales_serve_signup_page() {
             // ========== LEGACY MODE HANDLERS ==========
             
             // Legacy Step 1: Team Selection → Next
-            document.getElementById('legacy-step1-next').addEventListener('click', function() {
-                const teamSearch = document.getElementById('legacy-team-search').value.trim();
-                const newTeamName = document.getElementById('legacy-new-team').value.trim();
+            document.getElementById('legacy-step1-next').addEventListener('click', async function() {
+                const typed = document.getElementById('legacy-team-search').value.trim();
                 const errorDiv = document.getElementById('legacy-step1-error');
-                const warningDiv = document.getElementById('legacy-new-team-warning');
-                
+                const nextBtn = this;
+
                 errorDiv.classList.add('hidden');
-                
-                if (!selectedTeam && !newTeamName) {
-                    errorDiv.textContent = 'Please select or create a team';
+
+                if (!selectedTeam && typed.length < 2) {
+                    errorDiv.textContent = 'Please type your team name';
                     errorDiv.classList.remove('hidden');
                     return;
                 }
-                
-                // Check if warning is visible (duplicate team name)
-                if (newTeamName && warningDiv.style.display !== 'none') {
-                    errorDiv.textContent = 'Cannot create duplicate team. Please select existing team from search results.';
-                    errorDiv.classList.remove('hidden');
-                    return;
+
+                if (!selectedTeam || selectedTeam.name !== typed) {
+                    nextBtn.disabled = true;
+                    nextBtn.textContent = 'Checking...';
+                    try {
+                        const response = await fetch(apiBase + '/teams?search=' + encodeURIComponent(typed));
+                        const data = await response.json();
+                        const match = data.find(team => team.name.trim().toLowerCase() === typed.toLowerCase());
+                        selectedTeam = match
+                            ? { id: match.id, name: match.name }
+                            : { id: null, name: typed, isNew: true };
+                    } catch (error) {
+                        console.error('Error resolving team:', error);
+                        errorDiv.textContent = 'Could not check that team name. Please try again.';
+                        errorDiv.classList.remove('hidden');
+                        nextBtn.disabled = false;
+                        nextBtn.textContent = 'Next';
+                        return;
+                    }
+                    nextBtn.disabled = false;
+                    nextBtn.textContent = 'Next';
                 }
-                
-                if (newTeamName) {
-                    selectedTeam = { id: null, name: newTeamName, isNew: true };
-                }
-                
+
                 showStep(2);
             });
             
@@ -5630,17 +5651,75 @@ function subsales_serve_signup_page() {
                         if (availableCampaigns.length === 0) {
                             checkboxesDiv.innerHTML = '<p class="help-text">You are already signed up for all available dates!</p>';
                         } else {
-                            checkboxesDiv.innerHTML = availableCampaigns.map(campaign => {
+                            // Grouped by month so the year is stated once instead
+                            // of thirty times, and laid out as chips so a month of
+                            // dates is a few rows rather than a page of scrolling.
+                            const months = [];
+                            availableCampaigns.forEach(campaign => {
                                 const date = new Date(campaign.date + 'T00:00:00');
-                                const formatted = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-                                const displayName = campaign.name ? `${formatted} - ${campaign.name}` : formatted;
-                                return `
-                                    <label>
-                                        <input type="checkbox" name="campaign" value="${campaign.id}">
-                                        ${displayName}
-                                    </label>
-                                `;
-                            }).join('');
+                                const key = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                                let bucket = months.find(m => m.key === key);
+                                if (!bucket) {
+                                    bucket = { key: key, items: [] };
+                                    months.push(bucket);
+                                }
+                                bucket.items.push({ campaign: campaign, date: date });
+                            });
+
+                            const esc = str => String(str).replace(/[&<>"']/g, ch => (
+                                { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+                            ));
+
+                            let html = '';
+                            if (availableCampaigns.length > 8) {
+                                html += '<div class="date-tools">'
+                                     +  '<span id="dates-count">No days picked yet</span>'
+                                     +  '<span><button type="button" id="dates-all">Pick all</button>'
+                                     +  ' &middot; <button type="button" id="dates-none">Clear</button></span>'
+                                     +  '</div>';
+                            } else {
+                                html += '<div class="date-tools"><span id="dates-count">No days picked yet</span></div>';
+                            }
+
+                            months.forEach(month => {
+                                html += '<p class="date-month">' + esc(month.key) + '</p><div class="date-grid">';
+                                month.items.forEach(entry => {
+                                    const dow = entry.date.toLocaleDateString('en-US', { weekday: 'short' });
+                                    const day = entry.date.getDate();
+                                    const full = entry.date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+                                    html += '<label class="date-chip" title="' + esc(full) + '">'
+                                         +  '<input type="checkbox" name="campaign" value="' + esc(entry.campaign.id) + '">'
+                                         +  '<span class="chip-face">'
+                                         +  '<span class="chip-dow">' + esc(dow) + '</span>'
+                                         +  '<span class="chip-day">' + day + '</span>'
+                                         +  (entry.campaign.name ? '<span class="chip-name">' + esc(entry.campaign.name) + '</span>' : '')
+                                         +  '</span></label>';
+                                });
+                                html += '</div>';
+                            });
+
+                            checkboxesDiv.innerHTML = html;
+
+                            const countEl = document.getElementById('dates-count');
+                            const refreshCount = () => {
+                                const n = checkboxesDiv.querySelectorAll('input:checked').length;
+                                countEl.textContent = n === 0
+                                    ? 'No days picked yet'
+                                    : n + (n === 1 ? ' day picked' : ' days picked');
+                            };
+                            checkboxesDiv.addEventListener('change', refreshCount);
+                            const allBtn = document.getElementById('dates-all');
+                            const noneBtn = document.getElementById('dates-none');
+                            if (allBtn) {
+                                allBtn.addEventListener('click', () => {
+                                    checkboxesDiv.querySelectorAll('input[name="campaign"]').forEach(cb => { cb.checked = true; });
+                                    refreshCount();
+                                });
+                                noneBtn.addEventListener('click', () => {
+                                    checkboxesDiv.querySelectorAll('input[name="campaign"]').forEach(cb => { cb.checked = false; });
+                                    refreshCount();
+                                });
+                            }
                         }
                     }
                 } catch (error) {
@@ -5660,13 +5739,29 @@ function subsales_serve_signup_page() {
                     return;
                 }
                 
+                // The endpoint takes a flat name/phone/team_name. It was being
+                // sent nested {team, user} objects, which arrived as nothing at
+                // all - hence "Name, phone, and at least one campaign are
+                // required" on every completed signup.
+                if (!userData || !userData.name || !userData.phone) {
+                    document.getElementById('step3-error').textContent = 'We lost your name and number. Please go back to step 1.';
+                    document.getElementById('step3-error').classList.remove('hidden');
+                    return;
+                }
+                if (!selectedTeam || !selectedTeam.name) {
+                    document.getElementById('step3-error').textContent = 'Please go back and choose your team.';
+                    document.getElementById('step3-error').classList.remove('hidden');
+                    return;
+                }
+
                 try {
                     const response = await fetch(apiBase + '/signup', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            team: selectedTeam,
-                            user: userData,
+                            name: userData.name,
+                            phone: userData.phone,
+                            team_name: selectedTeam.name,
                             campaign_ids: selectedDates
                         })
                     });
@@ -5746,7 +5841,6 @@ function subsales_serve_signup_page() {
                 // Clear appropriate fields based on mode
                 if (signupMode === 'legacy') {
                     document.getElementById('legacy-team-search').value = '';
-                    document.getElementById('legacy-new-team').value = '';
                 } else {
                     document.getElementById('user-team-search').value = '';
                 }
