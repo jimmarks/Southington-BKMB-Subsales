@@ -30,7 +30,10 @@ $season_setup_last  = Subsales_Season_Setup::last_run_text();
 // the file to prepare is offered here rather than only inside step 3 - by the
 // time they reach that step they have already committed to a sitting.
 global $wpdb;
-$season_setup_people = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ss_team_members" );
+// Active only. Someone who left is kept as inactive so their old orders still
+// resolve to a name, but they have not "carried over" and counting them here
+// disagreed with the roster count inside step 3.
+$season_setup_people = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ss_team_members WHERE status = 'active'" );
 $season_setup_teams  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}ss_teams" );
 $season_setup_steps = Subsales_Season_Setup::step_labels();
 $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
@@ -201,13 +204,6 @@ $season_setup_nonce = wp_create_nonce( Subsales_Season_Setup::NONCE );
     $modal.on('click', '.subsales-newseason-progress-step', function(){
         say('');
         load(parseInt($(this).data('goto'), 10) || 1);
-    });
-
-    // Step 6's shortcut: close and switch to the Address Management tab, which
-    // is already on this same Settings screen.
-    $modal.on('click', '.js-newseason-goto-addresses', function(){
-        close();
-        $('.nav-tab[data-target="#tab-address_extracts"]').trigger('click');
     });
 
     // Step 3's seller list. Most of a roster carries over, so the common edit

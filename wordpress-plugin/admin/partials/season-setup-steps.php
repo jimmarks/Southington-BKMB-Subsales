@@ -131,8 +131,12 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
 
     <h2>Step 3 &mdash; Who is selling this year</h2>
     <p class="subsales-newseason-status">
-        <span class="<?php echo $status['members'] > 0 ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $status['members'] > 0 ? '&#10003;' : '!'; ?></span>
-        <?php echo esc_html( $status['members'] ); ?> people on the roster.
+        <span class="<?php echo $status['roster'] > 0 ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $status['roster'] > 0 ? '&#10003;' : '!'; ?></span>
+        <?php echo esc_html( $status['roster'] ); ?> people on the roster<?php
+            if ( $status['roster'] > 0 && $status['members'] < 1 ) {
+                echo ', none signed up for a team yet';
+            }
+        ?>.
     </p>
     <p>Sellers carry over from year to year, so this is a check of who is coming back rather than a
        fresh list. Untick anyone who has left, paste in the new sellers, and save. Nobody is ever
@@ -298,28 +302,11 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
         <p><button type="submit" class="button button-primary">Save this choice</button></p>
     </form>
 
-<?php elseif ( 6 === $step ) : ?>
-
-    <h2>Step 6 &mdash; Refresh the addresses</h2>
-    <p class="subsales-newseason-status">
-        <span class="<?php echo $status['addresses'] > 0 ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $status['addresses'] > 0 ? '&#10003;' : '!'; ?></span>
-        <?php echo esc_html( number_format_i18n( $status['addresses'] ) ); ?> addresses loaded.
-        <?php if ( $status['last_generated'] ) : ?>
-            Last sent to the seller app: <strong><?php echo esc_html( $status['last_generated'] ); ?></strong>.
-        <?php else : ?>
-            They have not been sent to the seller app yet.
-        <?php endif; ?>
-    </p>
-    <p>Addresses usually only need attention if the town added streets or the seller app is missing houses.
-       If the count above looks right, you can move on.</p>
-    <p><button type="button" class="button js-newseason-goto-addresses">Open Address Management</button>
-       <span class="description">This closes the setup window and takes you to the Address Management tab on this same page.</span></p>
-
-<?php elseif ( 7 === $step ) :
+<?php elseif ( 6 === $step ) :
     $admin_phone = (string) get_option( 'subsales_admin_contact_phone', '' );
 ?>
 
-    <h2>Step 7 &mdash; Who do customers call?</h2>
+    <h2>Step 6 &mdash; Who do customers call?</h2>
 
     <p class="subsales-newseason-msg">
         The subsales chair changes from year to year, so this is set per season.
@@ -434,10 +421,10 @@ $season_label = $status['season_label'] !== '' ? $status['season_label'] : 'no s
     })();
     </script>
 
-<?php elseif ( 8 === $step ) : ?>
+<?php elseif ( 7 === $step ) : ?>
 
     <?php $open = ( 1 === $status['sales_enabled'] ); ?>
-    <h2>Step 8 &mdash; Open sales</h2>
+    <h2>Step 7 &mdash; Open sales</h2>
     <p class="subsales-newseason-status">
         <span class="<?php echo $open ? 'subsales-newseason-ok' : 'subsales-newseason-todo'; ?>"><?php echo $open ? '&#10003;' : '!'; ?></span>
         Sales are currently <strong><?php echo $open ? 'OPEN' : 'CLOSED'; ?></strong>.

@@ -38,9 +38,8 @@ class Subsales_Season_Setup {
             3 => 'Sellers',
             4 => 'Pricing',
             5 => 'Sales mode',
-            6 => 'Addresses',
-            7 => 'Admin contact',
-            8 => 'Open sales',
+            6 => 'Admin contact',
+            7 => 'Open sales',
         );
     }
 
@@ -91,6 +90,15 @@ class Subsales_Season_Setup {
             }
         }
 
+        // The roster is who exists as a seller, which is what step 3 lists and
+        // edits. It is not the same number as $counts['members'], which counts
+        // people already assigned to a team in this season - that is zero until
+        // the kids start signing up, and reporting it as "people on the roster"
+        // read as though the roster had been wiped.
+        $roster_count = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}ss_team_members WHERE status = 'active'"
+        );
+
         $addresses_table = $wpdb->prefix . 'ss_addresses';
         $address_count   = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$addresses_table}" );
 
@@ -109,6 +117,7 @@ class Subsales_Season_Setup {
             'sales_days'       => intval( $counts['campaigns'] ),
             'teams'            => intval( $counts['teams'] ),
             'members'          => intval( $counts['members'] ),
+            'roster'           => $roster_count,
             'products_total'   => count( $products ),
             'products_visible' => $visible,
             'sales_mode'       => get_option( 'subsales_sales_mode', 'legacy' ),
