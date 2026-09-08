@@ -3061,17 +3061,31 @@ class Subsales_Database {
         ), ARRAY_A );
 
         if ( $member ) {
-            // A phone that already belongs to a seller is the child's number
-            // typed into the driver box by mistake - the two fields sit inches
-            // apart on that form. Taking the row over renamed the child to the
-            // parent, flipped the child's role to driver, and filed driver
-            // signups under the child's account. Refuse instead: a parent has
-            // their own number, and one phone has to mean one person because
-            // that is what the app logs in with.
-            if ( 'driver' !== $member['role'] ) {
+            // Refuse only if this phone belongs to somebody selling THIS season.
+            // That is the mistake worth catching: the child's number typed into
+            // the driver box, the two fields being inches apart on that form,
+            // which would rename the child to the parent and file driver
+            // signups under the child's account.
+            //
+            // "Has ever been a seller" is the wrong test and was the first thing
+            // this did. Kids grow up. A child who sold in 2019 can turn up in
+            // 2032 as somebody's parent, on the same phone, and they are the
+            // same human - their old row is the right row to use. Only a
+            // current-season seller cannot also be this season's driver.
+            $season_id = self::current_season_id();
+            $sells_now = (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*)
+                   FROM {$wpdb->prefix}ss_signups sg
+                   JOIN {$wpdb->prefix}ss_teams t ON t.id = sg.team_id
+                  WHERE sg.user_id = %d AND sg.is_driver = 0 AND t.season_id = %d",
+                intval( $member['id'] ),
+                intval( $season_id )
+            ) );
+
+            if ( $sells_now > 0 ) {
                 return new WP_Error(
                     'phone_is_a_seller',
-                    'That phone number already belongs to a seller. Please enter the parent\'s own phone number.',
+                    'That phone number belongs to a seller signed up this season. Please enter the parent\'s own phone number.',
                     array( 'status' => 409 )
                 );
             }
