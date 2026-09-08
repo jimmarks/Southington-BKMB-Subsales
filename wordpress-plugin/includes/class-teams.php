@@ -290,9 +290,19 @@ class Subsales_Teams {
             // to be told which teams, not just that this row says "driver".
             // Without this the app showed a seller the driver money view and the
             // server then refused it with a 401.
+            // Scoped to the current season. A parent who drove last year is not
+            // this year's driver, and the member row's own 'role' column is no
+            // help here - it is set once and never expires, which is precisely
+            // how a child who was a driver in a previous season was still being
+            // handed the driver view.
+            $season_id = Subsales_Database::current_season_id();
             $driver_team_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
-                "SELECT DISTINCT team_id FROM {$wpdb->prefix}ss_signups WHERE user_id = %d AND is_driver = 1",
-                intval( $user['id'] )
+                "SELECT DISTINCT s.team_id
+                   FROM {$wpdb->prefix}ss_signups s
+                   JOIN {$wpdb->prefix}ss_teams t ON t.id = s.team_id
+                  WHERE s.user_id = %d AND s.is_driver = 1 AND t.season_id = %d",
+                intval( $user['id'] ),
+                intval( $season_id )
             ) ) );
 
             return new WP_REST_Response( array(

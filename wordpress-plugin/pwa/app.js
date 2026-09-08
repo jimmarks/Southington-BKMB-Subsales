@@ -628,7 +628,10 @@
       const loginHidden = !login || login.classList.contains('hidden') || login.style.display === 'none';
       const app = qs('#appSection');
       const appVisible = app && !app.classList.contains('hidden') && app.style.display !== 'none';
-      if (role === 'driver' && drivesThisTeam && teamId && teamId !== '-1' && loginHidden && appVisible) {
+      // Driving is decided by this season's signups alone. The member row's
+      // 'role' is deliberately not consulted: it never expires, so it carried a
+      // previous season's driver forward into this one.
+      if (drivesThisTeam && teamId && teamId !== '-1' && loginHidden && appVisible) {
         enterDriverMode();
       } else {
         driverExitMode();

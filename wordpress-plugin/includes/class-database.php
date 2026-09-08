@@ -3056,11 +3056,26 @@ class Subsales_Database {
         $members_table = $wpdb->prefix . 'ss_team_members';
 
         $member = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id FROM {$members_table} WHERE phone = %s",
+            "SELECT id, role FROM {$members_table} WHERE phone = %s",
             $phone
         ), ARRAY_A );
 
         if ( $member ) {
+            // A phone that already belongs to a seller is the child's number
+            // typed into the driver box by mistake - the two fields sit inches
+            // apart on that form. Taking the row over renamed the child to the
+            // parent, flipped the child's role to driver, and filed driver
+            // signups under the child's account. Refuse instead: a parent has
+            // their own number, and one phone has to mean one person because
+            // that is what the app logs in with.
+            if ( 'driver' !== $member['role'] ) {
+                return new WP_Error(
+                    'phone_is_a_seller',
+                    'That phone number already belongs to a seller. Please enter the parent\'s own phone number.',
+                    array( 'status' => 409 )
+                );
+            }
+
             $member_id = intval( $member['id'] );
             $update = array( 'status' => 'active', 'role' => 'driver' );
             $format = array( '%s', '%s' );
@@ -3208,6 +3223,9 @@ class Subsales_Database {
         // this was ever called.
         if ( $is_driver ) {
             $user_id = self::get_or_create_driver_by_phone( $name, $phone );
+            if ( is_wp_error( $user_id ) ) {
+                return $user_id;
+            }
             if ( ! $user_id ) {
                 return new WP_Error( 'member_failed', 'Could not create the driver.', array( 'status' => 500 ) );
             }
