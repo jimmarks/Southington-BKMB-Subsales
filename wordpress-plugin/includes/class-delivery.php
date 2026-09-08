@@ -1342,6 +1342,105 @@ class Subsales_Delivery {
      * @return array|false Array with lat, lng, formatted_address, location_type, or false on failure
      * @since 2.4.55
      */
+    /**
+     * Ask Google what is at a set of coordinates.
+     *
+     * Point-in-polygon settles the ZIP for parcels we imported, but it returns
+     * nothing for a rooftop that falls in a gap between ZCTA polygons - and a
+     * condo complex or a boundary edge lands there routinely. Google's
+     * structured postal_code is an authority answering the question, which is
+     * a different thing from us picking the nearest ZIP and hoping.
+     *
+     * Results are cached in the same table as forward lookups, keyed "@lat,lng",
+     * so re-running a bulk pass costs nothing.
+     *
+     * @param float $lat Latitude
+     * @param float $lng Longitude
+     * @return array|false zip/city/street/house_number/formatted_address, or false
+     * @since 3.29.0
+     */
+    public static function reverse_geocode( $lat, $lng ) {
+        global $wpdb;
+
+        if ( ! is_numeric( $lat ) || ! is_numeric( $lng ) ) {
+            return false;
+        }
+
+        $cache_table = $wpdb->prefix . 'order_sync_geocodes';
+        $key         = sprintf( '@%.6f,%.6f', floatval( $lat ), floatval( $lng ) );
+
+        $cached = $wpdb->get_var( $wpdb->prepare(
+            "SELECT formatted_address FROM {$cache_table} WHERE address = %s AND status = 'reverse' LIMIT 1",
+            $key
+        ) );
+        if ( $cached ) {
+            $decoded = json_decode( $cached, true );
+            if ( is_array( $decoded ) ) {
+                return $decoded;
+            }
+        }
+
+        $api_key = get_option( 'order_sync_google_maps_api_key', '' );
+        if ( empty( $api_key ) ) {
+            subsales_log( 'ERROR', 'address', 'Google Maps API key not configured' );
+            return false;
+        }
+
+        $url = 'https://maps.googleapis.com/maps/api/geocode/json?latlng=' . rawurlencode( $lat . ',' . $lng )
+             . '&result_type=street_address|premise|subpremise&key=' . $api_key;
+
+        $response = wp_remote_get( $url, array( 'timeout' => 10 ) );
+        if ( is_wp_error( $response ) ) {
+            subsales_log( 'ERROR', 'address', 'Reverse geocode failed: ' . $response->get_error_message() );
+            return false;
+        }
+
+        $data = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( empty( $data['results'][0]['address_components'] ) ) {
+            return false;
+        }
+
+        $out = array(
+            'zip'               => '',
+            'city'              => '',
+            'street'            => '',
+            'house_number'      => '',
+            'formatted_address' => isset( $data['results'][0]['formatted_address'] ) ? $data['results'][0]['formatted_address'] : '',
+        );
+
+        foreach ( $data['results'][0]['address_components'] as $component ) {
+            $types = isset( $component['types'] ) ? (array) $component['types'] : array();
+            if ( in_array( 'postal_code', $types, true ) ) {
+                $out['zip'] = preg_replace( '/[^0-9]/', '', $component['short_name'] );
+            } elseif ( in_array( 'locality', $types, true ) ) {
+                $out['city'] = $component['long_name'];
+            } elseif ( in_array( 'route', $types, true ) ) {
+                $out['street'] = $component['long_name'];
+            } elseif ( in_array( 'street_number', $types, true ) ) {
+                $out['house_number'] = $component['long_name'];
+            }
+        }
+
+        if ( 5 !== strlen( $out['zip'] ) ) {
+            return false;
+        }
+
+        $wpdb->insert( $cache_table, array(
+            'address_hash'       => hash( 'sha256', $key ),
+            'address_normalized' => $key,
+            'address'            => $key,
+            'lat'                => floatval( $lat ),
+            'lng'                => floatval( $lng ),
+            'formatted_address'  => wp_json_encode( $out ),
+            'location_type'      => 'REVERSE',
+            'status'             => 'reverse',
+            'created_at'         => current_time( 'mysql' ),
+            'updated_at'         => current_time( 'mysql' ),
+        ) );
+
+        return $out;
+    }
+
     public static function geocode_address( $address, $strict_validation = true ) {
         global $wpdb;
         

@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.28.1
+ * Version: 3.29.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.28.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.29.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2190,6 +2190,104 @@ function subsales_review_queue_geocode_ajax() {
         'lng'               => $geo['lng'],
         'formatted_address' => isset( $geo['formatted_address'] ) ? $geo['formatted_address'] : '',
         'zip'               => $zip,
+    ) );
+}
+
+// AJAX handler: work through the review queue in one pass instead of one click
+// per row. Called repeatedly by the admin JS until nothing is left, so a slow
+// batch can never hit a gateway timeout.
+add_action( 'wp_ajax_subsales_review_queue_bulk', 'subsales_review_queue_bulk_ajax' );
+function subsales_review_queue_bulk_ajax() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+    check_ajax_referer( 'subsales_address_review', 'nonce' );
+
+    $skip     = isset( $_POST['skip'] ) ? array_map( 'intval', (array) $_POST['skip'] ) : array();
+    $rows     = Subsales_Database::get_review_queue_rows( 40, 0, 'pending' );
+    $rows     = array_slice( array_filter( $rows, function ( $r ) use ( $skip ) {
+        return ! in_array( intval( $r['id'] ), $skip, true );
+    } ), 0, 10 );
+    $resolved = 0;
+    $failed   = array();
+    $stuck    = array();
+
+    foreach ( $rows as $row ) {
+        $id  = intval( $row['id'] );
+        $lat = $row['lat'];
+        $lng = $row['lng'];
+
+        $label = trim( $row['house_number'] . ' ' . $row['street'] );
+        if ( '' === $label ) {
+            $label = $row['raw_address'];
+        }
+
+        // No coordinates yet - a seller typed this one, so find it first.
+        if ( ! is_numeric( $lat ) || ! is_numeric( $lng ) ) {
+            $query = $label . ', ' . ( ! empty( $row['city'] ) ? $row['city'] : 'Southington' ) . ', CT';
+            $geo   = Subsales_Delivery::geocode_address( $query );
+            if ( ! $geo ) {
+                // Left pending on purpose. A row Google cannot find is exactly
+                // the row a human needs to look at, so hiding it would defeat
+                // the queue.
+                $failed[]  = $label . ' - Google could not find it';
+                $stuck[]   = $id;
+                continue;
+            }
+            $lat = $geo['lat'];
+            $lng = $geo['lng'];
+        }
+
+        $place = Subsales_Delivery::reverse_geocode( $lat, $lng );
+        if ( ! $place || '' === $place['zip'] ) {
+            $failed[] = $label . ' - no ZIP came back';
+            $stuck[]  = $id;
+            continue;
+        }
+
+        $args = array(
+            'zip'  => $place['zip'],
+            'lat'  => $lat,
+            'lng'  => $lng,
+            'note' => 'Bulk look-up: ' . $place['formatted_address'],
+        );
+
+        // The town is always Google's to give. Ingestion stamped every parcel
+        // with the town being ingested, so a parcel the query swept in from
+        // over the line still says Southington - and filing a Meriden house as
+        // "Southington 06451" would be worse than leaving it in the queue.
+        if ( '' !== $place['city'] ) {
+            $args['city'] = $place['city'];
+        }
+
+        // The street is different. A row from the CT parcel layer carries the
+        // town's own spelling, and the address book is keyed on that spelling,
+        // so it stays. A seller-typed row has no such pedigree - its street was
+        // parsed out of free text and is often mangled - so it takes Google's.
+        if ( 'not_in_database' === $row['reason'] ) {
+            if ( '' !== $place['house_number'] ) {
+                $args['house_number'] = $place['house_number'];
+            }
+            if ( '' !== $place['street'] ) {
+                $args['street'] = $place['street'];
+            }
+        }
+
+        $result = Subsales_Database::resolve_review_queue_row( $id, $args );
+        if ( is_wp_error( $result ) ) {
+            $failed[] = $label . ' - ' . $result->get_error_message();
+            $stuck[]  = $id;
+            continue;
+        }
+        $resolved++;
+    }
+
+    wp_send_json_success( array(
+        'processed'   => count( $rows ),
+        'resolved'    => $resolved,
+        'failed'      => $failed,
+        'stuck_ids'   => $stuck,
+        'remaining'   => Subsales_Database::count_review_queue_rows( 'pending' ),
     ) );
 }
 

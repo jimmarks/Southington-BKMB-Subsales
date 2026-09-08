@@ -187,6 +187,69 @@
         .always(function(){ $btn.prop('disabled', false).text('Look up'); });
     });
 
+    // Work the whole queue in one press. The server handles ten rows a call and
+    // we keep calling until a pass resolves nothing, so a long queue can't time
+    // out and a row Google can't place can't put us in a loop.
+    $(document).on('click', '#subsales-review-bulk', function(){
+      var $btn = $(this);
+      var total = parseInt($btn.data('count'), 10) || 0;
+      var $log = $('#subsales-review-bulk-log');
+
+      if (!confirm('Ask Google about all ' + total + ' addresses?\n\nThis costs roughly $' +
+                   (total * 0.005).toFixed(2) + ' in look-up charges.')) return;
+
+      var resolvedTotal = 0, problems = [], stuck = [];
+      $log.show().html('<strong>Working\u2026</strong>');
+
+      function pass() {
+        $.post(ajaxUrl, { action: 'subsales_review_queue_bulk', nonce: reviewNonce, skip: stuck })
+          .done(function(resp){
+            if (!resp || !resp.success) {
+              $log.html('<strong>Stopped:</strong> ' + errorOf(resp, 'Unknown error'));
+              $btn.prop('disabled', false).text('Look up all ' + total);
+              return;
+            }
+            var d = resp.data;
+            resolvedTotal += d.resolved;
+            problems = problems.concat(d.failed || []);
+            stuck = stuck.concat(d.stuck_ids || []);
+            updateBadge(d.remaining);
+            $log.html('<strong>Placed ' + resolvedTotal + '</strong> so far, ' + d.remaining + ' still on the list\u2026');
+
+            // A pass that placed nothing means everything left needs a person.
+            if (d.resolved > 0 && d.remaining > 0) {
+              pass();
+              return;
+            }
+            done(d.remaining);
+          })
+          .fail(function(xhr){
+            $log.html('<strong>Stopped:</strong> request failed (' + xhr.status + ' ' + xhr.statusText + '). Placed ' + resolvedTotal + ' before that.');
+            $btn.prop('disabled', false).text('Look up all ' + total);
+          });
+      }
+
+      function done(remaining) {
+        var html = '<strong>Done. Placed ' + resolvedTotal + ' address' + (resolvedTotal === 1 ? '' : 'es') + '.</strong>';
+        if (remaining > 0) {
+          html += ' ' + remaining + ' still need a person to look at ' +
+                  (problems.length ? 'them:' : 'them.');
+          if (problems.length) {
+            html += '<ul style="margin:8px 0 0 18px; list-style:disc;">';
+            problems.slice(0, 25).forEach(function(p){ html += '<li>' + $('<div>').text(p).html() + '</li>'; });
+            html += '</ul>';
+            if (problems.length > 25) html += '<p style="margin:6px 0 0;">\u2026and ' + (problems.length - 25) + ' more.</p>';
+          }
+        }
+        html += '<p style="margin:8px 0 0;">Reload the page to see the updated list.</p>';
+        $log.html(html);
+        $btn.prop('disabled', false).text('Look up all ' + remaining);
+      }
+
+      $btn.prop('disabled', true).text('Looking up\u2026');
+      pass();
+    });
+
     $(document).on('click', '.subsales-review-save', function(){
       var $btn = $(this);
       var $editor = $btn.closest('.subsales-review-editor');

@@ -209,6 +209,21 @@ $review_rows = $review_pending > 0
             sellers, orders and deliveries all keep working while this list sits here.
         </p>
 
+        <?php if ( ! empty( $review_rows ) ) : ?>
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:#f6f7f7; border:1px solid #dcdcde; border-radius:4px; padding:12px; margin-bottom:16px;">
+                <button type="button" class="button button-primary" id="subsales-review-bulk"
+                        data-count="<?php echo esc_attr( $review_pending ); ?>">
+                    Look up all <?php echo esc_html( number_format( $review_pending ) ); ?>
+                </button>
+                <span style="color:#50575e; font-size:13px;">
+                    Asks Google about every address on this list in one go and fills in what it finds.
+                    About <?php echo esc_html( '$' . number_format( $review_pending * 0.005, 2 ) ); ?> in look-up charges.
+                    Anything Google can't place stays on the list for you to look at.
+                </span>
+            </div>
+            <div id="subsales-review-bulk-log" style="display:none; margin-bottom:16px; padding:12px; background:#fff; border-left:4px solid #72aee6; font-size:13px;"></div>
+        <?php endif; ?>
+
         <?php if ( empty( $review_rows ) ) : ?>
             <div class="subsales-empty-state">
                 <div class="subsales-empty-state-icon">&#9989;</div>
