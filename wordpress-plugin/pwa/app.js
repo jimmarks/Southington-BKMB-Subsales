@@ -1595,10 +1595,22 @@
   }
 
   // Reveal auth-only controls that are server-rendered hidden with `.sm-auth-hidden`
+  // Hide the auth-only controls again. revealAuthControls() strips the class
+  // outright, so without a marker there is no way to find those nodes a second
+  // time - which is why the header kept showing a team chip and a Log out
+  // button after logging out, until the page was reloaded.
+  function hideAuthControls(){
+    try{
+      document.querySelectorAll('.sm-auth-ctl').forEach(n => n.classList.add('sm-auth-hidden'));
+      const chip = qs('#currentTeamDisplay'); if (chip) chip.classList.add('hidden');
+      const chipName = qs('#currentTeamName'); if (chipName) chipName.textContent = '';
+    }catch(e){}
+  }
+
   function revealAuthControls(){
     try{
       const nodes = document.querySelectorAll('.sm-auth-hidden');
-      nodes.forEach(n => n.classList.remove('sm-auth-hidden'));
+      nodes.forEach(n => { n.classList.add('sm-auth-ctl'); n.classList.remove('sm-auth-hidden'); });
     }catch(e){}
     // Drivers see the team money view instead of the sales form.
     try{ applyDriverRoleView(); }catch(e){}
@@ -4357,6 +4369,8 @@
         localStorage.removeItem('driverTeamIds');
         // Tear down the driver money view so the next login starts clean.
         try{ driverExitMode(); }catch(e){}
+        // ...and put the header back to its logged-out state.
+        hideAuthControls();
 
         await logWithContext('auth', 'Logout complete - session cleared');
       } catch(e){
