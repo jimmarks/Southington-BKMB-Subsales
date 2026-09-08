@@ -1496,6 +1496,22 @@
     });
   }
   
+  // What a kid is actually giving up by not installing. Not "the app won't
+  // work" - the service worker still caches in the browser. The real cost is
+  // that iOS wipes a website's stored data after about a week of not opening
+  // it, and queued offline orders live in that storage. Installed to the home
+  // screen, that clear-out does not apply.
+  function explainNoInstall(){
+    var msg = isIOSDevice()
+      ? 'No problem. Heads up though: if the app is not on your home screen, iPhone can clear your saved orders after about a week. Any order waiting to send could be lost. You can add it any time from the Share button.'
+      : 'No problem. Heads up though: without installing, orders you take with no signal are held by the browser and are easier to lose. You can install any time from your browser menu.';
+    if (window.smShowSnackbar) {
+      window.smShowSnackbar(msg, { timeout: 9000 });
+    } else {
+      alert(msg);
+    }
+  }
+
   // Dismiss button click handler
   if (installDismissBtn) {
     installDismissBtn.addEventListener('click', () => {
@@ -1503,6 +1519,7 @@
         localStorage.setItem('pwa_install_dismissed_at', String(Date.now()));
         trackInstallEvent('install_dismissed');
         hideInstallPrompt();
+        explainNoInstall();
 
       } catch(err) {
         console.warn('installDismissBtn click error', err);
@@ -1521,6 +1538,7 @@
         // Mark as shown so we don't spam
         localStorage.setItem('pwa_install_dismissed_at', String(Date.now()));
         hideInstallPrompt();
+        if ( ! isAppInstalled() ) { explainNoInstall(); }
       } catch(err) {
         console.warn('iosInstallCloseBtn click error', err);
       }
