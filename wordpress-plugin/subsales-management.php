@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.36.0
+ * Version: 3.36.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.36.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.36.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4910,7 +4910,7 @@ function subsales_serve_signup_page() {
                         <label for="legacy-team-search">Your Team</label>
                         <input type="text" id="legacy-team-search" placeholder="Start typing your team name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                         <div id="legacy-team-results"></div>
-                        <div class="help-text" id="legacy-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
+                        <div class="help-text" id="legacy-team-hint">Start typing and pick your team from the list. If nobody has made your team yet, type the whole name and we'll create it - only one of you needs to.</div>
                     </div>
                     <button class="btn" id="legacy-step1-next">Next</button>
                     <div id="legacy-step1-error" class="error hidden"></div>
@@ -4971,7 +4971,7 @@ function subsales_serve_signup_page() {
                         <label for="user-team-search">Your Team</label>
                         <input type="text" id="user-team-search" placeholder="Start typing your team name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                         <div id="user-team-results"></div>
-                        <div class="help-text" id="user-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
+                        <div class="help-text" id="user-team-hint">Start typing and pick your team from the list. If nobody has made your team yet, type the whole name and we'll create it - only one of you needs to.</div>
                     </div>
                     <button class="btn" id="user-step2-next">Next - Select Dates</button>
                     <button class="btn btn-secondary" id="user-step2-back">Back</button>
@@ -5093,7 +5093,7 @@ function subsales_serve_signup_page() {
                     clearTimeout(timer);
                     if (query.length < 2) {
                         results.innerHTML = '';
-                        hint.textContent = "Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.";
+                        hint.textContent = "Start typing and pick your team from the list. If nobody has made your team yet, type the whole name and we'll create it - only one of you needs to.";
                         return;
                     }
 
@@ -5104,7 +5104,8 @@ function subsales_serve_signup_page() {
 
                             if (!data.length) {
                                 results.innerHTML = '';
-                                hint.textContent = 'No team called "' + query + '" yet. Press Next and we\'ll create it.';
+                                hint.textContent = 'No team called "' + query + '" yet. Press Next and we\'ll create it. '
+                                                 + 'Only one person on your team needs to do this - everyone else picks it off the list afterwards.';
                                 return;
                             }
 
