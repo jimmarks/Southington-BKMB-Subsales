@@ -152,7 +152,12 @@ class Subsales_Signups {
      * GET /signup/settings - Get signup configuration
      */
     public static function rest_signup_settings( $request ) {
-        $mode = get_option( 'subsales_signup_mode', 'legacy' );
+        // Identity first. The roster already knows who these kids are, so asking
+        // them to pick a team before saying who they are meant we could not show
+        // what they had already signed up for, and their name was typed rather
+        // than matched. 'legacy' is the old team-first order, kept for anyone
+        // who has deliberately set it.
+        $mode = get_option( 'subsales_signup_mode', 'user' );
         $admin_email = get_option( 'subsales_admin_email', get_option( 'admin_email' ) );
         
         return rest_ensure_response( array(
