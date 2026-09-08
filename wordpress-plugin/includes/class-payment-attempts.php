@@ -279,9 +279,12 @@ class Subsales_Payment_Attempts {
         // a real sandbox webhook delivery before relying on this in production.
         $signature_header = $request->get_header( 'x-square-hmacsha256-signature' );
 
-        // Must match EXACTLY the URL configured in Square's webhook subscription
-        // settings, or verification will always fail.
-        $notification_url = home_url( $request->get_route() );
+        // Must match EXACTLY the URL Square posted to, because that string is
+        // the first half of the HMAC. home_url() was used here and it omits
+        // /wp-json, so the signature was computed over an address Square never
+        // called and every webhook was rejected with a 401. rest_url() is the
+        // one that includes the REST prefix.
+        $notification_url = rest_url( ltrim( $request->get_route(), '/' ) );
 
         $settings = Subsales_Square_Payments::get_settings();
         if ( ! $settings ) {
