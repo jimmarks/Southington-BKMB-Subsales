@@ -301,16 +301,22 @@ $review_rows = $review_pending > 0
                                     <input type="text" class="subsales-review-city" value="<?php echo esc_attr( $row['city'] ); ?>" style="width:140px;">
                                 </label>
                                 <label style="font-size:12px;">ZIP code<br>
-                                    <select class="subsales-review-zip" style="width:120px;">
-                                        <option value="">Choose&hellip;</option>
-                                        <?php
-                                        $zip_options = array_values( array_unique( array_merge( $candidates, $configured_zips ) ) );
-                                        foreach ( $zip_options as $zo ) : ?>
-                                            <option value="<?php echo esc_attr( $zo ); ?>"<?php echo ( count( $candidates ) === 1 && $zo === $candidates[0] ) ? ' selected' : ''; ?>>
-                                                <?php echo esc_html( $zo ); ?><?php echo in_array( $zo, $candidates, true ) ? ' (likely)' : ''; ?>
-                                            </option>
+                                    <?php
+                                    // Free text, not a dropdown. The suggestions are the ZIPs we
+                                    // sell in, but a delivery can land in a town we don't cover and
+                                    // that address still needs a real ZIP to geocode against.
+                                    $zip_options = array_values( array_unique( array_merge( $candidates, $configured_zips ) ) );
+                                    $zip_prefill = ( 1 === count( $candidates ) ) ? $candidates[0] : '';
+                                    ?>
+                                    <input type="text" class="subsales-review-zip" style="width:120px;"
+                                           list="subsales-zip-options-<?php echo esc_attr( $rid ); ?>"
+                                           value="<?php echo esc_attr( $zip_prefill ); ?>"
+                                           inputmode="numeric" maxlength="5" placeholder="Any ZIP">
+                                    <datalist id="subsales-zip-options-<?php echo esc_attr( $rid ); ?>">
+                                        <?php foreach ( $zip_options as $zo ) : ?>
+                                            <option value="<?php echo esc_attr( $zo ); ?>"<?php echo in_array( $zo, $candidates, true ) ? ' label="likely"' : ''; ?>></option>
                                         <?php endforeach; ?>
-                                    </select>
+                                    </datalist>
                                 </label>
                                 <label style="font-size:12px;">Latitude<br>
                                     <input type="text" class="subsales-review-lat" value="<?php echo esc_attr( (string) $row['lat'] ); ?>" style="width:120px;">
@@ -328,6 +334,8 @@ $review_rows = $review_pending > 0
                             </div>
                             <p class="description" style="margin:10px 0 0;">
                                 A latitude and longitude are required. If they're blank, press <em>Look up</em> to fill them in.
+                                The ZIP box suggests the ZIP codes you sell in, but you can type any ZIP &mdash; an address in a town you don't cover
+                                is still saved and mapped for delivery, it just won't show up in the sellers' offline address list.
                             </p>
                         </td>
                     </tr>

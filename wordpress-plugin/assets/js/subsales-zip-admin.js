@@ -178,7 +178,7 @@
           if (d.zip) $editor.find('.subsales-review-zip').val(d.zip);
           $editor.show();
           alert('Found it' + (d.formatted_address ? ': ' + d.formatted_address : '') + '.\n\n' +
-                (d.zip ? 'ZIP code ' + d.zip + ' filled in for you.' : 'We still couldn\'t confirm the ZIP code — pick one below.') +
+                (d.zip ? 'ZIP code ' + d.zip + ' filled in for you.' : 'We still couldn\'t confirm the ZIP code — type one in below.') +
                 '\n\nCheck it over, then press "Save address".');
         })
         .fail(function(xhr){
@@ -196,7 +196,7 @@
       var lng = $.trim($editor.find('.subsales-review-lng').val());
 
       if (!/^\d{5}$/.test(zip)) {
-        alert('Pick a ZIP code first.');
+        alert('Enter a 5-digit ZIP code.');
         return;
       }
       if (!lat || !lng) {
