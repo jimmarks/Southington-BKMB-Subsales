@@ -293,12 +293,12 @@ class Subsales_Driver_Signup {
         <div class="card" id="step1">
             <div class="form-group">
                 <label for="childName">Your Child's Name</label>
-                <input type="text" id="childName" placeholder="Start typing your child's name" autocomplete="off">
+                <input type="text" id="childName" placeholder="Start typing your child's name" autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                 <div class="autocomplete-results hidden" id="childNameResults"></div>
             </div>
             <div class="form-group">
                 <label for="childPhone">Your Child's Phone Number</label>
-                <input type="tel" id="childPhone" placeholder="(555) 555-5555" autocomplete="off">
+                <input type="text" inputmode="tel" id="childPhone" placeholder="(555) 555-5555" autocomplete="new-password" autocorrect="off" spellcheck="false">
             </div>
             <button class="btn" id="lookupBtn">Find My Child's Team</button>
             <div class="error hidden" id="step1Error"></div>
@@ -313,11 +313,11 @@ class Subsales_Driver_Signup {
             </div>
             <div class="form-group">
                 <label for="driverName">Your Name (Driver)</label>
-                <input type="text" id="driverName" placeholder="Your full name" autocomplete="off">
+                <input type="text" id="driverName" placeholder="Your full name" autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
             </div>
             <div class="form-group">
                 <label for="driverPhone">Your Phone Number</label>
-                <input type="tel" id="driverPhone" placeholder="(555) 555-5555" autocomplete="off">
+                <input type="text" inputmode="tel" id="driverPhone" placeholder="(555) 555-5555" autocomplete="new-password" autocorrect="off" spellcheck="false">
             </div>
             <button class="btn" id="registerBtn">Register as Driver</button>
             <button class="btn btn-secondary" id="backBtn">Back</button>

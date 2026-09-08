@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.35.0
+ * Version: 3.35.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.35.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.35.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4746,6 +4746,11 @@ function subsales_serve_signup_page() {
             /* Date chips. Thirty checkboxes stacked down a phone is a scroll
                nobody finishes, and the year repeated thirty times carries no
                information - the month heading says it once. */
+            /* This container is .checkbox-group, which is display:flex. The month
+               heading and the chip grid were becoming flex items side by side,
+               which squeezed the grid to one chip wide. We lay out our own
+               insides here, so turn the flex off. */
+            #dates-checkboxes { display: block; }
             .date-month {
                 margin: 0 0 6px;
                 font-size: 13px;
@@ -4903,7 +4908,7 @@ function subsales_serve_signup_page() {
                     <h2>Step 1: Select or Create Team</h2>
                     <div class="form-group">
                         <label for="legacy-team-search">Your Team</label>
-                        <input type="text" id="legacy-team-search" placeholder="Start typing your team name..." autocomplete="off">
+                        <input type="text" id="legacy-team-search" placeholder="Start typing your team name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                         <div id="legacy-team-results"></div>
                         <div class="help-text" id="legacy-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
                     </div>
@@ -4916,12 +4921,12 @@ function subsales_serve_signup_page() {
                     <h2>Step 2: Your Information</h2>
                     <div class="form-group">
                         <label for="legacy-user-name">Your Name (Required)</label>
-                        <input type="text" id="legacy-user-name" placeholder="Enter your name..." required>
+                        <input type="text" id="legacy-user-name" placeholder="Enter your name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words" required>
                         <div class="help-text">Enter your full name</div>
                     </div>
                     <div class="form-group">
                         <label for="legacy-user-phone">Phone Number (Required)</label>
-                        <input type="tel" id="legacy-user-phone" placeholder="(860) 555-1234" required>
+                        <input type="text" inputmode="tel" id="legacy-user-phone" placeholder="(860) 555-1234" autocomplete="new-password" autocorrect="off" spellcheck="false" required>
                         <div class="help-text">We'll use this to look up your existing registrations</div>
                     </div>
                     <button class="btn" id="legacy-step2-next">Next</button>
@@ -4935,13 +4940,13 @@ function subsales_serve_signup_page() {
                     <h2>Step 1: Your Information</h2>
                     <div class="form-group">
                         <label for="user-user-name">Your Name (Required)</label>
-                        <input type="text" id="user-user-name" placeholder="Start typing your name..." required>
+                        <input type="text" id="user-user-name" placeholder="Start typing your name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words" required>
                         <div id="user-name-results"></div>
                         <div class="help-text">Select your name or enter a new one</div>
                     </div>
                     <div class="form-group">
                         <label for="user-user-phone">Phone Number (Required)</label>
-                        <input type="tel" id="user-user-phone" placeholder="(860) 555-1234" required>
+                        <input type="text" inputmode="tel" id="user-user-phone" placeholder="(860) 555-1234" autocomplete="new-password" autocorrect="off" spellcheck="false" required>
                         <div class="help-text">We'll use this to look up your existing registrations</div>
                     </div>
                     <button class="btn" id="user-step1-next">Next</button>
@@ -4964,7 +4969,7 @@ function subsales_serve_signup_page() {
                     <h3>Sign Up for Another Date</h3>
                     <div class="form-group">
                         <label for="user-team-search">Your Team</label>
-                        <input type="text" id="user-team-search" placeholder="Start typing your team name..." autocomplete="off">
+                        <input type="text" id="user-team-search" placeholder="Start typing your team name..." autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                         <div id="user-team-results"></div>
                         <div class="help-text" id="user-team-hint">Start typing and pick your team from the list. If your team isn't there yet, type the whole name and we'll make it for you.</div>
                     </div>
