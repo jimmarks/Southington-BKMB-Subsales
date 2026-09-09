@@ -508,12 +508,14 @@ class Subsales_SMS_Queue {
      */
     private static function apply_compliance( $body ) {
         $body = trim( $body );
-        $org  = trim( (string) get_option( 'subsales_branding', 'Subsales' ) );
 
-        if ( '' !== $org && false === stripos( $body, $org ) ) {
-            $body = $org . ': ' . $body;
-        }
-
+        // No organisation prefix. It used to prepend subsales_branding whenever
+        // the body did not already contain that exact string - so a template
+        // naming the registered brand ("Southington BKMB") still got the app's
+        // own name ("Southington Subsales") stuck on the front, and customers
+        // received one message naming two organisations that did not match the
+        // samples filed for the messaging campaign. What the message says is now
+        // entirely the template's business; use {org} in it if you want the name.
         if ( false === stripos( $body, 'STOP' ) ) {
             $body = rtrim( $body ) . ' Reply STOP to opt out.';
         }

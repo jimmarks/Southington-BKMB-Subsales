@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.60.1] - 2026-09-09
+
+### Fixed
+- **Receipts no longer name two different organisations.** The app's own name was being stuck on the front of every text whenever the message did not already contain that exact wording - so a receipt written to say "Southington BKMB" went out reading "Southington Subsales: Thanks... Southington BKMB has your order", which is confusing to a customer and does not match the sample messages filed for the messaging campaign. What a text says is now entirely down to the message template; use the {org} placeholder in it if you want the name included.
+
 ## [3.60.0] - 2026-09-09
 
 ### Added
