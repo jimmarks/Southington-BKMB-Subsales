@@ -602,7 +602,7 @@
 
   // ==========================================================================
   // Driver "Money Accountability" view
-  // A driver (role='driver') logs in exactly like a child, selects their team,
+  // A driver logs in exactly like a child, selects their team,
   // and sees the team's running cash/check totals (per child + team) instead of
   // the sales form. Money is computed server-side (/team-tally) and re-synced
   // every 60s. Drivers can drill into a child and edit orders via the same
@@ -642,7 +642,6 @@
   // view is torn down. Safe/no-op for children & admins.
   function applyDriverRoleView(){
     try{
-      const role = localStorage.getItem('userRole');
       const teamId = localStorage.getItem('selectedTeamId');
       // Driver of THIS team, not a driver in general.
       let drivesThisTeam = false;
@@ -2575,12 +2574,10 @@
         // Store user session data
         try { localStorage.setItem('userId', data.user.id); } catch(e){}
         try { localStorage.setItem('userName', data.user.name); } catch(e){}
-        // Role drives which screen we show after auth: 'driver' -> money view.
-        try { localStorage.setItem('userRole', (data.user && data.user.role) ? data.user.role : 'member'); } catch(e){}
-        // Which teams they actually drive for. "role" alone is not enough: it is
-        // a property of the person, while driving is a property of the team-day,
-        // and the tally endpoint checks the team. Somebody who drives for one
-        // team is an ordinary seller everywhere else.
+        // Which teams they actually drive for - the only driver signal there
+        // is. Driving is a property of the team-day and the season, not of the
+        // person, and the tally endpoint checks the team. Somebody who drives
+        // for one team is an ordinary seller everywhere else.
         try {
           const dt = (data.user && Array.isArray(data.user.driver_team_ids)) ? data.user.driver_team_ids : [];
           localStorage.setItem('driverTeamIds', JSON.stringify(dt.map(String)));
@@ -4507,6 +4504,8 @@
         localStorage.removeItem('selectedTeamId');
         localStorage.removeItem('selectedTeamName');
         localStorage.removeItem('userTeams');
+        // Clears the stale key left on phones that logged in under an
+        // older version; nothing writes it any more.
         localStorage.removeItem('userRole');
         localStorage.removeItem('driverTeamIds');
         // Tear down the driver money view so the next login starts clean.

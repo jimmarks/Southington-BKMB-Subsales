@@ -291,10 +291,10 @@ class Subsales_Teams {
             // Without this the app showed a seller the driver money view and the
             // server then refused it with a 401.
             // Scoped to the current season. A parent who drove last year is not
-            // this year's driver, and the member row's own 'role' column is no
-            // help here - it is set once and never expires, which is precisely
-            // how a child who was a driver in a previous season was still being
-            // handed the driver view.
+            // this year's driver. The member row's deprecated 'role' column is
+            // no help here - it was set once and never expired, which is
+            // precisely how a child who was a driver in a previous season was
+            // still being handed the driver view. It is no longer returned.
             $season_id = Subsales_Database::current_season_id();
             $driver_team_ids = array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
                 "SELECT DISTINCT s.team_id
@@ -313,7 +313,6 @@ class Subsales_Teams {
                     'name' => $user['name'],
                     'email' => $user['email'],
                     'phone' => $user['phone'],
-                    'role' => $user['role'],
                     'driver_team_ids' => $driver_team_ids
                 ),
                 'teams' => $teams,
@@ -403,7 +402,6 @@ class Subsales_Teams {
         $name = subsales_sanitize_user_name( $params['name'] ?? '' );
         $email = sanitize_email( $params['email'] ?? '' );
         $phone = sanitize_text_field( $params['phone'] ?? '' );
-        $role = sanitize_text_field( $params['role'] ?? 'member' );
         
         // Validation
         if ( empty( $name ) ) {
@@ -438,10 +436,9 @@ class Subsales_Teams {
                 'name' => $name,
                 'email' => $email,
                 'phone' => $phone,
-                'role' => $role,
                 'status' => 'active'
             ),
-            array( '%d', '%s', '%s', '%s', '%s', '%s' )
+            array( '%d', '%s', '%s', '%s', '%s' )
         );
         
         if ( ! $result ) {
@@ -625,11 +622,6 @@ class Subsales_Teams {
             }
             
             $updates['phone'] = $phone;
-            $formats[] = '%s';
-        }
-        
-        if ( isset( $params['role'] ) ) {
-            $updates['role'] = sanitize_text_field( $params['role'] );
             $formats[] = '%s';
         }
         
@@ -994,7 +986,7 @@ class Subsales_Teams {
             $placeholders = implode( ',', array_fill( 0, count( $user_ids ), '%d' ) );
             $users = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, name, email, phone, role, status FROM {$members_table} WHERE id IN ({$placeholders})",
+                    "SELECT id, name, email, phone, status FROM {$members_table} WHERE id IN ({$placeholders})",
                     $user_ids
                 ),
                 ARRAY_A

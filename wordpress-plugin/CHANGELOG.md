@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.56.0] - 2026-09-09
+
+### Fixed
+- **The Users tab could call a child a driver, and saving an edit to a real driver quietly demoted them.** Each person carried a single "role" that was written once and never expired, so a child who drove for one sale day was still labelled a driver every season afterwards. Worse, the edit form only offered Member, Manager and Admin — a real driver matched none of them, so the form showed "Member" already selected, and correcting that person's phone number or email silently rewrote them to Member on save. Nothing anywhere in the app ever acted on that label, so no driver lost access because of it, but the tab was telling admins something that was not true.
+
+### Changed
+- **The Users tab now says what each person is doing this season.** The column reads Driver, Seller, "Driver + seller", or a dash for someone with no sign-up this season, worked out from how they actually signed up for the current season's teams rather than from a label set in a previous year. It changes on its own when someone signs up differently next season.
+
+### Removed
+- **The Role dropdown is gone from the Add/Edit User form.** It offered three choices that nothing in the app has ever used and that could only make the tab wrong, and it was the way a real driver got demoted. Nothing writes the stored role any more; the existing values are left alone.
+
 ## [3.55.0] - 2026-09-09
 
 ### Fixed

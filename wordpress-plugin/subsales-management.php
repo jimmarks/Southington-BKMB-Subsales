@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.55.0
+ * Version: 3.56.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.55.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.56.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -3258,10 +3258,9 @@ function order_sync_run_init_ajax() {
                     'name' => $user_name,
                     'email' => $user_email ?: '',
                     'phone' => $phone_normalized,
-                    'role' => 'member',
                     'status' => 'active'
                 ),
-                array( '%d', '%s', '%s', '%s', '%s', '%s' )
+                array( '%d', '%s', '%s', '%s', '%s' )
             );
             
             if ( $user_insert ) {
@@ -8028,10 +8027,9 @@ function subsales_process_import_confirm( $import_data ) {
                         'name'    => $sanitized_name,
                         'phone'   => $user['phone'],
                         'email'   => $user['email'],
-                        'role'    => 'member',
                         'status'  => $user['status'],
                     ),
-                    array( '%d', '%s', '%s', '%s', '%s', '%s' )
+                    array( '%d', '%s', '%s', '%s', '%s' )
                 );
                 $user_id = intval( $wpdb->insert_id );
             }
@@ -8125,7 +8123,6 @@ function ss_teams_page() {
         $name = subsales_sanitize_user_name( $_POST['user_name'] ?? '' );
         $email = sanitize_email( $_POST['user_email'] ?? '' );
         $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
-        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
         $status = isset( $_POST['user_active'] ) ? 'active' : 'inactive';
         
         if ( empty( $name ) ) {
@@ -8146,10 +8143,9 @@ function ss_teams_page() {
                     'name' => $name,
                     'email' => $email,
                     'phone' => $phone,
-                    'role' => $role,
                     'status' => $status
                 ),
-                array( '%d', '%s', '%s', '%s', '%s', '%s' )
+                array( '%d', '%s', '%s', '%s', '%s' )
             );
             
             if ( $result ) {
@@ -8167,7 +8163,6 @@ function ss_teams_page() {
         $name = subsales_sanitize_user_name( $_POST['user_name'] ?? '' );
         $email = sanitize_email( $_POST['user_email'] ?? '' );
         $phone = sanitize_text_field( $_POST['user_phone'] ?? '' );
-        $role = sanitize_text_field( $_POST['user_role'] ?? 'member' );
         $status = isset( $_POST['user_active'] ) ? 'active' : 'inactive';
         
         if ( empty( $name ) ) {
@@ -8181,9 +8176,9 @@ function ss_teams_page() {
             $phone = preg_replace( '/[^0-9]/', '', $phone );
             $updated = $wpdb->update(
                 $members_table,
-                array( 'name' => $name, 'email' => $email ?: '', 'phone' => $phone, 'role' => $role, 'status' => $status ),
+                array( 'name' => $name, 'email' => $email ?: '', 'phone' => $phone, 'status' => $status ),
                 array( 'id' => $user_id ),
-                array( '%s', '%s', '%s', '%s', '%s' ),
+                array( '%s', '%s', '%s', '%s' ),
                 array( '%d' )
             );
             
@@ -8256,10 +8251,33 @@ function ss_teams_page() {
     // Get all users and teams (sort: active first, then by name)
     $all_users = $wpdb->get_results( "SELECT * FROM {$members_table} ORDER BY status DESC, name ASC", ARRAY_A );
     $teams = order_sync_get_teams();
+
+    // What each person is doing THIS SEASON, derived from their active signups.
+    // The members table's own `role` column is deprecated and deliberately not
+    // read here: it was person-level and never reset between seasons, so a child
+    // who drove once was labelled a driver forever. One query for the whole
+    // list - never a query per row.
+    $season_roles = array();
+    $current_season_id = intval( Subsales_Database::current_season_id() );
+    $signup_rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.user_id, MAX(s.is_driver) AS drives, MIN(s.is_driver) AS sells
+           FROM {$wpdb->prefix}ss_signups s
+           JOIN {$wpdb->prefix}ss_teams t ON t.id = s.team_id
+          WHERE t.season_id = %d AND s.status = 'active'
+          GROUP BY s.user_id",
+        $current_season_id
+    ), ARRAY_A );
+    foreach ( (array) $signup_rows as $signup_row ) {
+        $drives = intval( $signup_row['drives'] ) === 1;   // has an is_driver=1 signup
+        $sells  = intval( $signup_row['sells'] ) === 0;    // has an is_driver=0 signup
+        $season_roles[ intval( $signup_row['user_id'] ) ] = $drives
+            ? ( $sells ? 'Driver + seller' : 'Driver' )
+            : 'Seller';
+    }
     
     // Check if editing a user
     $editing_user = false;
-    $edit_user = array( 'id' => 0, 'name' => '', 'email' => '', 'phone' => '', 'role' => 'member', 'status' => 'active' );
+    $edit_user = array( 'id' => 0, 'name' => '', 'email' => '', 'phone' => '', 'status' => 'active' );
     if ( isset( $_GET['edit_user'] ) ) {
         $uid = intval( $_GET['edit_user'] );
         if ( $uid ) {
@@ -8428,16 +8446,6 @@ function ss_teams_page() {
                             <th><label for="user_email">Email</label></th>
                             <td><input type="email" id="user_email" name="user_email" class="regular-text" value="<?php echo esc_attr( $edit_user['email'] ); ?>" placeholder="(optional)" /></td>
                         </tr>
-                        <tr>
-                            <th><label for="user_role">Role</label></th>
-                            <td>
-                                <select id="user_role" name="user_role">
-                                    <option value="member" <?php selected( $edit_user['role'], 'member' ); ?>>Member</option>
-                                    <option value="manager" <?php selected( $edit_user['role'], 'manager' ); ?>>Manager</option>
-                                    <option value="admin" <?php selected( $edit_user['role'], 'admin' ); ?>>Admin</option>
-                                </select>
-                            </td>
-                        </tr>
                     </table>
                     <?php if ( $editing_user ): ?>
                         <p>
@@ -8457,7 +8465,7 @@ function ss_teams_page() {
                         <tr>
                             <th style="width: 30%;">Name - Phone</th>
                             <th style="width: 25%;">Email</th>
-                            <th style="width: 15%;">Role</th>
+                            <th style="width: 15%;">This season</th>
                             <th style="width: 30%;">Actions</th>
                         </tr>
                     </thead>
@@ -8470,7 +8478,7 @@ function ss_teams_page() {
                                 <span style="color: #666; font-size: 13px;">📞 <?php echo esc_html( $user['phone'] ?? 'No phone' ); ?></span>
                             </td>
                             <td><?php echo esc_html( wp_unslash( $user['email'] ?: '—' ) ); ?></td>
-                            <td><?php echo esc_html( ucfirst( $user['role'] ) ); ?></td>
+                            <td><?php echo esc_html( $season_roles[ intval( $user['id'] ) ] ?? '—' ); ?></td>
                             <td>
                                 <a href="?page=subsales-teams&tab=users&edit_user=<?php echo intval( $user['id'] ); ?>" class="button button-small">Edit</a>
                             </td>

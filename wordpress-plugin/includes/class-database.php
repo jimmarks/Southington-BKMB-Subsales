@@ -1507,34 +1507,6 @@ class Subsales_Database {
     }
     
     /**
-     * Add team member
-     * 
-     * @param int $team_id Team ID
-     * @param string $name Member name
-     * @param string $email Member email
-     * @param string $role Member role
-     * @return bool Success
-     */
-    public static function add_team_member( $team_id, $name, $email, $role = 'member' ) {
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'ss_team_members';
-        
-        $result = $wpdb->insert(
-            $table_name,
-            array(
-                'team_id' => $team_id,
-                'name' => $name,
-                'email' => $email,
-                'role' => $role,
-                'status' => 'active'
-            ),
-            array( '%d', '%s', '%s', '%s', '%s' )
-        );
-        
-        return $result !== false;
-    }
-    
-    /**
      * Remove team member
      * 
      * @param int $member_id Member ID
@@ -2984,8 +2956,10 @@ class Subsales_Database {
     //
     // Every feature should read/write team-member & signup data
     // through these methods instead of hand-writing SQL.
-    // `ss_signups.is_driver` is authoritative for driver status;
-    // `ss_team_members.role` is kept in sync for display only.
+    // `ss_signups.is_driver`, scoped to the current season, is the only
+    // authority for driver status. `ss_team_members.role` is deprecated:
+    // nothing writes it and nothing reads it. It is person-level and never
+    // expired, so it kept reporting a previous season's driver as a driver.
     // ============================================================
 
     /**
@@ -3056,7 +3030,7 @@ class Subsales_Database {
         $members_table = $wpdb->prefix . 'ss_team_members';
 
         $member = $wpdb->get_row( $wpdb->prepare(
-            "SELECT id, role FROM {$members_table} WHERE phone = %s",
+            "SELECT id FROM {$members_table} WHERE phone = %s",
             $phone
         ), ARRAY_A );
 
@@ -3091,8 +3065,8 @@ class Subsales_Database {
             }
 
             $member_id = intval( $member['id'] );
-            $update = array( 'status' => 'active', 'role' => 'driver' );
-            $format = array( '%s', '%s' );
+            $update = array( 'status' => 'active' );
+            $format = array( '%s' );
             if ( $name !== '' ) { $update['name'] = $name; $format[] = '%s'; }
             $wpdb->update( $members_table, $update, array( 'id' => $member_id ), $format, array( '%d' ) );
             return $member_id;
@@ -3101,9 +3075,8 @@ class Subsales_Database {
         $wpdb->insert( $members_table, array(
             'name'   => $name,
             'phone'  => $phone,
-            'role'   => 'driver',
             'status' => 'active',
-        ), array( '%s', '%s', '%s', '%s' ) );
+        ), array( '%s', '%s', '%s' ) );
 
         return $wpdb->insert_id ? intval( $wpdb->insert_id ) : false;
     }
