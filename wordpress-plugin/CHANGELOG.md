@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.66.0] - 2026-09-09
+
+### Fixed
+- **An order already paid for by card could still be edited.** Cards are charged at the door, so changing what was bought afterwards means the customer paid for something they did not get. There was a rule against it, on the app and on the server, but both looked for a payment reference the app had never actually been sending &mdash; so the rule had never once applied to a real order. Anybody who could open a paid order, seller or driver, could change it. Now the payment method itself is the proof, so the protection works on orders taken before this fix as well. Delivery details on a paid order stay editable, because nothing about them costs anybody money.
+- **A card payment was never linked to the order it paid for.** The reference tying the two together was left out of what the app sent, so the payment record and the order sat unconnected. It is now sent and stored.
+
+### Added
+- **Order history says what the person was, not just who they were.** Each entry is now tagged **Admin**, **Driver** or **Seller**, decided when the edit happens rather than looked up later &mdash; driving belongs to a team and a season, so somebody who drove on the day may be an ordinary seller by the time anyone reads the history back. Existing history has been filled in.
+
 ## [3.65.0] - 2026-09-09
 
 ### Changed

@@ -185,6 +185,17 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
         .subsales-edit-mode-toggle .subsales-toggle-label-left,
         .subsales-edit-mode-toggle .subsales-toggle-label-right { white-space: nowrap; }
 
+        /* Who they were when they made the change. Colour separates the three
+           so the answer to "did a seller change their own order" is visible
+           without reading names. */
+        .hist-role{
+            display:inline-block; font-size:10px; font-weight:700; letter-spacing:.04em;
+            text-transform:uppercase; padding:1px 7px; border-radius:9px; vertical-align:1px;
+        }
+        .hist-role-admin{ background:#e9e3fb; color:#4c2fa8; }
+        .hist-role-driver{ background:#fff1d6; color:#8a5a00; }
+        .hist-role-seller{ background:#e2f0ff; color:#12557f; }
+
         .subsales-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 100000; }
         .subsales-modal-backdrop { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
         .subsales-modal-content { position: relative; max-width: 700px; margin: 40px auto; background: white; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-height: 90vh; display: flex; flex-direction: column; }
@@ -751,7 +762,14 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
                     html += '<div class="subsales-history-item">';
                     html += '<h4>' + this.escapeHtml(item.edit_type.toUpperCase()) + '</h4>';
                     html += '<div class="meta">';
-                    html += 'By: ' + this.escapeHtml(item.edited_by_name) + ' | ';
+                    // Say what they were, not just who. "Daddy Marks" means
+                    // nothing to somebody checking whether a seller changed
+                    // their own order after the fact.
+                    var roleLabels = { admin: 'Admin', driver: 'Driver', seller: 'Seller' };
+                    var role = roleLabels[item.edited_by_role] || '';
+                    html += 'By: ' + this.escapeHtml(item.edited_by_name);
+                    if (role) { html += ' <span class="hist-role hist-role-' + this.escapeHtml(item.edited_by_role) + '">' + role + '</span>'; }
+                    html += ' | ';
                     html += 'Date: ' + this.escapeHtml(item.edited_at) + '</div>';
                     html += '<div class="summary"><strong>Summary:</strong> ' + this.escapeHtml(item.changes_summary) + '</div>';
                     

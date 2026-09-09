@@ -640,6 +640,21 @@ class Subsales_Orders {
         // path is admin-only by design.
         if ( 'admin' !== $auth_source ) {
             $captured = self::captured_digital_payment( $before_data );
+
+            // A card-paid order must be protected even when the attempt id is
+            // missing. That id was never sent by the app, so every real digital
+            // order has none - captured_digital_payment() found nothing and the
+            // block below never ran, leaving paid orders editable by anyone who
+            // could open one. The stored payment method is the fallback proof:
+            // an order is only ever marked 'digital' after Square confirms the
+            // payment. Better to refuse an edit to an unlinked paid order and
+            // make somebody ask an admin, than to let the items change under a
+            // charge that has already gone through.
+            $stored_method = isset( $before_data['paymentMethod'] ) ? (string) $before_data['paymentMethod'] : '';
+            if ( ! $captured && 'digital' === $stored_method ) {
+                $captured = true;
+            }
+
             if ( $captured ) {
                 $changed = array();
                 foreach ( self::PAYMENT_LOCKED_FIELDS as $field ) {

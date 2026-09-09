@@ -139,6 +139,7 @@ class Subsales_Database {
             order_id bigint(20) unsigned NOT NULL,
             edited_by_user_id bigint(20) unsigned NOT NULL,
             edited_by_name varchar(255) DEFAULT '',
+            edited_by_role varchar(20) DEFAULT '',
             edit_type enum('create','update','delete','restore') NOT NULL,
             edit_reason text,
             changes_summary varchar(500) DEFAULT '',
@@ -1872,6 +1873,47 @@ class Subsales_Database {
      * @param string $source Source: 'admin' or 'pwa'
      * @return bool Success
      */
+    /**
+     * What the person editing an order was at the time: admin, driver or seller.
+     *
+     * Driving is a property of a team and a season, not of a person, so this is
+     * decided against the order's own team rather than against any flag on the
+     * member row.
+     *
+     * @param int    $order_db_id Row id in ss_orders.
+     * @param int    $user_id     Editor.
+     * @param string $source      'admin' for a wp-admin edit, 'pwa' for the app.
+     * @return string admin|driver|seller|''
+     */
+    private static function role_for_edit( $order_db_id, $user_id, $source ) {
+        if ( 'admin' === $source ) {
+            return 'admin';
+        }
+        if ( ! $user_id ) {
+            return '';
+        }
+
+        global $wpdb;
+        $team_id = $wpdb->get_var( $wpdb->prepare(
+            "SELECT team_id FROM {$wpdb->prefix}ss_orders WHERE id = %d",
+            intval( $order_db_id )
+        ) );
+
+        if ( $team_id ) {
+            $drives = (int) $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}ss_signups
+                  WHERE user_id = %d AND team_id = %d AND is_driver = 1 AND status = 'active'",
+                intval( $user_id ),
+                intval( $team_id )
+            ) );
+            if ( $drives > 0 ) {
+                return 'driver';
+            }
+        }
+
+        return 'seller';
+    }
+
     public static function log_order_change( $order_db_id, $order_id, $before_data, $after_data, $edit_type, $user_id, $user_name, $edit_reason = '', $source = 'admin' ) {
         global $wpdb;
         $history_table = $wpdb->prefix . 'ss_edit_history';
@@ -2018,6 +2060,12 @@ class Subsales_Database {
             $changes_summary = substr( $changes_summary, 0, 497 ) . '...';
         }
         
+        // Who this person was when they made the change. Recorded now rather than
+        // worked out later: driving is per team and per season, so somebody who
+        // was the driver on the day may be an ordinary seller by the time anyone
+        // reads this back - and the history should say what was true then.
+        $edited_by_role = self::role_for_edit( $order_db_id, $user_id, $source );
+
         // Insert history record
         $result = $wpdb->insert(
             $history_table,
@@ -2025,6 +2073,7 @@ class Subsales_Database {
                 'order_id' => $order_db_id,
                 'edited_by_user_id' => $user_id,
                 'edited_by_name' => $user_name,
+                'edited_by_role' => $edited_by_role,
                 'edit_type' => $edit_type,
                 'edit_reason' => $edit_reason,
                 'changes_summary' => $changes_summary,
@@ -2036,7 +2085,7 @@ class Subsales_Database {
                 'source' => $source,
                 'edited_at' => current_time( 'mysql' )
             ),
-            array( '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+            array( '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
         );
         
         // Also log to main logging system

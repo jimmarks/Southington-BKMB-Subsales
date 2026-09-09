@@ -2021,7 +2021,12 @@
   // digital payment. Cash and check orders are untouched - nothing has been
   // charged, so a seller correcting them costs nobody anything.
   function applyPaidOrderLock(orderObj){
-    const paid = orderObj && orderObj.paymentMethod === 'digital' && !!(orderObj.digitalAttemptId || orderObj.digital_attempt_id);
+    // Being a digital order IS the proof of payment: the form only sets
+    // 'digital' after Square reports the payment captured. Requiring the attempt
+    // id as well meant the lock never fired on a real order - no order taken
+    // before today carried one - so a paid order was freely editable by anyone
+    // who could open it, seller or driver.
+    const paid = !!( orderObj && ( orderObj.paymentMethod || orderObj.payment_method ) === 'digital' );
     const note = qs('#paidOrderLockNote');
     const lockable = []
       .concat(Array.from(document.querySelectorAll('input[data-product-id]')))
@@ -3792,6 +3797,12 @@
             // where the customer had actually agreed at the door.
             smsConsent: !!order.smsConsent,
             address_entry_method: order.address_entry_method || 'unknown',
+            // Links the order to the Square payment that paid for it. Without it
+            // the server cannot find the captured payment, so the guard that
+            // stops a paid order being edited never fired and finalized_order_id
+            // was never written - the payment and the order it paid for had no
+            // recorded connection at all.
+            digitalAttemptId: order.digitalAttemptId || order.digital_attempt_id || '',
             paymentMethod: order.paymentMethod,
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,
