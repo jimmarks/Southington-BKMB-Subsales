@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.67.0] - 2026-09-09
+
+### Fixed
+- **A card-paid order could still have its subs and donation changed, however many controls were disabled.** The product rows are rebuilt every time the form redraws, and each rebuild handed back fresh, working buttons &mdash; so the lock was undone seconds after it was applied. The subs and donation are now covered by a notice that sits over them, which a redraw underneath cannot undo, and the lock is re-applied every time those rows are rebuilt. The notice says plainly that a charged order can&rsquo;t be changed and gives the administrator&rsquo;s number to call.
+
 ## [3.66.2] - 2026-09-09
 
 ### Fixed

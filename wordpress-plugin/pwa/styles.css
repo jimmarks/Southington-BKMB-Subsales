@@ -692,3 +692,30 @@ body.sm-modal-open{ overflow:hidden; }
 .orders-unreachable{background:#fff8e6;border-left:3px solid #e0913a;padding:10px 12px;border-radius:3px;font-size:0.9rem;line-height:1.45}
 .orders-unreachable strong{display:block;margin-bottom:4px;color:#8a5a12}
 .orders-unreachable div{color:#5b5b5b}
+
+
+/* A card-paid order: the money cannot change, and saying so has to survive
+   whatever re-renders underneath it. Disabling each control individually did
+   not - the products are rebuilt whenever the form redraws, and the fresh
+   buttons came back live. Covering the whole block is one thing to get right
+   instead of six. */
+.money-fields{ position:relative; }
+.paid-lock-overlay{
+  position:absolute; inset:-6px -8px; z-index:20;
+  background:rgba(255,255,255,.72);
+  backdrop-filter:saturate(60%) blur(1px);
+  -webkit-backdrop-filter:saturate(60%) blur(1px);
+  display:flex; align-items:center; justify-content:center;
+  border-radius:10px;
+  cursor:not-allowed;
+}
+.paid-lock-overlay[hidden]{ display:none; }
+.paid-lock-card{
+  max-width:88%;
+  background:#fff8e6; border:1px solid #e8b84b; border-radius:10px;
+  padding:12px 14px; text-align:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.12);
+  font-size:.92rem; line-height:1.4; color:#6b4708;
+}
+.paid-lock-card strong{ display:block; font-size:1rem; margin-bottom:4px; color:#7a4b00; }
+.paid-lock-card a{ color:#0b62c4; font-weight:600; white-space:nowrap; }

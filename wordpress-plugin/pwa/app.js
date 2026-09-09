@@ -349,6 +349,9 @@
       try{
         // ensure products inputs are present (re-render if needed) then clear and populate
         try{ renderProducts(); }catch(e){}
+        // renderProducts() replaces the stepper buttons, so anything disabled a
+        // moment ago is live again. The lock is re-applied below, after this.
+
         // clear first
         const prodInputs = document.querySelectorAll('input[data-product-id]'); prodInputs.forEach(i=>{ try{ i.value=''; }catch(e){} });
         const prods = orderObj.products || [];
@@ -363,7 +366,16 @@
       // so the seller sees why before they try.
       try{ applyPaidOrderLock(orderObj); }catch(e){}
       // mark editing state
-      try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
+      try{
+        const pmNow = ( ( orderObj.paymentMethod || orderObj.payment_method || '' ) + '' ).toLowerCase();
+        window._editingOrder = {
+          orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null,
+          local: !!opts.local,
+          // Carried on the edit state so a later re-render knows to re-lock,
+          // rather than having to go back and look the order up again.
+          paid: ( pmNow === 'digital' )
+        };
+      }catch(e){}
   // mark document as being in edit mode so UI can show a watermark or other affordances
   try{ document.body.classList.add('sm-edit-mode'); }catch(e){}
   // There was no way out of edit mode except saving or clearing the form -
@@ -1327,6 +1339,14 @@
         }catch(e){}
       });
     }catch(e){ console.warn('renderProducts failed', e); }
+
+    // Rebuilding the rows hands back a fresh set of enabled + and - buttons.
+    // If an order with a captured card payment is open, the lock has to go
+    // straight back on - this is exactly how a paid order stayed editable
+    // however many times the individual controls were disabled.
+    try{
+      if ( window._editingOrder && window._editingOrder.paid ) { applyPaidOrderLock({ paymentMethod: 'digital' }); }
+    }catch(e){}
   }
 
   // Initial render: wait for DOM ready and also schedule a short delayed render to handle late-injected globals
@@ -1851,6 +1871,11 @@
       // remove edit-mode UI marker when clearing the form
       try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
       try{ const c = qs('#cancelEditBtn'); if (c) c.classList.add('hidden'); }catch(e){}
+      // Forget which order was being edited BEFORE releasing the lock. The
+      // re-render hook re-applies the lock while this says the order was paid,
+      // so a stale flag here would leave the next customer's blank form covered
+      // by a "already paid by card" notice.
+      try{ window._editingOrder = null; }catch(e){}
       // release any paid-order lock, or it would carry into the next order
       try{ applyPaidOrderLock(null); }catch(e){}
     }catch(e){ /* silent */ }
@@ -2085,6 +2110,28 @@
       el.style.pointerEvents = paid ? 'none' : '';
       el.style.opacity = paid ? '0.55' : '';
     });
+
+    // And a cover over the whole money block. Disabling controls one by one kept
+    // failing because the product rows are rebuilt whenever the form redraws,
+    // and the new buttons came back enabled. One element over the top cannot be
+    // undone by a re-render underneath it, and it is also the only version of
+    // this that a seller actually sees before they start tapping.
+    const overlay = qs('#paidOrderLockOverlay');
+    const lockText = qs('#paidOrderLockText');
+    if (overlay) {
+      if (paid) {
+        if (lockText) {
+          const phone = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.adminContactPhone) || '';
+          lockText.innerHTML = phone
+            ? 'The subs and donation can&rsquo;t be changed once a card has been charged. Call the subsales administrator on <a href="tel:' +
+              String(phone).replace(/[^0-9+]/g, '') + '">' + escapeHtml(String(phone)) + '</a>.'
+            : 'The subs and donation can&rsquo;t be changed once a card has been charged. Please contact the subsales administrator.';
+        }
+        overlay.hidden = false;
+      } else {
+        overlay.hidden = true;
+      }
+    }
 
     if (note) {
       if (paid) {
