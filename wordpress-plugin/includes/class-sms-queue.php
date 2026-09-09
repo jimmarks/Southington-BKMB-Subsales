@@ -191,7 +191,10 @@ class Subsales_SMS_Queue {
         // INSERT ... SELECT ... WHERE NOT EXISTS rather than a SELECT followed by
         // an insert: one statement, so two concurrent syncs of the same order
         // cannot both find nothing and both insert.
-        $guard_dupes = ( 'out' === $row['direction'] && ! empty( $row['order_id'] ) );
+        // Only receipts. A receipt is generated automatically and must not go
+        // out twice; a reply is written by a person who meant to send it, and
+        // deduping those would silently swallow the second thing they said.
+        $guard_dupes = ( 'out' === $row['direction'] && 'receipt' === $row['message_type'] && ! empty( $row['order_id'] ) );
 
         if ( $guard_dupes ) {
             $result = $wpdb->query( $wpdb->prepare(

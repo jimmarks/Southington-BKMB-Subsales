@@ -322,6 +322,7 @@ $zip_array = $served_zips;
             <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-messages' ) ); ?>"
                class="subsales-chip<?php echo $subsales_unread_sms > 0 ? ' subsales-chip-alert' : ''; ?>"
                style="text-decoration:none"
+               id="unreadSmsCount"
                title="<?php echo $subsales_unread_sms > 0 ? 'Unread replies from customers' : 'No unread replies'; ?>"><?php echo intval( $subsales_unread_sms ); ?></a>
         </div>
     </div>
@@ -533,9 +534,38 @@ $zip_array = $served_zips;
                 }
             });
         }
-        
+
+        // Unread replies, refreshed on the same beat as the active-user count.
+        // A count that only moves on a page refresh is worse than no count -
+        // somebody watching the dashboard concludes nobody has replied.
+        function updateUnreadSmsCount() {
+            $.ajax({
+                url: ajaxurl,
+                method: 'POST',
+                data: {
+                    action: 'subsales_unread_sms_count',
+                    nonce: '<?php echo wp_create_nonce( 'subsales_unread_sms' ); ?>'
+                },
+                success: function(response) {
+                    if (!response.success || typeof response.data.count === 'undefined') { return; }
+                    var n = parseInt(response.data.count, 10) || 0;
+                    var $chip = $('#unreadSmsCount');
+                    if ($chip.length) {
+                        $chip.text(n);
+                        $chip.toggleClass('subsales-chip-alert', n > 0);
+                        $chip.attr('title', n > 0 ? 'Unread replies from customers' : 'No unread replies');
+                    }
+                    // The admin bar badge is the same number; keep the two from
+                    // disagreeing on the one screen where both are visible.
+                    var $bar = $('#wp-admin-bar-subsales-inbound .ab-label');
+                    if ($bar.length) { $bar.text(n); }
+                }
+            });
+        }
+
         updateActiveUserCount();
-        setInterval(updateActiveUserCount, 30000);
+        updateUnreadSmsCount();
+        setInterval(function(){ updateActiveUserCount(); updateUnreadSmsCount(); }, 30000);
     })(jQuery);
     </script>
     

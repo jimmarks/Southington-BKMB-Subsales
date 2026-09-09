@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.61.0] - 2026-09-09
+
+### Added
+- **You can now reply to a customer from the conversation.** A reply box sits under each thread. It is hidden entirely when the customer has replied STOP, showing the date they opted out and their number to call instead. A live character count warns when a reply crosses into a second text, and the message is sent as you press the button rather than waiting for the next queue run.
+- **The unread count on the dashboard now updates on its own**, on the same half-minute beat as the active-user count, and keeps the admin-bar badge in step with it. A count that only moved when you reloaded the page told you nobody had replied when somebody had.
+
+### Changed
+- **The conversation screen is now two columns** - the messages take two thirds on the left, the order sits in a panel on the right that stays put as the conversation scrolls, so the address and items remain visible while you type a reply. It stacks back to one column on a narrow screen.
+
+### Fixed
+- **A second reply about the same order was thrown away without a word.** A uniqueness rule meant to stop a duplicate receipt also allowed only one message per order per type in each direction, so a customer's follow-up, or a second reply back to them, was silently discarded. Worse, the rule was written into the table definition, so removing it by hand was undone the next time the plugin checked its own database structure. It is out of the definition and out of the table, and receipt duplication is prevented in the code that queues messages instead.
+
 ## [3.60.1] - 2026-09-09
 
 ### Fixed

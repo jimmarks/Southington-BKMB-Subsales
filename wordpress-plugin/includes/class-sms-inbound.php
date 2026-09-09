@@ -29,6 +29,19 @@ class Subsales_SMS_Inbound {
 	public static function init() {
 		add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar_node' ), 80 );
+		add_action( 'wp_ajax_subsales_unread_sms_count', array( __CLASS__, 'ajax_unread_count' ) );
+	}
+
+	/**
+	 * Unread count for the dashboard's polling loop, so a reply that arrives
+	 * while somebody is looking at the screen actually shows up there.
+	 */
+	public static function ajax_unread_count() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( 'Insufficient permissions' );
+		}
+		check_ajax_referer( 'subsales_unread_sms', 'nonce' );
+		wp_send_json_success( array( 'count' => self::unread_count() ) );
 	}
 
 	public static function register_routes() {

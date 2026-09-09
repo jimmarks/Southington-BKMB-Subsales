@@ -345,13 +345,21 @@ class Subsales_Database {
             KEY idx_opted_out (opted_out_at)
         ) $charset_collate;";
 
-        // SMS messages - the outbox AND the log, one table.
+        // SMS messages - the outbox, the inbox AND the log, one table.
         //
-        // UNIQUE KEY one_per_order_type (order_id, message_type) is the receipt
-        // idempotency guarantee: an order can only ever produce one receipt row
-        // however many times the offline-first PWA re-syncs it. MySQL allows
-        // multiple NULLs in a unique key and order_id is nullable, so inbound
-        // rows (order_id NULL) are unaffected by it.
+        // There is deliberately NO unique key on (order_id, message_type).
+        // There used to be, as the receipt idempotency guarantee, and it was
+        // wrong in two directions: it stopped a customer sending a second reply
+        // about the same order, and it stopped an admin sending a second reply
+        // back. Both collisions were reported to the caller as success, so the
+        // message was discarded in silence. Receipt idempotency now lives in
+        // Subsales_SMS_Queue::enqueue(), scoped to outbound receipts only.
+        //
+        // Do not add that key back here. dbDelta recreates whatever this
+        // definition declares, so an index dropped by hand reappears on the next
+        // schema run - which is exactly how it came back once already.
+        //
+        // UNIQUE KEY uniq_twilio_sid makes a webhook retry store one row.
         $sms_messages_table_name = $wpdb->prefix . 'ss_sms_messages';
         $sms_messages_sql = "CREATE TABLE $sms_messages_table_name (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -369,10 +377,13 @@ class Subsales_Database {
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             sent_at datetime DEFAULT NULL,
+            read_at datetime DEFAULT NULL,
             PRIMARY KEY  (id),
-            UNIQUE KEY one_per_order_type (order_id, message_type),
+            UNIQUE KEY uniq_twilio_sid (twilio_sid),
             KEY idx_status_next (status, next_attempt_at),
-            KEY idx_phone (phone)
+            KEY idx_phone (phone),
+            KEY idx_order (order_id),
+            KEY idx_inbound_unread (direction, read_at)
         ) $charset_collate;";
 
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
@@ -404,6 +415,7 @@ class Subsales_Database {
         self::migrate_geocode_cache_columns();
         self::migrate_address_validation_dismissed_status( $table_name );
         self::migrate_sms_sending_status( $sms_messages_table_name );
+        self::migrate_sms_drop_order_type_key( $sms_messages_table_name );
 
         // Season support - must run in this order: seasons table (and its
         // bootstrap row) before the season_id columns that backfill from it.
@@ -439,6 +451,42 @@ class Subsales_Database {
      * "legacy" row so every pre-existing team/campaign/order can be
      * backfilled to a real season instead of being left at season_id 0.
      */
+    /**
+     * Drop the old UNIQUE (order_id, message_type) key on the messages table.
+     *
+     * dbDelta adds what the definition declares and never removes what it does
+     * not, so taking this index out of the CREATE TABLE above is not enough on
+     * a site that already has it - and dropping it by hand is not enough either,
+     * because until the definition changed dbDelta simply put it back.
+     *
+     * The key allowed one message per order per type in EITHER direction. A
+     * customer replying twice about one order, and an admin replying twice to
+     * them, both collided - and enqueue() reported the collision as success, so
+     * the message vanished without an error anywhere. Receipt idempotency is
+     * enforced in Subsales_SMS_Queue::enqueue() instead, scoped to outbound
+     * receipts, where it belongs.
+     *
+     * @param string $sms_messages_table_name
+     */
+    private static function migrate_sms_drop_order_type_key( $sms_messages_table_name ) {
+        global $wpdb;
+
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = %s
+                AND INDEX_NAME = 'one_per_order_type'",
+            $sms_messages_table_name
+        ) );
+
+        if ( $exists ) {
+            $wpdb->query( "ALTER TABLE {$sms_messages_table_name} DROP INDEX one_per_order_type" );
+            if ( function_exists( 'subsales_log' ) ) {
+                subsales_log( 'INFO', 'sms', 'Dropped the one_per_order_type index; replies are no longer deduplicated' );
+            }
+        }
+    }
+
     private static function migrate_seasons_table() {
         global $wpdb;
         $seasons_table_name = $wpdb->prefix . 'ss_seasons';
