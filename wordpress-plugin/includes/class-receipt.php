@@ -154,12 +154,12 @@ class Subsales_Receipt {
 
 	private static function render_missing() {
 		status_header( 404 );
-		self::page( 'Receipt not found', '<p>This link is not one of ours, or the order has been removed. If you have a question about an order, please get in touch using the details below.</p>' );
+		self::page( 'Receipt not found', '<p>This link is not one of ours, or the order has been removed. If you were sent a text about an order, reply to it and we will pick it up.</p>' );
 	}
 
 	private static function render_expired() {
 		status_header( 410 );
-		self::page( 'This receipt has expired', '<p>Receipts stay available for ' . intval( self::days() ) . ' days after the order is taken. If you still need a copy, please get in touch using the details below.</p>' );
+		self::page( 'This receipt has expired', '<p>This receipt is from an earlier sale and is no longer online. If you still need it, reply to the text we sent you about the order.</p>' );
 	}
 
 	private static function render( $order ) {
@@ -226,7 +226,6 @@ class Subsales_Receipt {
 		if ( '' !== $paid ) {
 			$body .= '<dt>Paid by</dt><dd>' . esc_html( $paid ) . '</dd>';
 		}
-		$body .= '<dt>Reference</dt><dd><code>' . esc_html( strtoupper( substr( (string) $order['receipt_token'], 0, 10 ) ) ) . '</code></dd>';
 		$body .= '</dl>';
 
 		self::page( 'Your sub order', $body );
@@ -237,14 +236,14 @@ class Subsales_Receipt {
 	 * A customer opens this at a doorstep on whatever signal they have.
 	 */
 	private static function page( $title, $body ) {
-		$org   = trim( (string) get_option( 'subsales_branding', 'Southington BKMB' ) );
-		// The names the season-setup wizard actually writes - subsales_admin_phone
-		// does not exist, and guessing it left the contact block empty.
-		$phone = trim( (string) get_option( 'subsales_admin_contact_phone', '' ) );
-		$email = trim( (string) get_option( 'subsales_admin_email', '' ) );
-		if ( '' !== $phone && class_exists( 'Subsales_Season_Setup' ) ) {
-			$phone = Subsales_Season_Setup::format_phone( $phone );
-		}
+		$org = trim( (string) get_option( 'subsales_branding', 'Southington BKMB' ) );
+
+		// No phone number and no email address here on purpose. Every reply to
+		// the receipt text lands against this order, where the answer is written
+		// with the order in front of whoever answers it. A phone number here
+		// sends the customer somewhere that knows nothing about their order and
+		// leaves no record - the whole point of two-way texting is that the
+		// order, the question and the answer stay together.
 
 		nocache_headers();
 		header( 'Content-Type: text/html; charset=utf-8' );
@@ -291,19 +290,11 @@ class Subsales_Receipt {
       <p class="org"><?php echo esc_html( $org ); ?></p>
       <?php echo $body; // phpcs:ignore WordPress.Security.EscapeOutput -- built from escaped parts above. ?>
       <div class="contact">
-        <strong>Questions about this order?</strong><br>
-        <?php if ( '' !== $phone ) : ?>
-          Call or text <a href="tel:<?php echo esc_attr( preg_replace( '/\D/', '', $phone ) ); ?>"><?php echo esc_html( $phone ); ?></a>.
-        <?php endif; ?>
-        <?php if ( '' !== $email ) : ?>
-          <br>Email <a href="mailto:<?php echo esc_attr( $email ); ?>"><?php echo esc_html( $email ); ?></a>.
-        <?php endif; ?>
-        <br>Please contact the club rather than the student who took your order.
+        <strong>Need to change something, or have a question?</strong><br>
+        Just reply to the text message we sent you. It comes straight to us and stays
+        with your order, so whoever picks it up can see exactly what you ordered.
+        <br>Please don't ask the student who took your order &mdash; they can't change it once it's placed.
       </div>
-      <p class="fine">
-        Keep this link to check your order. It stays available for <?php echo intval( self::days() ); ?> days.
-        If you gave us your number for text updates, you can stop them any time by replying STOP.
-      </p>
     </div>
   </div>
 </body>

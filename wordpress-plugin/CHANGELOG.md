@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.63.1] - 2026-09-09
+
+### Changed
+- **The receipt page now asks customers to reply to the text**, rather than giving them a phone number and an email address. A reply lands against the order, so whoever answers can see what was ordered and where it is going, and the question and answer stay with it. Sending the customer to a phone number instead reached somebody with none of that in front of them and left no record. The reference code and the note about how long the link lasts are gone too - neither told the customer anything they needed.
+
 ## [3.63.0] - 2026-09-09
 
 ### Added
