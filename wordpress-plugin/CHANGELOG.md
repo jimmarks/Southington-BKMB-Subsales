@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.68.1] - 2026-09-09
+
+### Fixed
+- **The sign-up page suggested every name on file, not this season's.** Typing two letters offered last season's sellers alongside this year's, so a child could pick a name that cannot sign up. It now offers only the roster for the season that is running.
+
 ## [3.68.0] - 2026-09-09
 
 ### Changed

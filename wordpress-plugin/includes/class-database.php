@@ -3791,8 +3791,15 @@ class Subsales_Database {
         if ( $query === '' ) {
             return array();
         }
+        // Only this season's roster. Without the status filter a child typing
+        // two letters on the sign-up page was offered every name ever added -
+        // mostly last season's sellers, who cannot sign up and whose names have
+        // no business being suggested. Season setup marks the current roster
+        // active and everyone else inactive, which is exactly this distinction.
         $rows = $wpdb->get_results( $wpdb->prepare(
-            "SELECT id, name FROM {$members_table} WHERE name LIKE %s ORDER BY name ASC LIMIT %d",
+            "SELECT id, name FROM {$members_table}
+              WHERE name LIKE %s AND status = 'active'
+              ORDER BY name ASC LIMIT %d",
             '%' . $wpdb->esc_like( $query ) . '%',
             intval( $limit )
         ), ARRAY_A );
