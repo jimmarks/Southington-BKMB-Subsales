@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.66.2] - 2026-09-09
+
+### Fixed
+- **A card-paid order could still have its subs changed, because only the typed quantity box was locked and not the + and &minus; buttons** &mdash; which is how anyone actually changes a quantity on a phone. The payment buttons were live too, so an order paid by card could be switched to Cash. Everything that decides what the customer was charged is now locked together: quantities, the plus and minus buttons, the donation, the check number and the payment buttons.
+- **The site wrote every app request's headers to the server log.** Left-over debugging, on every order sync and every start-up. Removed.
+
+### Note
+On an order already paid by card, a seller or driver can still correct the **customer's name, address and delivery notes** &mdash; nothing there changes what was charged. Changing the subs, the donation or the payment method needs an administrator, who can void and refund.
+
 ## [3.66.1] - 2026-09-09
 
 ### Fixed

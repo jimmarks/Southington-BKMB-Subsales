@@ -2056,15 +2056,34 @@
     // who could open it, seller or driver.
     const paid = !!( orderObj && ( orderObj.paymentMethod || orderObj.payment_method ) === 'digital' );
     const note = qs('#paidOrderLockNote');
+    // Everything that can change what the customer was charged.
+    //
+    // This used to be the quantity inputs only - and nobody changes a quantity
+    // by typing in that little box, they press + and -. Those buttons were left
+    // live, so a "locked" order could still have its subs changed, which is the
+    // whole thing the lock exists to stop. The payment buttons were live too:
+    // an order paid by card could be switched to Cash.
     const lockable = []
       .concat(Array.from(document.querySelectorAll('input[data-product-id]')))
-      .concat([qs('#donationAmount'), qs('#checkNumber')].filter(Boolean));
+      .concat(Array.from(document.querySelectorAll('.qty-btn')))
+      .concat([
+        qs('#donationAmount'), qs('#checkNumber'), qs('#donationOnly'),
+        qs('#payCash'), qs('#payCheck'), qs('#payDigital')
+      ].filter(Boolean));
 
     lockable.forEach(function(el){
-      el.readOnly = paid;
+      if ('readOnly' in el) { el.readOnly = paid; }
       el.disabled = paid;
       el.style.backgroundColor = paid ? '#f5f5f5' : '';
       el.style.cursor = paid ? 'not-allowed' : '';
+      el.style.opacity = paid ? '0.55' : '';
+    });
+
+    // The payment buttons are styled labels wrapping a checkbox, so the label
+    // has to stop responding as well or a tap still lands on the input.
+    Array.from(document.querySelectorAll('.pay-option')).forEach(function(el){
+      el.style.pointerEvents = paid ? 'none' : '';
+      el.style.opacity = paid ? '0.55' : '';
     });
 
     if (note) {

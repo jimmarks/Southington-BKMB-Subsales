@@ -602,8 +602,11 @@ class Subsales_REST_API {
                 $all_headers[ $header_name ] = $value;
             }
         }
-        error_log( 'Subsales: perm_check called for route: ' . $request->get_route() . ' | Headers: ' . wp_json_encode( $all_headers ) );
-        
+        // No error_log() here. This runs on every REST request the app makes -
+        // every order sync, every config fetch - and it was writing the request's
+        // headers to the server log each time, which is both noise and the wrong
+        // place for anything resembling credentials.
+
         if ( strpos( $request->get_route(), '/config' ) !== false ) {
             $team_name = $request->get_header( 'X-Team-Name' );
             $access_code = $request->get_header( 'X-Access-Code' );
