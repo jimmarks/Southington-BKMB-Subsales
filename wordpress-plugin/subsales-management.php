@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.59.1
+ * Version: 3.60.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.59.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.60.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -87,6 +87,8 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-sms-queue.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-sms-inbound.php';
+require_once SUBSALES_PLUGIN_PATH . 'admin/messages-page.php';
 // Season setup wizard. Must be loaded here, not only from the Settings partials -
 // admin-ajax.php never loads a Settings page, so the wizard's AJAX handlers would
 // otherwise never be registered.
@@ -131,6 +133,7 @@ Subsales_Payment_Attempts::init();
 // Initialize the SMS outbox (its own one-minute cron event for sending, plus
 // housekeeping on the shared hourly hook, plus the order-created receipt hook)
 Subsales_SMS_Queue::init();
+Subsales_SMS_Inbound::init();
 
 
 // Activation/Deactivation hooks
@@ -1248,6 +1251,20 @@ function order_sync_admin_menu() {
         'manage_options',
         'subsales-order-entry-distance',
         'subsales_order_entry_distance_page'
+    );
+
+    // Unread replies are the reason to come to this screen, so the count is in
+    // the menu label itself - the same bubble core uses for pending comments.
+    $subsales_unread = class_exists( 'Subsales_SMS_Inbound' ) ? Subsales_SMS_Inbound::unread_count() : 0;
+    add_submenu_page(
+        'subsales-management',
+        'Text Messages',
+        $subsales_unread > 0
+            ? sprintf( 'Text Messages <span class="update-plugins count-%1$d"><span class="plugin-count">%1$d</span></span>', $subsales_unread )
+            : 'Text Messages',
+        'manage_options',
+        'subsales-messages',
+        'subsales_messages_page'
     );
 
     add_submenu_page(

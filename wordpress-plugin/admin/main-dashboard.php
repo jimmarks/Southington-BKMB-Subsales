@@ -309,6 +309,21 @@ $zip_array = $served_zips;
             <strong>Active Users:</strong>
             <span id="activeUserCount" class="subsales-chip" title="Click to view app sessions">0</span>
         </div>
+
+        <?php
+        // Replies from customers. Rendered server-side rather than fetched,
+        // because it is a single indexed COUNT and a chip that arrives a second
+        // late reads as a chip that is wrong.
+        $subsales_unread_sms = class_exists( 'Subsales_SMS_Inbound' ) ? Subsales_SMS_Inbound::unread_count() : 0;
+        ?>
+        <div class="subsales-mode-control-item">
+            <span class="dashicons dashicons-email-alt"></span>
+            <strong>Text Replies:</strong>
+            <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-messages' ) ); ?>"
+               class="subsales-chip<?php echo $subsales_unread_sms > 0 ? ' subsales-chip-alert' : ''; ?>"
+               style="text-decoration:none"
+               title="<?php echo $subsales_unread_sms > 0 ? 'Unread replies from customers' : 'No unread replies'; ?>"><?php echo intval( $subsales_unread_sms ); ?></a>
+        </div>
     </div>
     
     <script>

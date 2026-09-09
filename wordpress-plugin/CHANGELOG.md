@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.60.0] - 2026-09-09
+
+### Added
+- **Customers can now reply to their receipt and reach somebody.** Until now a reply went nowhere at all - it sat unread in the phone company's console while the receipt itself invited one. Replies are now saved against the order they belong to, matched by the customer's number, and there is a **Text Messages** screen listing them newest first. Opening one shows the order it concerns - customer, address, items, delivery notes, who took it - above the whole conversation with that customer, sent and received together.
+- **Unread replies are visible without going to look for them.** A count appears in the admin bar on every page and as a chip on the dashboard, both linking straight to the messages screen, and both showing red only while something is actually unread.
+- **A customer who replies STOP is recorded as opted out**, and one who replies START is recorded as opted back in. The phone company already acts on these words before we see them; this keeps our own records honest so nobody is shown as contactable when they are not.
+
+Replies cannot be answered from the screen yet - the messages screen shows the customer's number to call back.
+
 ## [3.59.1] - 2026-09-09
 
 ### Changed

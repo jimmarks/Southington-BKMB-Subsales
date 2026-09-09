@@ -1409,6 +1409,12 @@ body.subsales-manifest-viewer .page-footer {
     vertical-align: middle;
 }
 
+/* Unread replies. Red only when there is something to read - a permanently
+   red chip stops meaning anything by the second sale day. */
+.subsales-chip-alert {
+    background: #d63638;
+}
+
 .subsales-chip {
     background: #2271b1;
     color: #fff;
