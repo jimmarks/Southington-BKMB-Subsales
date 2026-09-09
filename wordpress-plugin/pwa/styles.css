@@ -236,7 +236,13 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
 .sm-current-team{display:inline-flex;align-items:center;margin-left:12px;padding:4px 10px;background:rgba(45,108,223,0.12);border-radius:6px;font-size:0.85rem;font-weight:600;color:var(--sm-primary);white-space:nowrap}
 
 @media (max-width:600px){
-	.row{flex-direction:column}
+	/* Stacking flips the cross axis to the horizontal, so the align-items:
+	   flex-start inherited from .row stops sizing the vertical and starts
+	   sizing the WIDTH - each child shrinks to its own content instead of
+	   filling the column. The widest child was the SMS consent paragraph, so
+	   ticking Anonymous Donation hid it and the entire form jumped ~45px
+	   narrower. Stretch is what a stacked column wants. */
+	.row{flex-direction:column;align-items:stretch}
 	.sm-aside{width:100%;min-width:0;margin-top:12px}
 }
 
