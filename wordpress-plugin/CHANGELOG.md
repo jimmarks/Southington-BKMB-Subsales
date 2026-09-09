@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.67.1] - 2026-09-09
+
+### Fixed
+- **Correcting the address on a card-paid order was refused with &ldquo;please select a payment method&rdquo;.** The payment was made at the door and is not being chosen again, but opening such an order left all three payment buttons blank, and saving then insisted one be picked &mdash; buttons that are deliberately locked. An order already paid by card now shows as Digital and keeps that when saved.
+- **The message asking for a payment method only offered Cash or Check**, though Digital has been an option since card payments were added. It now names all three.
+
 ## [3.67.0] - 2026-09-09
 
 ### Fixed

@@ -394,6 +394,15 @@
         const pm = (orderObj.paymentMethod || orderObj.payment_method || orderObj.payment || (orderObj.order_data && (orderObj.order_data.paymentMethod || orderObj.order_data.payment_method || orderObj.order_data.payment)) || '').toString().toLowerCase();
         if (pm === 'check') { if (payCheck) payCheck.checked = true; if (payCash) payCash.checked = false; checkNumberRow && checkNumberRow.classList.remove('hidden'); }
         else if (pm === 'cash') { if (payCash) payCash.checked = true; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
+        else if (pm === 'digital') {
+          // Show it as Digital rather than leaving all three blank. Setting
+          // .checked does not fire 'change', so this does not reopen the
+          // checkout - and the money fields are locked anyway.
+          if (payDigital) payDigital.checked = true;
+          if (payCash) payCash.checked = false;
+          if (payCheck) payCheck.checked = false;
+          checkNumberRow && checkNumberRow.classList.add('hidden');
+        }
         else { if (payCash) payCash.checked = false; if (payCheck) payCheck.checked = false; checkNumberRow && checkNumberRow.classList.add('hidden'); }
         // normalize onto order object so save flow picks it up
         try{ orderObj.paymentMethod = pm; }catch(e){}
@@ -3565,11 +3574,18 @@
   // Validate payment method
   const payCheckChecked = payCheck && payCheck.checked;
   const payCashChecked = payCash && payCash.checked;
+  const payDigitalChecked = payDigital && payDigital.checked;
   const chkNumber = (checkNumber && checkNumber.value) ? checkNumber.value.trim() : '';
-  
-  if (!payCheckChecked && !payCashChecked) {
+
+  // Editing an order that was already paid by card: the payment happened at the
+  // door and is not being chosen again. Correcting the customer's address used
+  // to be refused here with "select a payment method", because the payment
+  // buttons are locked and the digital one was not being restored.
+  const editingPaidOrder = !!( window._editingOrder && window._editingOrder.paid );
+
+  if (!payCheckChecked && !payCashChecked && !payDigitalChecked && !editingPaidOrder) {
     reEnableButton();
-    return alert('Please select a payment method (Cash or Check)');
+    return alert('Please choose how the customer is paying: Cash, Check, or Digital.');
   }
   if (payCheckChecked && payCashChecked) {
     reEnableButton();
@@ -3593,7 +3609,11 @@
       }catch(e){}
     });
     const donation = parseFloat(qs('#donationAmount') && qs('#donationAmount').value) || 0;
-    const paymentMethod = payCheckChecked ? 'check' : 'cash';
+    // An order paid by card keeps 'digital'. Falling through to 'cash' here
+    // would rewrite a card payment as cash on the way past - the server refuses
+    // that change, so the seller's correction to the address would have been
+    // rejected as an attempt to alter the payment.
+    const paymentMethod = payCheckChecked ? 'check' : ( ( payDigitalChecked || editingPaidOrder ) ? 'digital' : 'cash' );
     
     // Create price snapshot of ALL products at order creation time (for historical accuracy)
     const priceSnapshot = {};
