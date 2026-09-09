@@ -3241,7 +3241,9 @@
 
       // Disable and clear all product inputs
       document.querySelectorAll('input[data-product-id]').forEach(input => {
-        input.value = '0';
+        // Empty, not "0" - the steppers show a placeholder zero, and a literal
+        // 0 left behind after unticking looks like a typed quantity.
+        input.value = '';
         input.disabled = true;
         input.style.backgroundColor = '#f5f5f5';
         input.style.cursor = 'not-allowed';
@@ -3280,6 +3282,7 @@
         input.style.backgroundColor = '';
         input.style.cursor = '';
       });
+      try{ computeTotal(); }catch(e){}
       
       if (window.PWALogger) {
         window.PWALogger.log('ui', 'Donation-only mode disabled');

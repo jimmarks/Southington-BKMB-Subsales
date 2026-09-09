@@ -12,6 +12,12 @@
    to - which on a good number of phones and desktops is a serif. Kids were
    taking orders on a form that looked like a legal document. Form controls do
    not inherit font by default, hence the second rule. */
+/* Reserve the scrollbar's space whether or not one is showing. Ticking
+   Anonymous Donation hides a five-line consent block, which can shorten the
+   page enough for the scrollbar to vanish - and everything then jumps sideways
+   by its width, which reads as a stray right margin. Same jump happened when
+   the QR panel set overflow:hidden. */
+html{scrollbar-gutter:stable}
 html,body{margin:0;padding:0;width:100%;height:100%;overflow-x:hidden;-webkit-overflow-scrolling:touch;
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased}
