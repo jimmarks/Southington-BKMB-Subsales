@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.57.0] - 2026-09-09
+
+### Fixed
+- **A seller's own orders could go missing from their end-of-day tally while they were offline.** The app worked out who the seller was from the Team/Individual setting rather than from how they had signed in, so on a site running Team sales with the newer login it looked for a sign-in it would never find and saved the order with no seller on it. Orders already sent to the server were still counted, because the server knew who sent them; orders still waiting on the phone were not, and quietly dropped out of the tally at exactly the moment it mattered. Identity now follows how the person signed in.
+- **A new order's address was not written to the address column, so it could never reach the address review queue.** Editing an order filled the column in; creating one never did. The column and its lookup hash are now written when the order is created, and the hash is kept in step when an address is later edited instead of continuing to point at the old address.
+
+### Added
+- **Orders now record how the address was entered** - picked from the suggestions, filled in from the seller's location, or typed by hand. The field for this has existed since the address work but nothing ever filled it in, so every order read "unknown" and a confirmed address looked no different from a typed guess. Editing an address by hand after picking it counts as typed, which is the honest answer.
+
 ## [3.56.2] - 2026-09-09
 
 ### Removed

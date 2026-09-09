@@ -413,6 +413,30 @@ class Subsales_Orders {
             'season_id' => Subsales_Database::current_season_id(),
         );
         $formats = array( '%s', '%s', '%s', '%s', '%d' );
+
+        // The dedicated address column and its hash. The update path has always
+        // kept these in step with order_data; create never wrote them, so a new
+        // order sat with a NULL address until somebody happened to edit it - and
+        // the address review scan, which reads this column, could never see it.
+        // Existing rows were filled by a one-off migration using md5(); keep the
+        // same hash here or the two halves of the table stop matching.
+        if ( isset( $data['address'] ) && '' !== trim( (string) $data['address'] ) ) {
+            $address                     = sanitize_text_field( $data['address'] );
+            $insert_row['address']       = $address;
+            $insert_row['address_hash']  = md5( strtolower( trim( $address ) ) );
+            $formats[]                   = '%s';
+            $formats[]                   = '%s';
+        }
+
+        // How the seller entered that address. The column has existed since the
+        // address work but nothing ever wrote it, so every row read 'unknown'
+        // and a picked address was indistinguishable from a typed one.
+        $entry_method = isset( $data['address_entry_method'] ) ? (string) $data['address_entry_method'] : '';
+        if ( in_array( $entry_method, array( 'autocomplete', 'manual', 'gps' ), true ) ) {
+            $insert_row['address_entry_method'] = $entry_method;
+            $formats[]                          = '%s';
+        }
+
         if ( $team_id !== null ) {
             $insert_row['team_id'] = $team_id;
             $formats[] = '%d';
@@ -676,9 +700,16 @@ class Subsales_Orders {
             $update_formats[] = '%d';
         }
         
-        // Always sync the dedicated address column with the address in order_data
+        // Always sync the dedicated address column with the address in order_data.
+        // The hash goes with it: it is derived from the address, so leaving it
+        // behind on an edit points the row at the address it used to have.
         if ( isset( $data['address'] ) ) {
-            $update_fields['address'] = sanitize_text_field( $data['address'] );
+            $address_upd                   = sanitize_text_field( $data['address'] );
+            $update_fields['address']      = $address_upd;
+            $update_fields['address_hash'] = '' === trim( $address_upd )
+                ? null
+                : md5( strtolower( trim( $address_upd ) ) );
+            $update_formats[] = '%s';
             $update_formats[] = '%s';
         }
         

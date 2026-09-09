@@ -680,6 +680,9 @@
         const currentVal = (inputEl.value || '').trim();
         inputEl.value = normalizeAddress(it);
         try{ inputEl.dataset.subsalesSelected = JSON.stringify(it); }catch(e){}
+        // How this address got into the field, recorded so delivery can tell a
+        // picked address from a typed one instead of every order saying 'unknown'.
+        try{ inputEl.dataset.entryMethod = 'autocomplete'; }catch(e){}
         removeDropdown(inputEl);
         // Don't trigger input event to avoid re-showing suggestions
         inputEl.focus();
@@ -1066,6 +1069,7 @@
         const nearest = nearestCachedAddress(lat, lng);
         if(nearest){
           inputEl.value = normalizeAddress(nearest.item);
+          try{ inputEl.dataset.entryMethod = 'gps'; }catch(e){}
 
           if(window.PWALogger && window.PWALogger.debugEnabled){
             window.PWALogger.log('address', 'Address filled from nearest cached record', {
@@ -1076,6 +1080,7 @@
         } else {
           // No local ZIP data loaded yet - show coordinates rather than guess.
           inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+          try{ inputEl.dataset.entryMethod = 'gps'; }catch(e){}
         }
         
         btn.disabled = false;

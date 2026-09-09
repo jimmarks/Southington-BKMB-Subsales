@@ -1177,6 +1177,25 @@
 
   // Products will be rendered dynamically from configured products (localized in cfg.products)
   const donationAmount = qs('#donationAmount');
+  // Typing (or pasting) into the address field overrides whatever put the text
+  // there before - a picked suggestion that is then edited by hand is a manual
+  // address. Programmatic .value assignments do not fire 'input', so the
+  // autocomplete and GPS markers survive until a person actually types.
+  try {
+    const addrEl = qs('#address');
+    if (addrEl) addrEl.addEventListener('input', function(){ try{ this.dataset.entryMethod = 'manual'; }catch(e){} });
+  } catch(e){}
+
+  // Reads how the address in the field got there. 'unknown' rather than a guess
+  // when nothing marked it - the column already means "we do not know".
+  function addressEntryMethod(){
+    try {
+      const el = qs('#address');
+      const m = el && el.dataset ? el.dataset.entryMethod : '';
+      return (m === 'autocomplete' || m === 'manual' || m === 'gps') ? m : 'unknown';
+    } catch(e){ return 'unknown'; }
+  }
+
   const orderTotalEl = qs('#orderTotal');
   const payCheck = qs('#payCheck');
   const payCash = qs('#payCash');
@@ -1766,6 +1785,9 @@
 
       const fields = ['#customerName','#address','#unitFloorApt','#cellNumber','#notes','#donationAmount','#checkNumber'];
       fields.forEach(s=>{ const el = qs(s); if (!el) return; try{ if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') el.value = ''; }catch(e){} });
+      // The next order's address has not been entered yet, so the last one's
+      // entry method must not carry over onto it.
+      try{ const a = qs('#address'); if (a && a.dataset) { delete a.dataset.entryMethod; delete a.dataset.subsalesSelected; } }catch(e){}
       
       // Clear phone field validation state to prevent red border on empty field
       try {
@@ -2060,6 +2082,7 @@
       entered_by_name: data.enteredByName,
       teamName: data.teamName,
       teamCode: data.teamCode,
+      address_entry_method: data.addressEntryMethod || 'unknown',
       geo,
       ...authCreds,
       ...extra
@@ -2163,9 +2186,15 @@
       const priceSnapshot = {};
       if (productsConfig && Array.isArray(productsConfig)) { productsConfig.forEach(p => { priceSnapshot[p.id] = p.price; }); }
 
-      const salesMode = localStorage.getItem('salesMode') || localStorage.getItem('detectedSalesMode') || 'legacy';
+      // Who the seller is follows the LOGIN mode, not the sales mode. Sales mode
+      // is Team vs Individual; it says nothing about how this person signed in.
+      // Reading it here meant a site running Team sales with the user login took
+      // the legacy branch and looked up teamMemberId - a key the user login never
+      // writes - so every order stored a blank seller, and an order still waiting
+      // to sync had no id on it at all and vanished from that seller's own tally.
+      const loginMode = localStorage.getItem('loginMode') || 'legacy';
       let subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode;
-      if (salesMode === 'user') {
+      if (loginMode === 'user') {
         subsalesUserId = localStorage.getItem('userId') || '';
         subsalesTeamId = localStorage.getItem('selectedTeamId') || '-1';
         enteredById = subsalesUserId;
@@ -2179,7 +2208,7 @@
 
       // Snapshot now — this is what gets used to build the real order later, at "paid" time,
       // not whatever the DOM happens to hold then.
-      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode, smsConsent };
+      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode, smsConsent, addressEntryMethod: addressEntryMethod() };
 
       const url = apiBase ? (apiBase + '/digital-payments/checkout') : '/wp-json/order-manager/v1/digital-payments/checkout';
       const resp = await fetch(url, {
@@ -3458,10 +3487,12 @@
     }
     
     // Determine sales mode and capture appropriate auth data
-    const salesMode = localStorage.getItem('salesMode') || localStorage.getItem('detectedSalesMode') || 'legacy';
+    // Identity follows the login mode - see the note on the digital path above.
+    const loginMode = localStorage.getItem('loginMode') || 'legacy';
+
     let subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode;
-    
-    if (salesMode === 'user') {
+
+    if (loginMode === 'user') {
       // User mode
       subsalesUserId = localStorage.getItem('userId') || '';
       subsalesTeamId = localStorage.getItem('selectedTeamId') || '-1';
@@ -3523,7 +3554,7 @@
       order = await buildNewOrderObject(paymentMethod, {
         customer, address, cell, products, priceSnapshot, donation, chkNumber, notes,
         subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode,
-        donationOnly, smsConsent
+        donationOnly, smsConsent, addressEntryMethod: addressEntryMethod()
       });
     }
     
@@ -3742,6 +3773,7 @@
             // every receipt was skipped as 'no_consent' - including the ones
             // where the customer had actually agreed at the door.
             smsConsent: !!order.smsConsent,
+            address_entry_method: order.address_entry_method || 'unknown',
             paymentMethod: order.paymentMethod,
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,
