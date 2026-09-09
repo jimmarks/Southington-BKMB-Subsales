@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.55.0] - 2026-09-09
+
+### Fixed
+- **The end-of-day tally overstated a seller's takings by exactly the donations they collected.** A donation is part of the order it was given with, so an order of $40 of subs plus a $40 donation is a single $80 check. The tally counted that $80 under Check and then added the $40 again on its own line, so a real day of $175 read as $230 — and a seller handing in the correct money looked short. The tally now shows what was sold and what was given, adds them once, and lists cash, check and digital underneath as the breakdown of how that total arrived. It matches the Orders screen, which has always totalled it this way.
+- **An order could be counted twice in the tally, permanently.** Orders held on the phone and orders already on the server were added together without checking for the same order in both lists. An order that sent successfully but whose local copy failed to delete stayed in both, and every figure counted it twice on every open of the tally, for the rest of the sale day. Orders are now matched by their id and counted once.
+- **An order with no payment method disappeared from the tally's total.** It contributed its subs and its donation, then fell through cash, check and digital and was silently left out of Total Sales. Every order now counts toward the total, and one with no payment method recorded appears on its own row so it can be asked about before the money is handed in.
+
+### Changed
+- **The Orders page's Team member list showed everyone on file — 91 people, drivers and every past season included.** It now lists only sellers, only for the season being viewed, and follows the season selector. A driver who never sold is not a choice at all; "All seasons" still shows everyone who ever sold. Sellers are identified per season by how they signed up, not by the role stored against the person — that role does not reset between seasons, so a child who drove one year and sells the next was still reading as a driver.
+
+### Added
+- `tools/check-order-totals.php`, a WP-CLI-only check that asserts the Orders totals hold together: payment methods never exceed the total, donations are never added on top of it, and the rows on screen add up to the footer.
+
+## [3.16.0] through [3.54.0] - not recorded
+
+These releases were shipped without changelog entries. The work is in the git
+history; it was not written up here. Entries resume above, at 3.55.0.
+
 ## [3.15.0] - 2026-08-28
 
 ### Added
