@@ -66,11 +66,6 @@ function subsales_messages_page() {
 
 	// Marking read is a state change, so it needs a nonce and a POST-style
 	// guard even though it arrives as a link.
-	if ( isset( $_GET['mark_read'] ) && check_admin_referer( 'subsales_mark_read' ) ) {
-		$id = intval( $_GET['mark_read'] );
-		$wpdb->update( $msgs, array( 'read_at' => current_time( 'mysql', true ) ), array( 'id' => $id ), array( '%s' ), array( '%d' ) );
-		echo '<div class="notice notice-success is-dismissible"><p>Marked as read.</p></div>';
-	}
 	if ( isset( $_GET['mark_all_read'] ) && check_admin_referer( 'subsales_mark_read' ) ) {
 		$n = $wpdb->query( $wpdb->prepare(
 			"UPDATE {$msgs} SET read_at = %s WHERE direction = 'in' AND read_at IS NULL",
@@ -111,33 +106,61 @@ function subsales_messages_page() {
 	echo '</div>';
 }
 
-/** Every reply, newest first. */
+/**
+ * One row per conversation, not one per message.
+ *
+ * A list of individual messages made every reply look like a separate piece of
+ * work; what an admin actually has is a handful of ongoing conversations. Rows
+ * are keyed on the phone number - one person, one row - carrying their latest
+ * message, when it happened, and how many of theirs are still unread.
+ */
 function subsales_messages_list_view() {
 	global $wpdb;
 	$msgs   = $wpdb->prefix . 'ss_sms_messages';
 	$orders = $wpdb->prefix . 'ss_orders';
 
-	$rows = $wpdb->get_results(
-		"SELECT m.id, m.phone, m.body, m.order_id, m.created_at, m.read_at,
-		        o.order_data
-		   FROM {$msgs} m
-		   LEFT JOIN {$orders} o ON o.order_id = m.order_id AND o.deleted = 0
-		  WHERE m.direction = 'in'
-		  ORDER BY m.created_at DESC
-		  LIMIT 200",
+	$convos = subsales_messages_convo_query();
+
+	if ( ! $convos ) {
+		echo '<div class="notice notice-info inline"><p>No conversations yet. Once a customer replies to their receipt they will appear here.</p></div>';
+		echo '<p class="description">If replies are not arriving, check that the phone number in Twilio has this address set as its messaging webhook:<br><code>' . esc_html( rest_url( 'order-manager/v1/sms/inbound' ) ) . '</code></p>';
+		return;
+	}
+
+	// The latest message on each conversation, in one query rather than one per row.
+	$last_ids = array_map( 'intval', wp_list_pluck( $convos, 'last_id' ) );
+	$in       = implode( ',', $last_ids );
+	$latest   = array();
+	foreach ( $wpdb->get_results( "SELECT id, body, direction, order_id, status FROM {$msgs} WHERE id IN ({$in})", ARRAY_A ) as $row ) {
+		$latest[ intval( $row['id'] ) ] = $row;
+	}
+
+	// And the customer's name, from their most recent order.
+	$names = array();
+	$rows  = $wpdb->get_results(
+		"SELECT o.order_id,
+		        JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.cellNumber')) AS ph,
+		        JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.customer'))   AS cust
+		   FROM {$orders} o
+		   JOIN ( SELECT JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.cellNumber')) AS ph2,
+		                 MAX(id) AS mid
+		            FROM {$orders} WHERE deleted = 0
+		           GROUP BY ph2 ) x
+		     ON x.mid = o.id",
 		ARRAY_A
 	);
+	foreach ( $rows as $r ) {
+		if ( ! empty( $r['ph'] ) ) {
+			$names[ $r['ph'] ] = array( 'customer' => $r['cust'], 'order_id' => $r['order_id'] );
+		}
+	}
 
-	$unread = Subsales_SMS_Inbound::unread_count();
-
+	$total_unread = Subsales_SMS_Inbound::unread_count();
 	echo '<p class="description" style="margin:8px 0 14px">';
-	if ( $unread > 0 ) {
+	if ( $total_unread > 0 ) {
 		printf(
-			'<strong>%d unread.</strong> ',
-			intval( $unread )
-		);
-		printf(
-			'<a href="%s" class="button button-small">Mark all read</a>',
+			'<strong>%d unread.</strong> <a href="%s" class="button button-small">Mark all read</a>',
+			intval( $total_unread ),
 			esc_url( wp_nonce_url( admin_url( 'admin.php?page=subsales-messages&mark_all_read=1' ), 'subsales_mark_read' ) )
 		);
 	} else {
@@ -145,38 +168,144 @@ function subsales_messages_list_view() {
 	}
 	echo '</p>';
 
-	if ( ! $rows ) {
-		echo '<div class="notice notice-info inline"><p>No replies yet. Customers who reply to their receipt will appear here.</p></div>';
-		echo '<p class="description">If replies are not arriving, check that the phone number in Twilio has this address set as its messaging webhook:<br><code>' . esc_html( rest_url( 'order-manager/v1/sms/inbound' ) ) . '</code></p>';
-		return;
+	echo '<table class="widefat striped subsales-convo-table"><thead><tr>';
+	echo '<th>Customer</th><th style="width:140px">Phone</th><th>Last message</th>';
+	echo '<th style="width:170px">Last activity</th><th style="width:80px">Unread</th><th style="width:90px"></th>';
+	echo '</tr></thead><tbody id="subsales-convo-body">';
+	echo subsales_messages_convo_rows(); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped inside.
+	echo '</tbody></table>';
+
+	subsales_messages_list_poller();
+}
+
+/** Waiting longest first, then most recent. Shared by the page and the refresh. */
+function subsales_messages_convo_rows() {
+	global $wpdb;
+	$msgs   = $wpdb->prefix . 'ss_sms_messages';
+	$orders = $wpdb->prefix . 'ss_orders';
+
+	$convos = subsales_messages_convo_query();
+	if ( ! $convos ) {
+		return '<tr><td colspan="6">No conversations yet.</td></tr>';
 	}
 
-	echo '<table class="widefat striped"><thead><tr>';
-	echo '<th style="width:150px">When</th><th style="width:130px">From</th><th>Message</th><th style="width:200px">Order</th><th style="width:110px"></th>';
-	echo '</tr></thead><tbody>';
+	$last_ids = array_map( 'intval', wp_list_pluck( $convos, 'last_id' ) );
+	$in       = implode( ',', $last_ids );
+	$latest   = array();
+	foreach ( $wpdb->get_results( "SELECT id, body, direction, order_id, status FROM {$msgs} WHERE id IN ({$in})", ARRAY_A ) as $row ) {
+		$latest[ intval( $row['id'] ) ] = $row;
+	}
 
+	$names = array();
+	$rows  = $wpdb->get_results(
+		"SELECT o.order_id,
+		        JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.cellNumber')) AS ph,
+		        JSON_UNQUOTE(JSON_EXTRACT(o.order_data, '$.customer'))   AS cust
+		   FROM {$orders} o
+		   JOIN ( SELECT JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.cellNumber')) AS ph2,
+		                 MAX(id) AS mid
+		            FROM {$orders} WHERE deleted = 0
+		           GROUP BY ph2 ) x
+		     ON x.mid = o.id",
+		ARRAY_A
+	);
 	foreach ( $rows as $r ) {
-		$od       = $r['order_data'] ? json_decode( $r['order_data'], true ) : null;
-		$customer = ( $od && ! empty( $od['customer'] ) ) ? $od['customer'] : '';
-		$is_new   = empty( $r['read_at'] );
+		if ( ! empty( $r['ph'] ) ) {
+			$names[ $r['ph'] ] = array( 'customer' => $r['cust'], 'order_id' => $r['order_id'] );
+		}
+	}
 
-		$link = add_query_arg(
-			array( 'page' => 'subsales-messages', 'thread' => rawurlencode( (string) $r['order_id'] ), 'phone' => rawurlencode( $r['phone'] ) ),
+	$out = '';
+	foreach ( $convos as $c ) {
+		$last   = isset( $latest[ intval( $c['last_id'] ) ] ) ? $latest[ intval( $c['last_id'] ) ] : array();
+		$known  = isset( $names[ $c['phone'] ] ) ? $names[ $c['phone'] ] : null;
+		$unread = intval( $c['unread'] );
+
+		$order_id = $last['order_id'] ?? ( $known['order_id'] ?? '' );
+		$link     = add_query_arg(
+			array( 'page' => 'subsales-messages', 'thread' => rawurlencode( (string) $order_id ), 'phone' => rawurlencode( $c['phone'] ) ),
 			admin_url( 'admin.php' )
 		);
 
-		printf(
-			'<tr%s><td>%s</td><td>%s</td><td>%s%s</td><td>%s</td><td><a class="button button-small" href="%s">Open</a></td></tr>',
-			$is_new ? ' style="font-weight:600;background:#fff8e6"' : '',
-			esc_html( get_date_from_gmt( $r['created_at'], 'M j, Y g:i A' ) ),
-			esc_html( subsales_format_phone( $r['phone'] ) ),
-			$is_new ? '<span class="dashicons dashicons-marker" style="color:#d63638" title="Unread"></span> ' : '',
-			esc_html( wp_trim_words( (string) $r['body'], 18 ) ),
-			$customer ? esc_html( $customer ) : '<em style="color:#888">no matching order</em>',
+		$body = trim( (string) ( $last['body'] ?? '' ) );
+		if ( '' === $body ) {
+			$body = 'skipped' === ( $last['status'] ?? '' ) ? '(not sent)' : '(no message)';
+		}
+		$prefix = ( 'out' === ( $last['direction'] ?? '' ) ) ? '<span class="subsales-convo-dir">You:</span> ' : '';
+
+		$out .= sprintf(
+			'<tr%s><td><strong>%s</strong></td><td class="subsales-convo-phone">%s</td><td>%s%s</td><td>%s</td><td>%s</td><td><a class="button button-small" href="%s">Open</a></td></tr>',
+			$unread > 0 ? ' class="subsales-convo-unread"' : '',
+			$known ? esc_html( $known['customer'] ) : '<span class="subsales-convo-unknown">Unknown</span>',
+			esc_html( subsales_format_phone( $c['phone'] ) ),
+			$prefix,
+			esc_html( wp_trim_words( $body, 14 ) ),
+			esc_html( get_date_from_gmt( $c['last_at'], 'M j, Y g:i A' ) ),
+			$unread > 0 ? '<span class="subsales-convo-badge">' . $unread . '</span>' : '',
 			esc_url( $link )
 		);
 	}
-	echo '</tbody></table>';
+
+	return $out;
+}
+
+/** The grouped query, in one place so the page and the refresh cannot diverge. */
+function subsales_messages_convo_query() {
+	global $wpdb;
+	$msgs = $wpdb->prefix . 'ss_sms_messages';
+	return $wpdb->get_results(
+		"SELECT phone,
+		        MAX(id) AS last_id,
+		        MAX(created_at) AS last_at,
+		        COUNT(*) AS total,
+		        SUM(CASE WHEN direction = 'in' AND read_at IS NULL THEN 1 ELSE 0 END) AS unread,
+		        MIN(CASE WHEN direction = 'in' AND read_at IS NULL THEN created_at END) AS oldest_unread
+		   FROM {$msgs}
+		  WHERE phone <> ''
+		  GROUP BY phone
+		  ORDER BY (SUM(CASE WHEN direction = 'in' AND read_at IS NULL THEN 1 ELSE 0 END) > 0) DESC,
+		           oldest_unread ASC,
+		           last_at DESC
+		  LIMIT 200",
+		ARRAY_A
+	);
+}
+
+/** Refresh the list in place, so a new reply arrives without a page reload. */
+function subsales_messages_list_poller() {
+	?>
+	<script>
+	(function(){
+		var nonce = <?php echo wp_json_encode( wp_create_nonce( 'subsales_thread_since' ) ); ?>;
+		var body  = document.getElementById('subsales-convo-body');
+		if (!body) { return; }
+		var busy = false;
+		function poll(){
+			if (busy || document.hidden) { return; }
+			busy = true;
+			var p = new URLSearchParams();
+			p.append('action', 'subsales_convo_list');
+			p.append('nonce', nonce);
+			fetch(ajaxurl, { method:'POST', credentials:'same-origin', body: p })
+				.then(function(r){ return r.json(); })
+				.then(function(j){
+					busy = false;
+					if (!j || !j.success) { return; }
+					// Replace only when something changed, so a row is never
+					// redrawn under a cursor that is about to click it.
+					if (j.data.html && j.data.html !== body.innerHTML) { body.innerHTML = j.data.html; }
+					var bar = document.querySelector('#wp-admin-bar-subsales-inbound .ab-label');
+					if (bar) { bar.textContent = j.data.unread; }
+					var chip = document.getElementById('unreadSmsCount');
+					if (chip) { chip.textContent = j.data.unread; }
+				})
+				.catch(function(){ busy = false; });
+		}
+		setInterval(poll, 10000);
+		document.addEventListener('visibilitychange', function(){ if (!document.hidden) { poll(); } });
+	})();
+	</script>
+	<?php
 }
 
 /** One order, its details, and the whole conversation with that customer. */
@@ -189,6 +318,10 @@ function subsales_messages_thread_view( $order_id, $phone ) {
 		'<p><a href="%s">&larr; All messages</a></p>',
 		esc_url( admin_url( 'admin.php?page=subsales-messages' ) )
 	);
+
+	// Opening the thread is reading it. Making somebody click "mark read" on
+	// each message is bookkeeping for the app's benefit, not the reader's.
+	subsales_messages_mark_thread_read( $phone );
 
 	// The order this conversation is about.
 	$order = $order_id
@@ -288,35 +421,11 @@ function subsales_messages_conversation( $phone, $order_id ) {
 
 	echo '<div class="subsales-thread-scroll" id="subsales-thread-scroll">';
 	foreach ( $thread as $m ) {
-		$inbound = ( 'in' === $m['direction'] );
-		$when    = get_date_from_gmt( $m['sent_at'] ?: $m['created_at'], 'M j, g:i A' );
-
-		printf(
-			'<div style="display:flex;justify-content:%s;margin:8px 0"><div style="max-width:78%%;padding:9px 13px;border-radius:12px;background:%s;border:1px solid %s">%s<div style="font-size:11px;color:#667085;margin-top:5px">%s &middot; %s</div></div></div>',
-			$inbound ? 'flex-start' : 'flex-end',
-			$inbound ? '#fff8e6' : '#eef4ff',
-			$inbound ? '#f5c86b' : '#c3d4f7',
-			esc_html( (string) $m['body'] ) ?: '<em style="color:#888">(no message body)</em>',
-			esc_html( $inbound ? 'From customer' : 'Sent' ),
-			esc_html( $when . ( 'skipped' === $m['status'] ? ' — not sent: ' . $m['skip_reason'] : '' ) )
-		);
-
-		if ( $inbound && empty( $m['read_at'] ) ) {
-			printf(
-				'<div style="text-align:left;margin:-4px 0 10px"><a class="button button-small" href="%s">Mark read</a></div>',
-				esc_url( wp_nonce_url(
-					add_query_arg(
-						array( 'page' => 'subsales-messages', 'thread' => rawurlencode( (string) $order_id ), 'phone' => rawurlencode( $phone ), 'mark_read' => intval( $m['id'] ) ),
-						admin_url( 'admin.php' )
-					),
-					'subsales_mark_read'
-				) )
-			);
-		}
+		echo subsales_messages_bubble( $m, $order_id, $phone ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped inside.
 	}
 	echo '</div>';
 
-	subsales_messages_thread_poller( $phone, $max_rendered );
+	subsales_messages_thread_poller( $phone, $max_rendered, $order_id );
 	subsales_messages_reply_box( $order_id, $phone );
 }
 
@@ -328,43 +437,56 @@ function subsales_messages_conversation( $phone, $order_id ) {
  * arrive it reloads once, which keeps one renderer for the thread instead of a
  * second copy of the markup living in JavaScript.
  */
-function subsales_messages_thread_poller( $phone, $max_rendered ) {
+function subsales_messages_thread_poller( $phone, $max_rendered, $order_id = '' ) {
 	?>
-	<div id="subsales-thread-new" class="notice notice-info inline" style="display:none;margin:10px 0">
-		<p><strong>New message.</strong> <a href="#" id="subsales-thread-reload">Show it</a></p>
-	</div>
 	<script>
 	(function(){
-		var phone = <?php echo wp_json_encode( $phone ); ?>;
-		var seen  = <?php echo intval( $max_rendered ); ?>;
-		var nonce = <?php echo wp_json_encode( wp_create_nonce( 'subsales_thread_since' ) ); ?>;
-		var banner = document.getElementById('subsales-thread-new');
-		var link   = document.getElementById('subsales-thread-reload');
-		if (link) { link.addEventListener('click', function(e){ e.preventDefault(); location.reload(); }); }
+		var phone   = <?php echo wp_json_encode( $phone ); ?>;
+		var orderId = <?php echo wp_json_encode( (string) $order_id ); ?>;
+		var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'subsales_thread_since' ) ); ?>;
+		var seen    = <?php echo intval( $max_rendered ); ?>;
+		var box     = document.getElementById('subsales-thread-scroll');
+		if (!box) { return; }
 
-		// Keep the conversation pinned to the newest message, the way every
-		// other messaging app does. Without this a long thread opens at the top.
-		var box = document.getElementById('subsales-thread-scroll');
-		if (box) { box.scrollTop = box.scrollHeight; }
+		// Open at the newest message, the way every messaging app does.
+		box.scrollTop = box.scrollHeight;
 
+		function atBottom(){
+			// Within a few pixels counts as "following along" - if the reader has
+			// scrolled up to re-read something, do not yank them back down.
+			return (box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+		}
+
+		var busy = false;
 		function poll(){
+			if (busy || document.hidden) { return; }   // a hidden tab polls nothing
+			busy = true;
 			var body = new URLSearchParams();
-			body.append('action', 'subsales_thread_since');
+			body.append('action', 'subsales_thread_new');
 			body.append('nonce', nonce);
 			body.append('phone', phone);
+			body.append('order_id', orderId);
+			body.append('since_id', seen);
 			fetch(ajaxurl, { method:'POST', credentials:'same-origin', body: body })
 				.then(function(r){ return r.json(); })
 				.then(function(j){
+					busy = false;
 					if (!j || !j.success) { return; }
-					if (parseInt(j.data.max_id, 10) > seen && banner) {
-						banner.style.display = '';
+					if (j.data.count > 0 && j.data.html) {
+						var stick = atBottom();
+						box.insertAdjacentHTML('beforeend', j.data.html);
+						seen = parseInt(j.data.max_id, 10) || seen;
+						if (stick) { box.scrollTop = box.scrollHeight; }
 					}
 					var bar = document.querySelector('#wp-admin-bar-subsales-inbound .ab-label');
 					if (bar) { bar.textContent = j.data.unread; }
 				})
-				.catch(function(){ /* offline or logged out; the next tick retries */ });
+				.catch(function(){ busy = false; });
 		}
-		setInterval(poll, 15000);
+
+		setInterval(poll, 10000);
+		// Catch up straight away when the tab comes back rather than waiting.
+		document.addEventListener('visibilitychange', function(){ if (!document.hidden) { poll(); } });
 	})();
 	</script>
 	<?php
@@ -556,6 +678,32 @@ function subsales_messages_styles() {
 
 	.subsales-thread-main h2{ margin-top:0; }
 
+	/* Conversation list: one row per person. Unread rows carry weight so a
+	   glance down the column finds them without reading anything. */
+	.subsales-convo-table td{ vertical-align:middle; }
+	.subsales-convo-unread td{ background:#fff8e6; font-weight:600; }
+	.subsales-convo-phone{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+	.subsales-convo-unknown{ color:#8c8f94; font-style:italic; font-weight:400; }
+	.subsales-convo-dir{ color:#667085; font-weight:400; }
+	.subsales-convo-badge{
+		display:inline-block; min-width:20px; padding:1px 7px; border-radius:10px;
+		background:#d63638; color:#fff; font-size:11px; font-weight:700; text-align:center;
+	}
+
+	/* Message bubbles. Theirs on the left in warm grey, ours on the right in
+	   blue - the arrangement everyone already knows from their phone. */
+	.subsales-msg{ display:flex; margin:8px 0; }
+	.subsales-msg.is-in{ justify-content:flex-start; }
+	.subsales-msg.is-out{ justify-content:flex-end; }
+	.subsales-msg .subsales-bubble{
+		max-width:78%; padding:9px 13px; border-radius:12px;
+		border:1px solid #f5c86b; background:#fff8e6;
+	}
+	.subsales-msg.is-out .subsales-bubble{ border-color:#c3d4f7; background:#eef4ff; }
+	.subsales-msg-meta{ font-size:11px; color:#667085; margin-top:5px; }
+	.subsales-msg-empty{ color:#8c8f94; }
+	.subsales-msg-markread{ text-align:left; margin:-4px 0 10px; }
+
 	/* History, under the order details. Compact - it is reference, not the
 	   subject of the page. */
 	.subsales-order-history{ margin:0; padding:0; list-style:none; }
@@ -630,4 +778,48 @@ function subsales_messages_order_history( $order_db_id ) {
 		);
 	}
 	echo '</ul>';
+}
+
+/**
+ * One message bubble.
+ *
+ * Shared by the page and the live update so a message that arrives while you
+ * are reading looks exactly like the ones already there - the alternative is a
+ * second copy of this markup in JavaScript, drifting out of step.
+ */
+function subsales_messages_bubble( $m, $order_id, $phone ) {
+	$inbound = ( 'in' === $m['direction'] );
+	$when    = get_date_from_gmt( $m['sent_at'] ?: $m['created_at'], 'M j, g:i A' );
+	$body    = trim( (string) $m['body'] );
+
+	$html = sprintf(
+		'<div class="subsales-msg %s" data-id="%d"><div class="subsales-bubble">%s<div class="subsales-msg-meta">%s &middot; %s</div></div></div>',
+		$inbound ? 'is-in' : 'is-out',
+		intval( $m['id'] ),
+		'' !== $body ? esc_html( $body ) : '<em class="subsales-msg-empty">(no message body)</em>',
+		esc_html( $inbound ? 'From customer' : 'Sent' ),
+		esc_html( $when . ( 'skipped' === $m['status'] ? ' - not sent: ' . $m['skip_reason'] : '' ) )
+	);
+
+	return $html;
+}
+
+/**
+ * Mark every inbound message on a conversation as read.
+ *
+ * Called when the thread is opened and again as live messages arrive while it
+ * is on screen - if you are looking at the conversation, you have read it.
+ */
+function subsales_messages_mark_thread_read( $phone ) {
+	if ( ! current_user_can( 'manage_options' ) || '' === trim( (string) $phone ) ) {
+		return 0;
+	}
+	global $wpdb;
+	return (int) $wpdb->query( $wpdb->prepare(
+		"UPDATE {$wpdb->prefix}ss_sms_messages
+		    SET read_at = %s
+		  WHERE phone = %s AND direction = 'in' AND read_at IS NULL",
+		current_time( 'mysql', true ),
+		$phone
+	) );
 }

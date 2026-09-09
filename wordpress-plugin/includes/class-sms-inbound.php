@@ -31,6 +31,8 @@ class Subsales_SMS_Inbound {
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar_node' ), 80 );
 		add_action( 'wp_ajax_subsales_unread_sms_count', array( __CLASS__, 'ajax_unread_count' ) );
 		add_action( 'wp_ajax_subsales_thread_since', array( __CLASS__, 'ajax_thread_since' ) );
+		add_action( 'wp_ajax_subsales_thread_new', array( __CLASS__, 'ajax_thread_new' ) );
+		add_action( 'wp_ajax_subsales_convo_list', array( __CLASS__, 'ajax_convo_list' ) );
 	}
 
 	/**
@@ -238,6 +240,74 @@ class Subsales_SMS_Inbound {
 		) );
 
 		wp_send_json_success( array( 'max_id' => $max, 'unread' => self::unread_count() ) );
+	}
+
+	/**
+	 * Anything in this conversation newer than what the browser already has,
+	 * rendered server-side so a live message is identical to a loaded one.
+	 */
+	public static function ajax_thread_new() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( 'Insufficient permissions' );
+		}
+		check_ajax_referer( 'subsales_thread_since', 'nonce' );
+
+		global $wpdb;
+		$phone    = self::normalize_phone( wp_unslash( $_POST['phone'] ?? '' ) );
+		$since    = isset( $_POST['since_id'] ) ? absint( $_POST['since_id'] ) : 0;
+		$order_id = isset( $_POST['order_id'] ) ? sanitize_text_field( wp_unslash( $_POST['order_id'] ) ) : '';
+
+		if ( '' === $phone ) {
+			wp_send_json_error( 'No phone' );
+		}
+
+		$rows = $wpdb->get_results( $wpdb->prepare(
+			"SELECT id, direction, body, status, skip_reason, created_at, sent_at, read_at
+			   FROM {$wpdb->prefix}ss_sms_messages
+			  WHERE phone = %s AND id > %d
+			  ORDER BY id ASC
+			  LIMIT 50",
+			$phone,
+			$since
+		), ARRAY_A );
+
+		$html = '';
+		$max  = $since;
+		foreach ( $rows as $r ) {
+			$html .= function_exists( 'subsales_messages_bubble' ) ? subsales_messages_bubble( $r, $order_id, $phone ) : '';
+			$max   = max( $max, intval( $r['id'] ) );
+		}
+
+		// The thread is open on somebody's screen and these have just been drawn
+		// into it, so they have been read. Leaving them unread would show a count
+		// for messages the reader is looking at.
+		if ( $rows && function_exists( 'subsales_messages_mark_thread_read' ) ) {
+			subsales_messages_mark_thread_read( $phone );
+		}
+
+		wp_send_json_success( array(
+			'html'   => $html,
+			'max_id' => $max,
+			'count'  => count( $rows ),
+			'unread' => self::unread_count(),
+		) );
+	}
+
+	/** The conversation list, re-rendered server-side for the page's poller. */
+	public static function ajax_convo_list() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( 'Insufficient permissions' );
+		}
+		check_ajax_referer( 'subsales_thread_since', 'nonce' );
+
+		if ( ! function_exists( 'subsales_messages_convo_rows' ) ) {
+			require_once SUBSALES_PLUGIN_PATH . 'admin/messages-page.php';
+		}
+
+		wp_send_json_success( array(
+			'html'   => subsales_messages_convo_rows(),
+			'unread' => self::unread_count(),
+		) );
 	}
 
 	/** Unread inbound messages. Cheap: covered by idx_inbound_unread. */

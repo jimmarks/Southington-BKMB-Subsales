@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.64.0] - 2026-09-09
+
+### Changed
+- **Text Messages now lists conversations, not individual messages.** One row per person - their name, number, latest message, when it happened and how many of theirs are still waiting. A list of separate messages made one customer writing three times look like three jobs.
+- **The list is ordered by who has been waiting longest.** Conversations with unread messages come first, oldest unread at the top, so the customer nobody has got to yet is not buried under the ones already being handled.
+- **Opening a conversation marks it read.** There is no "mark read" button any more - if you are looking at the thread, you have read it, and messages arriving while it is open are read as they appear.
+
+### Added
+- **Everything updates by itself.** New messages appear in an open conversation without touching the page, the conversation list re-orders as replies come in, and the unread counts in the admin bar and on the dashboard follow along. A conversation you have scrolled up to re-read is not yanked back to the bottom, and a background tab stops polling until you return to it.
+
 ## [3.63.1] - 2026-09-09
 
 ### Changed
