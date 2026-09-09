@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.58.0] - 2026-09-09
+
+### Added
+- **The convenience fee can now recover the flat part of a card charge, not just the percentage.** Card processing costs a percentage of the total *and* a fixed amount per transaction, so a percentage-only fee left the club paying the flat part out of its own takings on every single order - about 30&cent; each time, which hurts most on the smallest orders. Both halves are now settings, and the settings page says plainly that the fee is worked out on the whole amount charged, donations included, because that is what the card company charges on.
+
+### Changed
+- **Text message records: a customer can now reply more than once.** The rule preventing a duplicate receipt also, accidentally, allowed only one inbound message per order - a customer's second reply collided with their first and was discarded without any error. The one-receipt-per-order rule now applies only to messages going out, and a message arriving twice because of a delivery retry is stored once.
+
 ## [3.57.0] - 2026-09-09
 
 ### Fixed

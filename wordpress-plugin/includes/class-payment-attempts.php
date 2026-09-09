@@ -105,9 +105,20 @@ class Subsales_Payment_Attempts {
             $subtotal_amount += $donation;
         }
 
+        // Card processing costs a percentage AND a flat amount per transaction
+        // (Square: a percentage of the total plus $0.30). A percentage on its own
+        // never recovers the flat part, so the smaller the order the more of the
+        // fee the club absorbs - on a $10 sub a percentage-only fee leaves most
+        // of the 30c unrecovered. Both halves are configurable so the setting can
+        // follow Square's published rate instead of being a guess baked into code.
         $fee_enabled    = (bool) get_option( 'subsales_convenience_fee_enabled', false );
         $fee_percentage = floatval( get_option( 'subsales_convenience_fee_percentage', 0 ) );
-        $convenience_fee_amount = $fee_enabled ? round( $subtotal_amount * $fee_percentage / 100, 2 ) : 0;
+        $fee_fixed      = floatval( get_option( 'subsales_convenience_fee_fixed', 0 ) );
+
+        $convenience_fee_amount = 0.0;
+        if ( $fee_enabled && ( $fee_percentage > 0 || $fee_fixed > 0 ) ) {
+            $convenience_fee_amount = round( ( $subtotal_amount * $fee_percentage / 100 ) + $fee_fixed, 2 );
+        }
         $total_amount = $subtotal_amount + $convenience_fee_amount;
 
         // Server-generated attempt id (unlike orders, the client doesn't

@@ -56,6 +56,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
         $subsales_square_webhook_signature_key_production = isset( $_POST['subsales_square_webhook_signature_key_production'] ) ? sanitize_text_field( $_POST['subsales_square_webhook_signature_key_production'] ) : '';
         $subsales_convenience_fee_enabled = isset( $_POST['subsales_convenience_fee_enabled'] ) ? 1 : 0;
         $subsales_convenience_fee_percentage = isset( $_POST['subsales_convenience_fee_percentage'] ) ? floatval( $_POST['subsales_convenience_fee_percentage'] ) : 0.0;
+        $subsales_convenience_fee_fixed      = isset( $_POST['subsales_convenience_fee_fixed'] ) ? max( 0, floatval( $_POST['subsales_convenience_fee_fixed'] ) ) : 0.0;
 
         $old_slug = get_option( 'order_sync_portal_slug', '' );
         update_option( 'order_sync_google_maps_api_key', $api_key );
@@ -81,6 +82,7 @@ if ( ! current_user_can( 'manage_options' ) ) {
         update_option( 'subsales_square_webhook_signature_key_production', $subsales_square_webhook_signature_key_production );
         update_option( 'subsales_convenience_fee_enabled', $subsales_convenience_fee_enabled );
         update_option( 'subsales_convenience_fee_percentage', $subsales_convenience_fee_percentage );
+        update_option( 'subsales_convenience_fee_fixed', $subsales_convenience_fee_fixed );
 
         if ( $portal_slug !== $old_slug ) {
             order_sync_ensure_pwa_page( $portal_slug );
@@ -604,7 +606,17 @@ if ( ! current_user_can( 'manage_options' ) ) {
                                     <input type="number" step="0.1" min="0" max="100" name="subsales_convenience_fee_percentage" value="<?php echo esc_attr( get_option( 'subsales_convenience_fee_percentage', 0.0 ) ); ?>" style="width: 100px;" />
                                     <span>%</span>
                                 </div>
-                                <p class="description" style="margin-top: 10px;">Flat percentage added on top of a digital payment's total to cover processing costs.</p>
+                                <div style="margin-bottom: 15px;">
+                                    <label style="display: inline-block; margin-right: 10px; font-weight: 600;">Plus, per transaction:</label>
+                                    <span>$</span>
+                                    <input type="number" step="0.01" min="0" name="subsales_convenience_fee_fixed" value="<?php echo esc_attr( get_option( 'subsales_convenience_fee_fixed', 0.0 ) ); ?>" style="width: 100px;" />
+                                </div>
+                                <p class="description" style="margin-top: 10px;">
+                                    Added on top of a digital payment to cover card processing. Card fees have two parts &mdash; a percentage of the total <em>and</em> a flat amount per transaction (Square charges 30&cent; per transaction on top of its percentage), so set both or the club absorbs the flat part on every order. Check Square's current published rate rather than trusting these numbers to stay right.
+                                </p>
+                                <p class="description">
+                                    The fee is worked out on the whole amount charged, donations included, because Square charges on the whole amount too.
+                                </p>
                             </td>
                         </tr>
                     </table>

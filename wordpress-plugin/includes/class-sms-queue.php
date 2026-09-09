@@ -163,20 +163,62 @@ class Subsales_SMS_Queue {
             'created_at'   => current_time( 'mysql', true ),
         );
 
-        // The duplicate-key collision is an expected outcome here, not a fault,
-        // so it must not surface as a visible wpdb error on an admin screen or
-        // in the REST response the PWA is waiting on.
-        $suppressed = $wpdb->suppress_errors( true );
-        $result     = $wpdb->insert( $table, $row, array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' ) );
-        $error      = $wpdb->last_error;
-        $wpdb->suppress_errors( $suppressed );
-
-        if ( false !== $result ) {
-            return true;
+        // Twilio's own id for the message. On an inbound message this is what
+        // makes a webhook retry a no-op instead of a second copy - the table has
+        // a UNIQUE key on it.
+        $formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
+        if ( ! empty( $args['twilio_sid'] ) ) {
+            $row['twilio_sid'] = $args['twilio_sid'];
+            $formats[]         = '%s';
         }
 
-        if ( false !== stripos( $error, 'duplicate' ) ) {
-            return true; // Already queued/sent for this order. Nothing to do.
+        // One outbound message of a given type per order, so a re-sent order sync
+        // cannot text the same customer their receipt twice.
+        //
+        // This used to be a UNIQUE(order_id, message_type) index, but that index
+        // also made a second INBOUND message on an order impossible - a customer
+        // who replied twice had their second message collide, and the collision
+        // was being reported as success, so it was thrown away in silence. The
+        // index is gone; the rule it enforced lives here, narrowed to outbound.
+        //
+        // INSERT ... SELECT ... WHERE NOT EXISTS rather than a SELECT followed by
+        // an insert: one statement, so two concurrent syncs of the same order
+        // cannot both find nothing and both insert.
+        $guard_dupes = ( 'out' === $row['direction'] && ! empty( $row['order_id'] ) );
+
+        if ( $guard_dupes ) {
+            $result = $wpdb->query( $wpdb->prepare(
+                "INSERT INTO {$table} ( direction, message_type, phone, body, order_id, status, skip_reason, created_at )
+                 SELECT %s, %s, %s, %s, %s, %s, %s, %s FROM DUAL
+                  WHERE NOT EXISTS (
+                        SELECT 1 FROM {$table} t
+                         WHERE t.order_id = %s AND t.message_type = %s AND t.direction = 'out'
+                  )",
+                $row['direction'], $row['message_type'], $row['phone'], $row['body'],
+                $row['order_id'], $row['status'], $row['skip_reason'], $row['created_at'],
+                $row['order_id'], $row['message_type']
+            ) );
+            $error = $wpdb->last_error;
+
+            // 0 rows means one was already there, which is the point of the guard.
+            if ( false !== $result ) {
+                return true;
+            }
+        } else {
+            $suppressed = $wpdb->suppress_errors( true );
+            $result     = $wpdb->insert( $table, $row, $formats );
+            $error      = $wpdb->last_error;
+            $wpdb->suppress_errors( $suppressed );
+
+            if ( false !== $result ) {
+                return true;
+            }
+
+            // An inbound message replayed by a Twilio webhook retry collides on
+            // twilio_sid. Storing it once is the correct outcome, not a failure.
+            if ( false !== stripos( $error, 'duplicate' ) ) {
+                return true;
+            }
         }
 
         subsales_log( 'ERROR', 'sms', 'Failed to queue SMS', array(
