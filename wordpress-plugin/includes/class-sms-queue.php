@@ -126,9 +126,16 @@ class Subsales_SMS_Queue {
      * @return array
      */
     public static function add_cron_schedule( $schedules ) {
+        // 30 seconds, not 60. The customer is standing at the door waiting for
+        // the receipt the seller just promised them, so the wait is the whole
+        // experience - at a one-minute interval it averaged 30s and could reach
+        // 60s. Sending straight from the order request instead would be faster
+        // still, but it would put a Twilio round trip inside the seller's order
+        // sync, where a slow or unreachable Twilio becomes the seller's problem
+        // at the door. The queue stays; it just drains twice as often.
         $schedules['subsales_minute'] = array(
-            'interval' => 60,
-            'display'  => 'Every Minute (Subsales SMS)',
+            'interval' => 30,
+            'display'  => 'Every 30 Seconds (Subsales SMS)',
         );
         return $schedules;
     }

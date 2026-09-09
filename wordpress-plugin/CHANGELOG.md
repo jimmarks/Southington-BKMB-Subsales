@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.59.1] - 2026-09-09
+
+### Changed
+- **Receipts go out twice as often.** The queue was emptied once a minute, so a customer waited an average of half a minute - and sometimes a full one - for the text the seller had just told them to expect. It now runs every thirty seconds. Sending the moment the order is taken would be faster still, but it would make a seller's order depend on the text service being reachable, and a customer at the door is better served by a receipt that is slightly late than by a seller stuck waiting.
+
 ## [3.59.0] - 2026-09-09
 
 ### Added
