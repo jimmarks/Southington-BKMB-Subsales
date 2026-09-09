@@ -83,7 +83,10 @@ class Subsales_SMS_Queue {
     /** Twilio's "recipient has unsubscribed" - the only code that proves opt-out. */
     const OPT_OUT_CODE = 21610;
 
-    const DEFAULT_TEMPLATE = "Thanks {customer}! {org} has your order: {items}. Total {total}. We'll be in touch about delivery. Reply STOP to opt out.";
+    // {receipt} keeps the message a fixed length whatever was ordered. Spelling
+    // the items out grew the text with the order - ten products would have run
+    // to four or five segments, every one of them billed.
+    const DEFAULT_TEMPLATE = "{org} got your order. Receipt: {receipt}\nSave this number so our texts reach you. Reply STOP to opt out.";
 
     // Carriers reject an opt-in flow that does not state, at the point of
     // consent: who is texting, what the messages are, how often they come,
@@ -485,11 +488,25 @@ class Subsales_SMS_Queue {
             $template = trim( implode( ' ', $kept ) );
         }
 
+        // The receipt link. Built only when the template asks for it, so a
+        // template without {receipt} never allocates a token.
+        $receipt_url = '';
+        if ( false !== strpos( $template, '{receipt}' ) ) {
+            $oid = isset( $order_data['order_id'] ) ? (string) $order_data['order_id'] : '';
+            if ( '' !== $oid && class_exists( 'Subsales_Receipt' ) ) {
+                $token = Subsales_Receipt::token_for( $oid );
+                if ( $token ) {
+                    $receipt_url = Subsales_Receipt::url( $token );
+                }
+            }
+        }
+
         $body = strtr( $template, array(
             '{customer}' => $customer,
             '{items}'    => $parts ? implode( ', ', $parts ) : 'your order',
             '{total}'    => '$' . number_format( $total, 2 ),
             '{org}'      => (string) get_option( 'subsales_branding', 'Subsales' ),
+            '{receipt}'  => $receipt_url,
             // Set per season in the setup wizard (step 7).
             '{adminphone}' => Subsales_Season_Setup::format_phone( get_option( 'subsales_admin_contact_phone', '' ) ),
         ) );

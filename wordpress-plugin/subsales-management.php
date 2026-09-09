@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.62.0
+ * Version: 3.63.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.62.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.63.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -88,6 +88,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-sms-queue.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-sms-inbound.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-receipt.php';
 require_once SUBSALES_PLUGIN_PATH . 'admin/messages-page.php';
 // Season setup wizard. Must be loaded here, not only from the Settings partials -
 // admin-ajax.php never loads a Settings page, so the wizard's AJAX handlers would
@@ -134,6 +135,7 @@ Subsales_Payment_Attempts::init();
 // housekeeping on the shared hourly hook, plus the order-created receipt hook)
 Subsales_SMS_Queue::init();
 Subsales_SMS_Inbound::init();
+Subsales_Receipt::init();
 
 
 // Activation/Deactivation hooks
@@ -4180,12 +4182,10 @@ function subsales_serve_portal_assets() {
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
     
     // Debug logging
-    error_log( 'SUBSALES DEBUG: template_redirect called, req_path=' . $req_path );
     
     // Serve signup page at /signup/ endpoint (independent of portal)
     // Match: signup, signup/, signup/index.html
     if ( $req_path === 'signup' || strpos( $req_path, 'signup/' ) === 0 ) {
-        error_log( 'SUBSALES DEBUG: Serving signup page' );
         subsales_serve_signup_page();
         exit;
     }
@@ -4400,10 +4400,8 @@ function subsales_serve_portal_assets() {
  */
 function subsales_catch_signup_404() {
     $req_path = trim( parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ), '/' );
-    error_log( 'SUBSALES DEBUG: wp hook called, req_path=' . $req_path . ', is_404=' . ( is_404() ? 'yes' : 'no' ) );
     
     if ( $req_path === 'signup' || strpos( $req_path, 'signup/' ) === 0 ) {
-        error_log( 'SUBSALES DEBUG: wp hook - serving signup' );
         // Mark as not 404
         global $wp_query;
         $wp_query->is_404 = false;

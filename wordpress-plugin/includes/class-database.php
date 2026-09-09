@@ -78,6 +78,7 @@ class Subsales_Database {
             address_validation_date datetime DEFAULT NULL,
             address_validation_data text DEFAULT NULL,
             address_hash varchar(64) DEFAULT NULL,
+            receipt_token varchar(16) DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY  (id),
@@ -86,7 +87,8 @@ class Subsales_Database {
             KEY deleted (deleted),
             KEY tallied (tallied),
             KEY address_validation_status (address_validation_status),
-            KEY address_hash (address_hash)
+            KEY address_hash (address_hash),
+            UNIQUE KEY receipt_token (receipt_token)
         ) $charset_collate;";
         
         $teams_sql = "CREATE TABLE $teams_table_name (

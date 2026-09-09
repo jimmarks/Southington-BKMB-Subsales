@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.63.0] - 2026-09-09
+
+### Added
+- **Order receipts are now a link to a page, not a wall of text.** The confirmation text used to spell out every item and the total, which made it two texts and grew with the order &mdash; a ten-product order would have run to four or five, each one billed. It now sends a short link to a receipt page showing the items, the total, where it is going and what was paid, so the text costs the same whatever was ordered. The page deliberately does not name the student who took the order.
+- **A setting for how long a receipt link works**, in days from when the order was taken, under Text Messages. Long enough to cover delivery and questions afterwards, not forever. An expired link says so politely rather than breaking.
+- **A setting for a short web address for receipt links.** A text is charged per 160 characters, so a shorter address can be the difference between one text and two. Public link shorteners such as bit.ly are blocked by the phone networks, so this must be an address you control &mdash; the settings page says so.
+
+### Fixed
+- **The site was writing two lines to the server log on every single page view.** Leftover debugging, now removed.
+
 ## [3.62.0] - 2026-09-09
 
 ### Fixed

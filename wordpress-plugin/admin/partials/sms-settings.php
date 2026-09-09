@@ -26,6 +26,19 @@ if ( isset( $_POST['save_sms'] ) && ! wp_doing_ajax() ) {
     check_admin_referer( 'order_sync_settings_nonce' );
 
     update_option( 'subsales_sms_enabled', isset( $_POST['subsales_sms_enabled'] ) ? 1 : 0 );
+
+    if ( isset( $_POST['subsales_receipt_link_days'] ) ) {
+        update_option( 'subsales_receipt_link_days', max( 1, min( 3650, intval( $_POST['subsales_receipt_link_days'] ) ) ) );
+    }
+    if ( isset( $_POST['subsales_receipt_short_host'] ) ) {
+        // Host only - a scheme or path here would produce a broken link in every
+        // receipt, and nobody would see it until a customer tapped one.
+        $host = strtolower( trim( wp_unslash( $_POST['subsales_receipt_short_host'] ) ) );
+        $host = preg_replace( '#^https?://#', '', $host );
+        $host = trim( (string) strtok( $host, '/' ) );
+        $host = preg_match( '/^[a-z0-9.-]{0,120}$/', $host ) ? $host : '';
+        update_option( 'subsales_receipt_short_host', $host );
+    }
     update_option( 'subsales_twilio_account_sid', isset( $_POST['subsales_twilio_account_sid'] ) ? sanitize_text_field( $_POST['subsales_twilio_account_sid'] ) : '' );
     update_option( 'subsales_twilio_auth_token', isset( $_POST['subsales_twilio_auth_token'] ) ? sanitize_text_field( $_POST['subsales_twilio_auth_token'] ) : '' );
     update_option( 'subsales_twilio_from_numbers', isset( $_POST['subsales_twilio_from_numbers'] ) ? sanitize_textarea_field( $_POST['subsales_twilio_from_numbers'] ) : '' );
@@ -151,6 +164,27 @@ if ( empty( $last_drain['at'] ) ) {
             <td>
                 <p class="description" style="max-width:640px">
                     <strong>Why these two are boxes you can type in:</strong> the phone companies decide the real limits, and Twilio only shows your actual numbers in its Console once your registration is approved. When you find out what they are, type them in here — nothing needs to be re-installed or re-released.
+                </p>
+            </td>
+        </tr>
+        <tr>
+            <th scope="row">Receipt links</th>
+            <td>
+                <label>Keep a receipt link working for
+                    <input type="number" min="1" max="3650" step="1" name="subsales_receipt_link_days"
+                           value="<?php echo esc_attr( get_option( 'subsales_receipt_link_days', 90 ) ); ?>" style="width:80px" />
+                    days after the order is taken.</label>
+                <p class="description">
+                    The receipt link in a text opens a page showing the customer their order. After this many days the link stops working and says so. Long enough to cover delivery and any questions afterwards; not so long that a link lives forever.
+                </p>
+                <p>
+                    <label>Short web address for receipt links<br>
+                        <input type="text" name="subsales_receipt_short_host" class="regular-text" placeholder="s.southingtonbkmb.com"
+                               value="<?php echo esc_attr( get_option( 'subsales_receipt_short_host', '' ) ); ?>" />
+                    </label>
+                </p>
+                <p class="description">
+                    Optional. A text is charged per 160 characters, so a shorter web address can be the difference between one text and two. Leave empty to use the main site address. Use your own short address &mdash; public link shorteners such as bit.ly are blocked by the phone networks.
                 </p>
             </td>
         </tr>
