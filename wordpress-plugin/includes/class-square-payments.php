@@ -211,6 +211,60 @@ class Subsales_Square_Payments {
      * @param string $checkout_id
      * @return true Always returns true; failures are logged, not surfaced.
      */
+    /**
+     * Ask Square whether an order has actually been paid.
+     *
+     * The webhook is the fast path, but it is one Square subscription away from
+     * silence - and when it goes quiet the seller is left holding a QR code that
+     * never clears while the customer has already paid. This lets the status
+     * poll answer the question itself.
+     *
+     * @param string $square_order_id The order id stored on the attempt.
+     * @return array|null array( 'paid' => bool, 'payment_id' => string ), or null if Square could not be asked.
+     * @since 3.47.0
+     */
+    public static function order_payment_state( $square_order_id ) {
+        $settings = self::get_settings();
+        if ( ! $settings || empty( $square_order_id ) ) {
+            return null;
+        }
+
+        $base_url = self::get_api_base_url( $settings['environment'] );
+        $response = wp_remote_get( $base_url . '/v2/orders/' . rawurlencode( $square_order_id ), array(
+            'timeout' => 10,
+            'headers' => array(
+                'Authorization'  => 'Bearer ' . $settings['access_token'],
+                'Square-Version' => '2024-01-18',
+                'Content-Type'   => 'application/json',
+            ),
+        ) );
+
+        if ( is_wp_error( $response ) || 200 !== wp_remote_retrieve_response_code( $response ) ) {
+            return null;
+        }
+
+        $order = json_decode( wp_remote_retrieve_body( $response ), true );
+        $order = isset( $order['order'] ) ? $order['order'] : null;
+        if ( ! is_array( $order ) ) {
+            return null;
+        }
+
+        // A paid checkout leaves a tender on the order. Square reports the order
+        // state as OPEN rather than COMPLETED at this point, so the tender - not
+        // the state - is the thing that says money changed hands.
+        $tenders    = isset( $order['tenders'] ) && is_array( $order['tenders'] ) ? $order['tenders'] : array();
+        $payment_id = '';
+        foreach ( $tenders as $tender ) {
+            if ( ! empty( $tender['payment_id'] ) ) { $payment_id = $tender['payment_id']; break; }
+            if ( ! empty( $tender['id'] ) )         { $payment_id = $tender['id']; }
+        }
+
+        $due  = isset( $order['net_amount_due_money']['amount'] ) ? intval( $order['net_amount_due_money']['amount'] ) : null;
+        $paid = ( ! empty( $tenders ) ) || ( null !== $due && 0 === $due );
+
+        return array( 'paid' => (bool) $paid, 'payment_id' => $payment_id );
+    }
+
     public static function delete_payment_link( $checkout_id ) {
         $settings = self::get_settings();
         if ( ! $settings || empty( $checkout_id ) ) {

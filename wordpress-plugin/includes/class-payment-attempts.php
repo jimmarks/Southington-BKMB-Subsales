@@ -242,12 +242,42 @@ class Subsales_Payment_Attempts {
         $attempt_id = $request->get_param( 'id' );
 
         $row = $wpdb->get_row( $wpdb->prepare(
-            "SELECT attempt_uid, status, updated_at FROM {$table_name} WHERE attempt_uid = %s",
+            "SELECT id, attempt_uid, status, updated_at, square_order_id FROM {$table_name} WHERE attempt_uid = %s",
             $attempt_id
         ), ARRAY_A );
 
         if ( ! $row ) {
             return new WP_Error( 'attempt_not_found', 'Payment attempt not found.', array( 'status' => 404 ) );
+        }
+
+        // Still waiting? Ask Square directly rather than trusting the webhook to
+        // have arrived. The webhook is faster when it works, but it is one
+        // subscription away from silence, and the cost of that silence is a
+        // seller stood at a door with a QR code that never clears while the
+        // customer has already paid.
+        //
+        // Throttled to one call every 5 seconds per attempt: the app polls every
+        // 3, and this must not turn into a Square rate-limit problem.
+        if ( 'initiated' === $row['status'] && ! empty( $row['square_order_id'] ) ) {
+            $throttle_key = 'subsales_sq_check_' . md5( $row['attempt_uid'] );
+            if ( false === get_transient( $throttle_key ) ) {
+                set_transient( $throttle_key, 1, 5 );
+                $state = Subsales_Square_Payments::order_payment_state( $row['square_order_id'] );
+                if ( $state && ! empty( $state['paid'] ) ) {
+                    $wpdb->update(
+                        $table_name,
+                        array( 'status' => 'paid', 'square_payment_id' => $state['payment_id'] ),
+                        array( 'id' => intval( $row['id'] ) ),
+                        array( '%s', '%s' ),
+                        array( '%d' )
+                    );
+                    subsales_log( 'INFO', 'square', 'Attempt marked paid by polling Square, not by webhook', array(
+                        'attempt_uid' => $row['attempt_uid'],
+                    ) );
+                    $row['status'] = 'paid';
+                    $row['updated_at'] = current_time( 'mysql', true );
+                }
+            }
         }
 
         return rest_ensure_response( array(
