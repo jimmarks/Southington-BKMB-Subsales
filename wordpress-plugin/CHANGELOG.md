@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.68.0] - 2026-09-09
+
+### Changed
+- **Unit / Floor / Apt is no longer tacked onto the end of the delivery address.** It was being appended after the country, which left addresses reading &ldquo;&hellip;Southington, CT, USA 10&rdquo;. It is now kept as its own field and shown next to the address wherever a person reads one, so what gets matched for delivery is exactly the address the map returned.
+- **&ldquo;USA&rdquo; is no longer shown to customers.** It is still stored &mdash; every address is filed against it and changing that would split the records for a house between old orders and new &mdash; but a customer in Southington does not need telling which country their subs are coming to.
+- **The Unit box now says what it is for**: &ldquo;Apt 3B, Unit 12 &mdash; only if there is one&rdquo;. It previously read as a required box sitting under the address, and people filled it with a house number, the word &ldquo;none&rdquo;, and in one case &ldquo;early&rdquo;, which then became part of the delivery address.
+
+### Fixed
+- **Addresses were read wrongly when anything followed the country.** The town ended up recorded as &ldquo;USA&rdquo;. Deliveries were never affected &mdash; those are matched on house number and street &mdash; but reports and the address review queue were. Thirteen affected orders have been tidied; a backup was taken first.
+
 ## [3.67.2] - 2026-09-09
 
 ### Fixed

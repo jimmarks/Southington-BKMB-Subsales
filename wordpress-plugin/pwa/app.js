@@ -359,6 +359,7 @@
       }catch(e){}
       // address: set canonical and try to populate visible autocomplete widget
       try{ const addr = orderObj.address || orderObj.formatted_address || ''; if (qs('#address')) qs('#address').value = addr; populateAddressWidget(addr); }catch(e){}
+      try{ const u = qs('#unitFloorApt'); if (u) u.value = orderObj.unit || ''; }catch(e){}
       // A card payment is already captured on this order, so what was bought is
       // fixed - all money settles on sales day and there is no later step that
       // could absorb a difference. Delivery details stay editable. The server
@@ -2195,6 +2196,7 @@
       entered_by_name: data.enteredByName,
       teamName: data.teamName,
       teamCode: data.teamCode,
+      unit: data.unit || '',
       address_entry_method: data.addressEntryMethod || 'unknown',
       geo,
       ...authCreds,
@@ -2276,8 +2278,11 @@
       const customer = qs('#customerName') && qs('#customerName').value.trim();
       let address = '';
       try{ address = (qs('#address') && qs('#address').value && qs('#address').value.trim()) || ''; }catch(e){ address = ''; }
-      const unitFloorApt = qs('#unitFloorApt') && qs('#unitFloorApt').value.trim();
-      if (unitFloorApt) { address = address + (address ? ' ' : '') + unitFloorApt; }
+      // Kept OUT of the address. It used to be stuck on the end, which put it
+      // after "USA" in the Google-formatted string - the parser then read the
+      // unit as the city and the street swallowed the town. It travels as its
+      // own field and is shown next to the address wherever a person reads one.
+      const unitFloorApt = (qs('#unitFloorApt') && qs('#unitFloorApt').value.trim()) || '';
       const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
       const smsConsent = !!(qs('#smsConsent') && qs('#smsConsent').checked);
 
@@ -2321,7 +2326,7 @@
 
       // Snapshot now — this is what gets used to build the real order later, at "paid" time,
       // not whatever the DOM happens to hold then.
-      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode, smsConsent, addressEntryMethod: addressEntryMethod() };
+      digitalOrderData = { customer, address, cell, notes, products, donation, priceSnapshot, subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode, smsConsent, addressEntryMethod: addressEntryMethod(), unit: unitFloorApt };
 
       const url = apiBase ? (apiBase + '/digital-payments/checkout') : '/wp-json/order-manager/v1/digital-payments/checkout';
       const resp = await fetch(url, {
@@ -3555,10 +3560,9 @@
   let address = '';
   try{ address = (qs('#address') && qs('#address').value && qs('#address').value.trim()) || ''; }catch(e){ address = ''; }
   // Append unit/floor/apt if provided
-  const unitFloorApt = qs('#unitFloorApt') && qs('#unitFloorApt').value.trim();
-  if (unitFloorApt) {
-    address = address + (address ? ' ' : '') + unitFloorApt;
-  }
+  // See the note on the digital path: the unit is its own field, never appended
+  // to the address that delivery and reporting parse.
+  const unitFloorApt = (qs('#unitFloorApt') && qs('#unitFloorApt').value.trim()) || '';
   const cell = qs('#cellNumber') && qs('#cellNumber').value.trim();
   
   // Re-enable button before showing validation errors
@@ -3696,7 +3700,8 @@
       order = await buildNewOrderObject(paymentMethod, {
         customer, address, cell, products, priceSnapshot, donation, chkNumber, notes,
         subsalesUserId, subsalesTeamId, enteredById, enteredByName, teamName, teamCode,
-        donationOnly, smsConsent, addressEntryMethod: addressEntryMethod()
+        donationOnly, smsConsent, addressEntryMethod: addressEntryMethod(),
+        unit: unitFloorApt
       });
     }
     
@@ -3915,6 +3920,7 @@
             // every receipt was skipped as 'no_consent' - including the ones
             // where the customer had actually agreed at the door.
             smsConsent: !!order.smsConsent,
+            unit: order.unit || '',
             address_entry_method: order.address_entry_method || 'unknown',
             // Links the order to the Square payment that paid for it. Without it
             // the server cannot find the captured payment, so the guard that

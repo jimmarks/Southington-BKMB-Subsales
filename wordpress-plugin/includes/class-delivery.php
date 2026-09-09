@@ -1143,7 +1143,15 @@ class Subsales_Delivery {
         // Remove country if present (English, Spanish, Italian variants)
         // USA, U.S.A., US, United States, EE. UU. (Spanish), Stati Uniti (Italian)
         // Remove with flexible boundaries to handle commas and spaces
-        $address = preg_replace( '/[,\s]*(USA|U\.?S\.?A\.?|United\s+States|US|EE\.\s*UU\.|Stati\s+Uniti)[,\s]*$/i', '', $address );
+        // Not anchored to the end of the string any more. It used to be, and
+        // anything after the country - a unit typed into the wrong box, say -
+        // meant the country was never stripped: the street field then swallowed
+        // the city and the city came out as "USA".
+        // Lookahead, not \b. Two of these variants end in a full stop - Google
+        // returns "EE. UU." for a Spanish-locale phone and "Stati Uniti" for an
+        // Italian one, and both are in the live data - and \b cannot match after
+        // a "." at the end of a string, so those stopped being stripped.
+        $address = preg_replace( '/[,\s]+(USA|U\.?S\.?A\.?|United\s+States|EE\.\s*UU\.|Stati\s+Uniti|US)(?=[\s,]|$)/i', ', ', $address );
         
         // Clean up multiple commas and extra spaces after removals
         $address = preg_replace( '/,\s*,+/', ',', $address ); // Replace ,, with single ,

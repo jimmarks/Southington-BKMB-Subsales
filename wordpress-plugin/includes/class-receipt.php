@@ -218,7 +218,15 @@ class Subsales_Receipt {
 		$body .= '<dl class="meta">';
 		$body .= '<dt>Ordered</dt><dd>' . esc_html( get_date_from_gmt( $order['created_at'], 'l j F Y, g:i A' ) ) . '</dd>';
 		if ( ! empty( $od['address'] ) ) {
-			$body .= '<dt>Delivering to</dt><dd>' . esc_html( $od['address'] ) . '</dd>';
+			// "USA" comes back on every Google-formatted address and tells a
+			// customer in Southington nothing. Stripped for display only - the
+			// stored string stays exactly as it was, because address_hash is
+			// computed from it and 1,600-odd historical orders share that shape.
+			$shown = preg_replace( '/[,\s]+(USA|United States)\s*$/i', '', (string) $od['address'] );
+			if ( ! empty( $od['unit'] ) ) {
+				$shown .= ' &middot; ' . esc_html( $od['unit'] );
+			}
+			$body .= '<dt>Delivering to</dt><dd>' . esc_html( $shown ) . '</dd>';
 		}
 		if ( ! empty( $od['notes'] ) ) {
 			$body .= '<dt>Delivery notes</dt><dd>' . esc_html( $od['notes'] ) . '</dd>';

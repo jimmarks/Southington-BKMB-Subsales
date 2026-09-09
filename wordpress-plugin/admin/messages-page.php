@@ -358,7 +358,9 @@ function subsales_messages_thread_view( $order_id, $phone ) {
 		$donation     = (float) ( $od['donationAmount'] ?? 0 );
 		$order_total += $donation;
 
-		printf( '<tr><th style="width:40%%">Address</th><td>%s</td></tr>', esc_html( $od['address'] ?? '' ) );
+		$addr_shown = preg_replace( '/[,\s]+(USA|United States)\s*$/i', '', (string) ( $od['address'] ?? '' ) );
+		if ( ! empty( $od['unit'] ) ) { $addr_shown .= ' · ' . $od['unit']; }
+		printf( '<tr><th style="width:40%%">Address</th><td>%s</td></tr>', esc_html( $addr_shown ) );
 		printf( '<tr><th>Phone</th><td>%s</td></tr>', esc_html( subsales_format_phone( $od['cellNumber'] ?? '' ) ) );
 		printf( '<tr><th>Items</th><td>%s</td></tr>', wp_kses_post( $items ? implode( '<br>', $items ) : '&mdash;' ) );
 		if ( $donation > 0 ) {
