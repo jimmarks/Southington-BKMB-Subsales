@@ -366,6 +366,9 @@
       try{ window._editingOrder = { orderId: orderObj.id || orderObj.order_id || orderObj.orderId || null, local: !!opts.local }; }catch(e){}
   // mark document as being in edit mode so UI can show a watermark or other affordances
   try{ document.body.classList.add('sm-edit-mode'); }catch(e){}
+  // There was no way out of edit mode except saving or clearing the form -
+  // and "Clear Form" on somebody else's order reads like it might delete it.
+  try{ const c = qs('#cancelEditBtn'); if (c) c.classList.remove('hidden'); }catch(e){}
       // inject watermark CSS once (keeps file edits minimal and avoids requiring stylesheet changes)
       try{
         if (!document.getElementById('sm-edit-mode-style')){
@@ -399,7 +402,12 @@
       const canonical = qs('#address');
       if (canonical) {
         canonical.value = addressStr;
-        try{ canonical.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
+        // Deliberately NOT dispatching an 'input' event. The address widget
+        // treats that as the customer typing, so opening an order to edit it
+        // popped the suggestion list open over a field that was already filled
+        // in - and, since typing is what marks an address as hand-entered, it
+        // also relabelled a picked address as manual just for being looked at.
+        try{ if (canonical.dataset) { delete canonical.dataset.subsalesSelected; } }catch(e){}
       }
     }catch(e){ console.warn('populateAddressWidget error', e); }
   }
@@ -1842,10 +1850,30 @@
       try{ computeTotal(); }catch(e){}
       // remove edit-mode UI marker when clearing the form
       try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
+      try{ const c = qs('#cancelEditBtn'); if (c) c.classList.add('hidden'); }catch(e){}
       // release any paid-order lock, or it would carry into the next order
       try{ applyPaidOrderLock(null); }catch(e){}
     }catch(e){ /* silent */ }
   }
+
+  // Cancel: abandon the edit without touching the order. A driver goes back to
+  // the money screen; a seller lands on an empty order form.
+  try{
+    const cancelBtn = qs('#cancelEditBtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', function(){
+      const editing = window._editingOrder && window._editingOrder.orderId;
+      if (editing && !confirm('Leave this order as it was? Anything you changed here will not be saved.')) { return; }
+      window._editingOrder = null;
+      try{ clearOrderForm(); }catch(e){}
+      try{ document.body.classList.remove('sm-edit-mode'); }catch(e){}
+      cancelBtn.classList.add('hidden');
+      if (window._driverEditing) {
+        window._driverEditing = false;
+        try{ driverReturnFromEdit(); }catch(e){}
+      }
+      try{ window.scrollTo(0,0); }catch(e){}
+    });
+  }catch(e){}
 
   if (payCheck) payCheck.addEventListener('change', ()=>{ if (payCheck.checked) { checkNumberRow && checkNumberRow.classList.remove('hidden'); if (payCash) payCash.checked=false; if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } else { checkNumberRow && checkNumberRow.classList.add('hidden'); } });
   if (payCash) payCash.addEventListener('change', ()=>{ if (payCash.checked) { if (payCheck) { payCheck.checked=false; checkNumberRow && checkNumberRow.classList.add('hidden'); } if (payDigital && payDigital.checked) { payDigital.checked=false; hideDigitalPanel(); } } });

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.66.1] - 2026-09-09
+
+### Fixed
+- **Opening an order to edit it popped the address suggestions open over an address that was already filled in.** Filling the field in was being treated as though somebody had typed in it &mdash; which also quietly relabelled a picked address as hand-typed, just for being looked at.
+- **There was no way out of an edit except saving it.** The only other button said <em>Clear Form</em>, which on somebody else's order reads like it might delete something. There is now a <strong>Cancel edit</strong> button that leaves the order exactly as it was; a driver goes back to their money screen, a seller to an empty form.
+
 ## [3.66.0] - 2026-09-09
 
 ### Fixed
