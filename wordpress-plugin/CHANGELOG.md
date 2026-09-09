@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.65.0] - 2026-09-09
+
+### Changed
+- **The Edit Order dialog opens from a conversation, in place.** Answering "I need to change my order" used to start by leaving the conversation for the Orders screen. The same dialog now opens over the conversation, and saving refreshes the order beside it. It is genuinely the same dialog, moved into one shared file rather than copied, so the two screens cannot drift apart.
+
+### Fixed
+- **"Individual" was cut off under the switch in the Edit Order dialog.** The control reserves a fixed space for the label on its left, sized for a short word like "Team"; this dialog puts "Individual" there. The dialog now sizes that space to the word, without changing the switches on the dashboard that were already correct.
+
 ## [3.64.0] - 2026-09-09
 
 ### Changed

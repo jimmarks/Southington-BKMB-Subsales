@@ -374,11 +374,13 @@ function subsales_messages_thread_view( $order_id, $phone ) {
 		printf( '<tr><th>Order id</th><td><code style="font-size:11px">%s</code></td></tr>', esc_html( $order['order_id'] ) );
 		echo '</tbody></table>';
 
-		// Straight into the same edit dialog the Orders screen uses - that page
-		// already opens it from ?edit=<id>, so there is one edit form, not two.
+		// Opens the same dialog the Orders screen uses, here, without leaving the
+		// conversation - answering "I need to change my order" should not start
+		// by navigating away from the person asking.
 		printf(
-			'<p style="margin:12px 0 4px"><a class="button button-primary" href="%s">Edit this order</a></p>',
-			esc_url( admin_url( 'admin.php?page=subsales-orders&edit=' . intval( $order['id'] ) ) )
+			'<p style="margin:12px 0 4px"><button type="button" class="button button-primary" onclick="SubsalesOrderEdit.editOrder(%d, %s)">Edit this order</button></p>',
+			intval( $order['id'] ),
+			wp_json_encode( (string) $order['order_id'] )
 		);
 
 		subsales_messages_order_history( intval( $order['id'] ) );
@@ -391,6 +393,15 @@ function subsales_messages_thread_view( $order_id, $phone ) {
 	}
 
 	echo '</div></div>';
+
+	// The dialog itself, and a redraw after a save - on this screen the panel
+	// beside the conversation is what needs refreshing, and it is server-rendered.
+	global $wpdb;
+	$teams         = $wpdb->get_results( "SELECT id, name FROM {$wpdb->prefix}ss_teams ORDER BY name ASC", ARRAY_A );
+	$products_conf = function_exists( 'order_sync_get_products_config' ) ? order_sync_get_products_config() : array();
+	echo '<script>window.fetchPage = function(){ location.reload(); };</script>';
+	include SUBSALES_PLUGIN_PATH . 'admin/partials/order-edit-modal.php';
+
 	return;
 }
 
