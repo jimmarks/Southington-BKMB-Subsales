@@ -603,6 +603,31 @@ input[type="tel"].invalid{border-color:#dc2626;box-shadow:0 0 0 3px rgba(220,38,
   border-radius:8px;
 }
 
+/* Read by the buyer, over the seller's shoulder, in daylight, in the second
+   before they pay. It has to survive that: dark text on a warm ground, sized
+   between the countdown and the status line, and boxed so it reads as a notice
+   rather than as more of the page. Amber, not red - this is a disclosure, not
+   an error. */
+.digital-fee-notice{
+  font-size:0.95rem;
+  line-height:1.4;
+  color:#7c4a03;
+  background:#fff8e6;
+  border:1px solid #f5c86b;
+  border-radius:8px;
+  padding:10px 12px;
+  margin:14px auto 0;
+  max-width:min(90vw, 340px);
+  text-align:center;
+}
+.digital-fee-notice strong{ color:#663c00; white-space:nowrap; }
+.digital-fee-notice .digital-fee-total{
+  display:inline-block;
+  margin-top:6px;
+  font-size:1rem;
+}
+.digital-fee-notice.hidden{ display:none; }
+
 .digital-payment-panel .btn-row{
   display:flex;
   gap:10px;

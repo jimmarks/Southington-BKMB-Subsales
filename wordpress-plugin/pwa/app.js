@@ -2241,6 +2241,24 @@
       if (digitalQrPanel) digitalQrPanel.classList.remove('hidden');
       if (digitalQrImg) digitalQrImg.src = data.qr_code_data_uri || '';
 
+      // Say what is being added, in money, while the buyer is looking at the
+      // code. Hidden entirely when there is no fee - an empty or $0.00 notice
+      // reads as a charge nobody can find.
+      const feeEl = qs('#digitalFeeNotice');
+      if (feeEl) {
+        const fee = data.amount && Number(data.amount.fee || 0);
+        const total = data.amount && Number(data.amount.total || 0);
+        if (fee > 0) {
+          feeEl.innerHTML = 'An additional fee for digital payment of <strong>$' + fee.toFixed(2) +
+            '</strong> will be added to this order.<br><span class="digital-fee-total">Total to pay: <strong>$' +
+            total.toFixed(2) + '</strong></span>';
+          feeEl.classList.remove('hidden');
+        } else {
+          feeEl.textContent = '';
+          feeEl.classList.add('hidden');
+        }
+      }
+
       startDigitalWaitingMessages();
       startDigitalPolling();
     }catch(e){

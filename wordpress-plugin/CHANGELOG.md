@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.59.0] - 2026-09-09
+
+### Added
+- **The digital payment screen now tells the buyer about the fee before they pay.** When a convenience fee applies, the QR screen states the amount being added and the total to pay, in bold, right under the code the buyer is about to scan. It appears only when there is a fee to declare.
+
+### Fixed
+- **Square stopped telling the site when a payment went through.** Confirmations were arriving only because the site was checking Square repeatedly, not because Square was notifying it - a signing key left over from an older setup meant every notification was rejected as unverified. The key has been replaced and notifications verify correctly again. Payments were completing throughout; only the notification path was broken.
+
 ## [3.58.0] - 2026-09-09
 
 ### Added

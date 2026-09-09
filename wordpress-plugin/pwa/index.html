@@ -176,6 +176,11 @@
               <div id="digitalQrPanel" class="hidden">
                 <p id="digitalStatusText">Waiting for buyer...</p>
                 <img id="digitalQrImg" alt="Scan to pay" />
+                <!-- Populated only when the order actually carries a fee. The
+                     buyer is looking at this screen while they scan, so the
+                     charge being more than the order total is disclosed here,
+                     before they pay, rather than only on Square's screen. -->
+                <p id="digitalFeeNotice" class="digital-fee-notice hidden"></p>
                 <p id="digitalExpiryText"></p>
                 <div class="btn-row">
                   <button id="digitalCancelBtn" type="button" class="sm-btn" style="background-color:#dc3545;color:#fff;">Back out to Cash/Check</button>
