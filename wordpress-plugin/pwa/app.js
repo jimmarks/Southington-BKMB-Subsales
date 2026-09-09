@@ -1764,6 +1764,12 @@
       // clear any dynamic product qty inputs
       try{ const prodInputs = document.querySelectorAll('input[data-product-id]'); prodInputs.forEach(i=>{ try{ i.value=''; }catch(e){} }); }catch(e){}
       if (payCheck) payCheck.checked = false; if (payCash) payCash.checked = false; if (payDigital) payDigital.checked = false;
+      // Unticking the boxes is not enough: the payment options are drawn as
+      // buttons, so without a repaint a cleared form still shows the last
+      // customer's method lit up. Tear the QR panel down too, in case Digital
+      // was mid-flight.
+      try{ if (window.smPaintPayOptions) window.smPaintPayOptions(); }catch(e){}
+      try{ hideDigitalPanel(); }catch(e){}
       try{ if (window.smPaintPayOptions) window.smPaintPayOptions(); }catch(e){}
       try{ if (checkNumberRow) checkNumberRow.classList.add('hidden'); }catch(e){}
       try{ hideDigitalPanel(); }catch(e){}
@@ -3284,34 +3290,19 @@
   // Clear form button handler
   clearFormBtn && clearFormBtn.addEventListener('click', ()=>{
     if (confirm('Are you sure you want to clear all form fields? This cannot be undone.')) {
-      // Clear all form fields
-      customerInput && (customerInput.value = '');
-      addressInput && (addressInput.value = '');
-      cellInput && (cellInput.value = '');
-      notesInput && (notesInput.value = '');
-      checkNumberInput && (checkNumberInput.value = '');
-      donationAmount && (donationAmount.value = '0');
-      
-      // Clear all product quantities
-      const prodInputs = document.querySelectorAll('.sm-prod-row input[type="number"]');
-      prodInputs.forEach(inp => inp.value = '0');
-      
-      // Reset payment method to cash
-      const cashRadio = document.querySelector('input[name="paymentMethod"][value="cash"]');
-      if (cashRadio) cashRadio.checked = true;
-      
-      // Hide check number field
-      const checkRow = document.getElementById('checkNumberRow');
-      if (checkRow) checkRow.classList.add('hidden');
-      
-      // Clear any stored selection data
+      // Use the one function that actually knows what is on this form. This
+      // handler used to carry its own copy of the clearing logic, and that copy
+      // had gone stale: it looked for product rows by a class they no longer
+      // have and for payment radios that are now checkboxes, so it silently
+      // cleared neither. A seller who pressed Clear Form and walked to the next
+      // house carried the last customer's quantities and donation with them.
+      clearOrderForm();
+
       if (addressInput) {
         try { delete addressInput.dataset.subsalesSelected; } catch(e) {}
       }
-      
-      // Focus on customer name
       customerInput && customerInput.focus();
-      
+
       if(window.PWALogger && window.PWALogger.debugEnabled){
         window.PWALogger.log('ui', 'Form cleared by user');
       }
