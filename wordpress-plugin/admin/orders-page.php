@@ -29,7 +29,52 @@ $ajax_url = admin_url( 'admin-ajax.php' );
 
 // Preload teams, members and configured products for filter UI and table columns
 $teams = order_sync_get_teams();
-$members = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}ss_team_members ORDER BY name ASC", ARRAY_A );
+// Sellers only, and only the ones who sold in the season being viewed.
+//
+// The filter is deliberately NOT m.role - that column is person-level and does
+// not reset between seasons, so a kid who drove last year and sells this year
+// still reads as 'driver' and would vanish from a dropdown that trusted it.
+// ss_signups.is_driver is per signup, which is what actually changes each year.
+//
+// A member counts as a seller in a season if they signed up as one, OR if they
+// have orders in it - several sellers have orders but no signup row, and
+// dropping them would make their own orders unfilterable. Anyone whose only
+// involvement in a season was driving never appears for that season.
+$member_rows = $wpdb->get_results(
+	"SELECT m.id, m.name, m.email, t.season_id
+	   FROM {$wpdb->prefix}ss_team_members m
+	   JOIN {$wpdb->prefix}ss_signups s
+	     ON s.user_id = m.id AND s.status = 'active' AND s.is_driver = 0
+	   JOIN {$wpdb->prefix}ss_teams t ON t.id = s.team_id
+	  UNION
+	 SELECT m.id, m.name, m.email, o.season_id
+	   FROM {$wpdb->prefix}ss_team_members m
+	   JOIN {$wpdb->prefix}ss_orders o ON o.user_id = m.id AND o.deleted = 0",
+	ARRAY_A
+);
+
+// Collapse to one row per member carrying the seasons they sold in, so the
+// dropdown can be re-filtered client-side when the season selector changes
+// without a round trip.
+$members = array();
+foreach ( $member_rows as $mr ) {
+	$mid = strval( $mr['id'] );
+	if ( ! isset( $members[ $mid ] ) ) {
+		$members[ $mid ] = array(
+			'id'      => $mr['id'],
+			'name'    => $mr['name'],
+			'email'   => $mr['email'],
+			'seasons' => array(),
+		);
+	}
+	$members[ $mid ]['seasons'][] = intval( $mr['season_id'] );
+}
+usort(
+	$members,
+	function ( $a, $b ) {
+		return strcasecmp( strval( $a['name'] ), strval( $b['name'] ) );
+	}
+);
 $products_conf = order_sync_get_products_config();
 
 // Seasons for the scope selector. The page defaults to the current season so
@@ -123,8 +168,14 @@ $params = array();
                         <select name="entered_by_id">
                             <option value="">All members</option>
                             <?php foreach ( $members as $m ) : ?>
-                                <?php $label = esc_html( $m['name'] ); $email = trim( strval( $m['email'] ?? '' ) ); if ( $email ) { $label .= ' (' . esc_html( $email ) . ')'; } ?>
-                                <option value="<?php echo esc_attr( $m['id'] ); ?>"><?php echo $label; ?></option>
+                                <?php
+                                $label = esc_html( $m['name'] );
+                                $email = trim( strval( $m['email'] ?? '' ) );
+                                if ( $email ) { $label .= ' (' . esc_html( $email ) . ')'; }
+                                $seasons_attr = implode( ',', array_unique( $m['seasons'] ) );
+                                $in_season    = in_array( $current_season_id, $m['seasons'], true );
+                                ?>
+                                <option value="<?php echo esc_attr( $m['id'] ); ?>" data-seasons="<?php echo esc_attr( $seasons_attr ); ?>" <?php echo $in_season ? '' : 'hidden'; ?>><?php echo $label; ?></option>
                             <?php endforeach; ?>
                         </select>
                     </td>
@@ -595,6 +646,29 @@ $params = array();
         
         let selectedOrderIds = new Set();
 
+        // The Team member list follows the season selector: a kid who sold last
+        // season is not a choice while you are looking at this one. Options
+        // carry the seasons they sold in, so no round trip is needed.
+        function syncMemberOptions(){
+            const seasonSel = document.querySelector('select[name="season_id"]');
+            const memberSel = document.querySelector('select[name="entered_by_id"]');
+            if (!seasonSel || !memberSel) return;
+            const season = String(seasonSel.value || '');
+            let selectedHidden = false;
+            Array.prototype.forEach.call(memberSel.options, function(opt){
+                if (!opt.value) return;                       // keep "All members"
+                const seasons = (opt.dataset.seasons || '').split(',').filter(Boolean);
+                // "0" is All seasons, where everyone who ever sold is fair game.
+                const show = (season === '0') || seasons.indexOf(season) !== -1;
+                opt.hidden = !show;
+                opt.disabled = !show;
+                if (!show && opt.selected) selectedHidden = true;
+            });
+            // Never leave a hidden option selected - the filter would silently
+            // apply a member you cannot see in the list.
+            if (selectedHidden) memberSel.value = '';
+        }
+
         function serializeForm(form){
             const fd = new FormData();
             fd.append('action','subsales_fetch_orders');
@@ -851,8 +925,16 @@ $params = array();
 
         document.getElementById('subsales-filter-btn').addEventListener('click', function(){ fetchPage(1); });
         document.getElementById('subsales-reset-btn').addEventListener('click', function(){
-            document.getElementById('subsales-orders-filter').reset(); fetchPage(1);
+            document.getElementById('subsales-orders-filter').reset();
+            syncMemberOptions();
+            fetchPage(1);
         });
+
+        (function(){
+            const seasonSel = document.querySelector('select[name="season_id"]');
+            if (seasonSel) seasonSel.addEventListener('change', syncMemberOptions);
+            syncMemberOptions();
+        })();
         
         // Select all checkbox handler
         document.getElementById('subsales-select-all').addEventListener('change', function(){

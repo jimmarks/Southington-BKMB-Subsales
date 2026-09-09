@@ -935,13 +935,25 @@
       if (tr && tr.ok) serverInfo = await tr.json();
     }catch(e){ serverInfo = null; }
     // Normalize orders: accept both local objects and remote DB rows that may include order_data
-    const all = (local||[]).concat(remote||[]);
+    // An order that synced but whose local copy did not get deleted appears in
+    // both lists, and every figure below counted it twice. Storage.remove()
+    // returns false on an IndexedDB error and nobody checks it, so that state
+    // is permanent once it happens. Key on the order id and take the first.
+    const seenOrderIds = new Set();
+    const all = (local||[]).concat(remote||[]).filter(function(o){
+      var od = (o && o.order_data && typeof o.order_data === 'object') ? o.order_data : o;
+      var key = (od && od.order_id) || (o && (o.order_id || o.id)) || null;
+      if (!key) return true;
+      if (seenOrderIds.has(key)) return false;
+      seenOrderIds.add(key);
+      return true;
+    });
     // Build product totals map
     // Use the client products config (productsConfig) that is maintained elsewhere in the app
     const products = (productsConfig && Array.isArray(productsConfig)) ? productsConfig : [];
     const prodTotals = {};
     products.forEach(p => { prodTotals[p.id] = 0; });
-    let totalDonation = 0; let totalCash = 0; let totalCheck = 0; let totalDigital = 0;
+    let totalDonation = 0; let totalCash = 0; let totalCheck = 0; let totalDigital = 0; let totalOrders = 0; let totalSubs = 0;
     // Only include today's orders (in server time). Helper to detect same-day using serverInfo.
     function isSameDayForServer(o, created){
       try{
@@ -1017,12 +1029,20 @@
           }catch(e){}
         });
       }
+      // Split the order in two before the donation goes in: what was sold, and
+      // what was given. The tally shows both, then one total - never the total
+      // with the donation added on top of an order total that already has it.
+      totalSubs += orderTotal;
       orderTotal += donation;
-      // add donation and payment buckets
       totalDonation += donation;
       if (payment === 'cash') totalCash += orderTotal;
       else if (payment === 'check') totalCheck += orderTotal;
       else if (payment === 'digital') totalDigital += orderTotal;
+      // Every order counts toward the total, with or without a payment method -
+      // this is what the admin Orders screen does for its Total column, and an
+      // order that falls through the three buckets used to vanish from the
+      // total silently instead of showing up as a problem.
+      totalOrders += orderTotal;
     }
     all.forEach(o => { try{ extractOrderInfo(o); }catch(e){} });
     
@@ -1038,18 +1058,24 @@
     products.forEach(p => { const q = prodTotals[p.id] || 0; html += `<tr><td>${escapeHtml(p.name||p.id)}</td><td style="text-align:right">${q}</td></tr>`; });
     html += '</tbody></table>';
     html += '<table class="widefat fixed" style="max-width:320px"><tbody>';
-    // Labelled as a subset, not another line to add up, so nobody re-adds it by hand.
-    html += `<tr><td><strong>Donations</strong><br><span style="font-weight:400;font-size:0.85em;color:#64748b">included in the totals below</span></td><td style="text-align:right">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
-    html += `<tr><td><strong>Total Cash</strong></td><td style="text-align:right">$${Number(totalCash||0).toFixed(2)}</td></tr>`;
-    html += `<tr><td><strong>Total Check</strong></td><td style="text-align:right">$${Number(totalCheck||0).toFixed(2)}</td></tr>`;
-    html += `<tr><td><strong>Total Digital</strong></td><td style="text-align:right">$${Number(totalDigital||0).toFixed(2)}</td></tr>`;
-    // Donations are already inside the payment buckets - orderTotal has the
-    // donation added before it is filed under cash/check/digital - so adding
-    // totalDonation here counted every donation twice. The tally is what a
-    // seller hands money over against, so it overstated the takings by exactly
-    // the donations every single time.
-    const totalSales = totalCash + totalCheck + totalDigital;
-    html += `<tr style="border-top:2px solid #0f172a"><td><strong>Total Sales</strong></td><td style="text-align:right"><strong>$${Number(totalSales||0).toFixed(2)}</strong></td></tr>`;
+    // What was sold and what was given, then one total. Cash/check/digital sit
+    // under that total as the breakdown of how it arrived, indented so nobody
+    // reads them as more lines to add.
+    const rowStyle = 'text-align:right;font-variant-numeric:tabular-nums';
+    html += `<tr><td>Subs</td><td style="${rowStyle}">$${Number(totalSubs||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td>Donations</td><td style="${rowStyle}">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
+    html += `<tr style="border-top:2px solid #0f172a"><td><strong>Total Sales</strong></td><td style="${rowStyle}"><strong>$${Number(totalOrders||0).toFixed(2)}</strong></td></tr>`;
+    const indent = 'padding-left:24px;color:#475569;';
+    html += `<tr><td style="${indent}">Cash</td><td style="${rowStyle}">$${Number(totalCash||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td style="${indent}">Check</td><td style="${rowStyle}">$${Number(totalCheck||0).toFixed(2)}</td></tr>`;
+    html += `<tr><td style="${indent}">Digital</td><td style="${rowStyle}">$${Number(totalDigital||0).toFixed(2)}</td></tr>`;
+    // Only when an order has no payment method on it. Without this row the three
+    // above stop adding up to Total Sales and there is nothing on screen saying
+    // why, which is worse than the money being missing.
+    const unassigned = totalOrders - (totalCash + totalCheck + totalDigital);
+    if (Math.abs(unassigned) >= 0.005) {
+      html += `<tr><td style="${indent}color:#b45309">No payment method</td><td style="${rowStyle};color:#b45309">$${Number(unassigned).toFixed(2)}</td></tr>`;
+    }
     html += '</tbody></table>';
     container.innerHTML = html;
   }
