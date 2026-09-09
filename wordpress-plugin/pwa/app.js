@@ -1038,11 +1038,17 @@
     products.forEach(p => { const q = prodTotals[p.id] || 0; html += `<tr><td>${escapeHtml(p.name||p.id)}</td><td style="text-align:right">${q}</td></tr>`; });
     html += '</tbody></table>';
     html += '<table class="widefat fixed" style="max-width:320px"><tbody>';
-    html += `<tr><td><strong>Total Donation</strong></td><td style="text-align:right">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
+    // Labelled as a subset, not another line to add up, so nobody re-adds it by hand.
+    html += `<tr><td><strong>Donations</strong><br><span style="font-weight:400;font-size:0.85em;color:#64748b">included in the totals below</span></td><td style="text-align:right">$${Number(totalDonation||0).toFixed(2)}</td></tr>`;
     html += `<tr><td><strong>Total Cash</strong></td><td style="text-align:right">$${Number(totalCash||0).toFixed(2)}</td></tr>`;
     html += `<tr><td><strong>Total Check</strong></td><td style="text-align:right">$${Number(totalCheck||0).toFixed(2)}</td></tr>`;
     html += `<tr><td><strong>Total Digital</strong></td><td style="text-align:right">$${Number(totalDigital||0).toFixed(2)}</td></tr>`;
-    const totalSales = totalCash + totalCheck + totalDigital + totalDonation;
+    // Donations are already inside the payment buckets - orderTotal has the
+    // donation added before it is filed under cash/check/digital - so adding
+    // totalDonation here counted every donation twice. The tally is what a
+    // seller hands money over against, so it overstated the takings by exactly
+    // the donations every single time.
+    const totalSales = totalCash + totalCheck + totalDigital;
     html += `<tr style="border-top:2px solid #0f172a"><td><strong>Total Sales</strong></td><td style="text-align:right"><strong>$${Number(totalSales||0).toFixed(2)}</strong></td></tr>`;
     html += '</tbody></table>';
     container.innerHTML = html;
