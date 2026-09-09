@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.69.0] - 2026-09-09
+
+### Fixed
+- **&ldquo;Use my location&rdquo; would fill in a house it could not really tell you were at.** It picked the nearest address it knew about with no limit on how far away that was, so out of range of the loaded map data, or on a weak signal, it filled the box with something confidently wrong &mdash; and a wrong address that looks right is worse than none, because nobody notices until a driver cannot find the house. It now fills the box only when the nearest known address is within about 350 feet, and says it cannot tell otherwise. Checked against the real address data: houses here sit about 100 feet apart typically, and 99.3% have a neighbour inside that limit, so a genuine match is not turned away.
+
 ## [3.68.2] - 2026-09-09
 
 ### Removed

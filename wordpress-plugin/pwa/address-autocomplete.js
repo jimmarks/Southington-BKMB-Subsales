@@ -1067,7 +1067,20 @@
         // call behind an explicit "none of these are right" tap), not putting
         // the per-tap billed lookup back.
         const nearest = nearestCachedAddress(lat, lng);
-        if(nearest){
+
+        // nearestCachedAddress() starts at Infinity and returns whatever is
+        // closest, however far that is - so out of range of the loaded ZIP data,
+        // or on poor GPS, it filled the box with a confidently wrong address and
+        // nothing on screen said how far off it was. A wrong address that looks
+        // right is worse than no address: the seller moves on, and the mistake
+        // only surfaces when a driver cannot find the house.
+        //
+        // Roughly four suburban lots. Wide enough that a parcel point set well
+        // back from the road still matches, tight enough that "the next street
+        // over" does not.
+        const MAX_FILL_FEET = 350;
+
+        if(nearest && nearest.distanceFeet <= MAX_FILL_FEET){
           inputEl.value = normalizeAddress(nearest.item);
           try{ inputEl.dataset.entryMethod = 'gps'; }catch(e){}
 
@@ -1078,9 +1091,17 @@
             });
           }
         } else {
-          // No local ZIP data loaded yet - show coordinates rather than guess.
-          inputEl.value = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-          try{ inputEl.dataset.entryMethod = 'gps'; }catch(e){}
+          // Say so instead of guessing. The field is left alone so whatever the
+          // seller has already typed survives, and the phone's own coordinates
+          // are still saved with the order regardless of this button.
+          if(window.PWALogger && window.PWALogger.debugEnabled){
+            window.PWALogger.log('address', 'Location too far from any known address to fill', {
+              distance_feet: nearest ? Math.round(nearest.distanceFeet) : null
+            });
+          }
+          alert(nearest
+            ? "Can't tell which house you're at from here. Please type the address."
+            : "No address data loaded for this area yet. Please type the address.");
         }
         
         btn.disabled = false;
