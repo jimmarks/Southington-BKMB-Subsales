@@ -12,16 +12,32 @@ const SW_VERSION = (function () {
 const CACHE_NAME = 'subsales-pwa-' + SW_VERSION;
 // Resolve asset URLs relative to the service worker's scope so the SW works when the plugin
 // is served from a nested path (e.g. /subsales-portal/). We build absolute URLs at runtime.
-const ASSETS = [
+// The shell and the manifest are served by the plugin at the portal path; every
+// other asset is a real file under the plugin directory. Resolving all of them
+// against the worker's own scope meant seven of nine 404'd on every install, so
+// the app was precaching the shell and nothing else - on an app whose whole
+// point is working at a doorstep with no signal.
+//
+// PLUGIN_BASE is substituted when the worker is served. The fallback keeps a
+// directly-fetched copy of this file working.
+const INJECTED_BASE = '__SUBSALES_PLUGIN_BASE__';
+const PLUGIN_BASE = (INJECTED_BASE.charAt(0) === '_')
+  ? new URL('../wp-content/plugins/subsales-management/pwa/', self.registration.scope).toString()
+  : INJECTED_BASE;
+
+const SCOPED_ASSETS = [
   './',
-  './index.html',
-  './app.js',
-  './styles.css',
-  './manifest.json',
-  './pwa-logger.js',
-  './session-tracking.js',
-  './icons/icon-192.svg',
-  './icons/icon-512.svg'
+  './manifest.json'
+];
+
+const PLUGIN_ASSETS = [
+  'app.js',
+  'styles.css',
+  'pwa-logger.js',
+  'session-tracking.js',
+  'address-autocomplete.js',
+  'icons/icon-192.svg',
+  'icons/icon-512.svg'
 ];
 
 self.addEventListener('install', event => {
@@ -30,7 +46,8 @@ self.addEventListener('install', event => {
     try{
       const base = self.registration.scope;
 
-      const urls = ASSETS.map(p => new URL(p, base).toString());
+      const urls = SCOPED_ASSETS.map(p => new URL(p, base).toString())
+        .concat(PLUGIN_ASSETS.map(p => new URL(p, PLUGIN_BASE).toString()));
 
       const cache = await caches.open(CACHE_NAME);
       // Cache each asset individually with error handling

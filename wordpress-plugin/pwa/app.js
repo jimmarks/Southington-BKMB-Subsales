@@ -1052,7 +1052,7 @@
 
   async function renderInlay(){
     ensureInlayExists();
-    const list = await Storage.all();
+    const list = await Storage.all() || [];
     const tbody = qs('#inlayTableBody'); if (!tbody) return;
     // Only show queued-orders inlay when an authenticated session exists
     // Delegates to the module-level check so there is one definition of a live
@@ -1095,7 +1095,17 @@
     }
     async function getDB(){ if (!window._bkmb_db) window._bkmb_db = await idbOpen(); return window._bkmb_db; }
     async function add(o){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(o); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('bkmb_orders')||'[]'); list.push(o); localStorage.setItem('bkmb_orders', JSON.stringify(list)); return true; }
-    async function all(){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readonly'); const req = tx.objectStore(STORE).getAll(); req.onsuccess = ()=>res(req.result||[]); req.onerror = ()=>res([]); }); } return JSON.parse(localStorage.getItem('bkmb_orders')||'[]'); }
+    // null means the store could not be read, which is NOT the same as there
+    // being no orders in it. These are unsynced orders - the only copy - so
+    // answering "none" to a failed read would tell a seller their afternoon's
+    // work is gone, and the obvious response to that is to type it all again.
+    async function all(){
+      try{
+        const db = await getDB();
+        if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readonly'); const req = tx.objectStore(STORE).getAll(); req.onsuccess = ()=>res(req.result||[]); req.onerror = ()=>res(null); }); }
+        return JSON.parse(localStorage.getItem('bkmb_orders')||'[]');
+      }catch(e){ console.warn('Storage.all failed', e); return null; }
+    }
     async function remove(id){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readwrite'); tx.objectStore(STORE).delete(id); tx.oncomplete = ()=>res(true); tx.onerror = ()=>res(false); }); } const list = JSON.parse(localStorage.getItem('bkmb_orders')||'[]').filter(x=>x.id!==id); localStorage.setItem('bkmb_orders', JSON.stringify(list)); return true; }
     async function get(id){ const db = await getDB(); if (db) { return new Promise((res)=>{ const tx = db.transaction(STORE, 'readonly'); const req = tx.objectStore(STORE).get(id); req.onsuccess = ()=>res(req.result||null); req.onerror = ()=>res(null); }); } const list = JSON.parse(localStorage.getItem('bkmb_orders')||'[]'); return list.find(x=>x.id===id) || null; }
     async function update(o){ // upsert by id
@@ -3653,7 +3663,8 @@
     // Then sync any local queued new orders
     try{
       const list = await Storage.all();
-      if (!list || !list.length) { syncStatus && (syncStatus.textContent='No queued orders'); return; }
+      if (list === null) { syncStatus && (syncStatus.textContent='Could not read saved orders'); return; }
+      if (!list.length) { syncStatus && (syncStatus.textContent='No queued orders'); return; }
       if (!navigator.onLine) { syncStatus && (syncStatus.textContent='Waiting for network'); return; }
       syncStatus && (syncStatus.textContent='Syncing...');
       
@@ -3897,7 +3908,9 @@
     
     // Get ALL local orders (no filtering - these are by definition from this device/user)
     // Local orders are unsynced and need to be visible for verification before sync
-    const local = await Storage.all();
+    const localRaw = await Storage.all();
+    const localUnreadable = (localRaw === null);
+    const local = localRaw || [];
     const localFiltered = local; // Show all local orders - no filtering needed for offline storage
     
     // Debug logging for troubleshooting
@@ -3986,7 +3999,11 @@
       const hasOp = queuedOps && queuedOps.some(op=>String(op.order_id) === String(o.id));
       const badge = hasOp ? '<span class="sm-badge">Pending</span>' : '';
       return `<div class="order" data-local-id="${o.id}"><strong>${o.customer||''} ${badge}</strong><div>${o.address||''}</div><div>${o.createdAt||''}</div><div>Geo: ${o.geo ? (o.geo.latitude+','+o.geo.longitude) : 'n/a'}</div><div style="margin-top:6px"><button class="sm-btn edit-order" data-local-id="${o.id}">Edit</button> <button class="sm-btn delete-order" data-local-id="${o.id}" style="background:#dc2626;color:#fff">Delete</button></div></div>`;
-    }).join('') : '<div>No local orders</div>';
+    }).join('') : (localUnreadable
+      ? '<div class="orders-unreachable"><strong>Could not read the orders saved on this phone.</strong>'
+        + '<div>Do not re-enter them yet. Close the app, open it again, and check here before taking another order &mdash; '
+        + 'and tell whoever is running the sale.</div></div>'
+      : '<div>No local orders</div>');
 
     const remoteHtml = remoteFiltered.length ? remoteFiltered.map(r=>{
       // normalize order object
