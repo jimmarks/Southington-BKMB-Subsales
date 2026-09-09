@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.62.0] - 2026-09-09
+
+### Fixed
+- **Sending a reply left you looking at a blank page.** The message went out perfectly; the screen did not survive it. Sending is now handled before the page starts drawing, so you land back on the conversation with a confirmation.
+
+### Added
+- **New messages announce themselves while you are reading.** The conversation checks every fifteen seconds and shows a "New message" notice when the customer writes back, instead of sitting there looking finished. It also opens scrolled to the newest message rather than the oldest.
+- **The order panel now shows what has happened to the order** - created, edited, deleted or restored, by whom and when, with the reason where one was given. Somebody answering "I need to change my order" can see whether it has already been changed before they reply.
+- **An Edit button on the order panel** opens the same edit dialog used on the Orders screen, on that exact order.
+
+### Changed
+- The order panel lists the phone number, the items one per line and the order total, and no longer sends you to an unfiltered Orders page when you click through.
+
 ## [3.61.0] - 2026-09-09
 
 ### Added

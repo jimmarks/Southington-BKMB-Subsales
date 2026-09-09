@@ -14,6 +14,46 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+/**
+ * Send a reply, then redirect.
+ *
+ * On admin_init rather than inside the page callback. The callback runs after
+ * WordPress has begun printing the admin page, so wp_safe_redirect() there hits
+ * "headers already sent", returns false, and the exit that follows truncates the
+ * page - the message sends and the user gets a blank screen.
+ */
+function subsales_messages_handle_reply() {
+	if ( ! isset( $_POST['subsales_send_reply'] ) ) {
+		return;
+	}
+	if ( ! isset( $_GET['page'] ) || 'subsales-messages' !== $_GET['page'] ) {
+		return;
+	}
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( 'Insufficient permissions' );
+	}
+	check_admin_referer( 'subsales_send_reply' );
+
+	$to   = sanitize_text_field( wp_unslash( $_POST['reply_phone'] ?? '' ) );
+	$oid  = sanitize_text_field( wp_unslash( $_POST['reply_order_id'] ?? '' ) );
+	$text = trim( wp_unslash( $_POST['reply_body'] ?? '' ) );
+
+	$sent = subsales_messages_send_reply( $to, $oid, $text );
+
+	// PRG: the browser lands on a GET, so refreshing does not resend.
+	wp_safe_redirect( add_query_arg(
+		array(
+			'page'   => 'subsales-messages',
+			'thread' => rawurlencode( $oid ),
+			'phone'  => rawurlencode( $to ),
+			'sent'   => $sent,
+		),
+		admin_url( 'admin.php' )
+	) );
+	exit;
+}
+add_action( 'admin_init', 'subsales_messages_handle_reply' );
+
 function subsales_messages_page() {
 	if ( ! current_user_can( 'manage_options' ) ) {
 		wp_die( 'Insufficient permissions' );
@@ -37,30 +77,6 @@ function subsales_messages_page() {
 			current_time( 'mysql', true )
 		) );
 		printf( '<div class="notice notice-success is-dismissible"><p>%d marked as read.</p></div>', intval( $n ) );
-	}
-
-	// Sending a reply. Handled before any output so a redirect is still possible
-	// and a refresh cannot send the same message twice.
-	if ( isset( $_POST['subsales_send_reply'] ) ) {
-		check_admin_referer( 'subsales_send_reply' );
-		$to   = sanitize_text_field( wp_unslash( $_POST['reply_phone'] ?? '' ) );
-		$oid  = sanitize_text_field( wp_unslash( $_POST['reply_order_id'] ?? '' ) );
-		$text = trim( wp_unslash( $_POST['reply_body'] ?? '' ) );
-
-		$sent = subsales_messages_send_reply( $to, $oid, $text );
-
-		// PRG: the browser lands on a GET, so refreshing the thread does not
-		// re-post the message.
-		wp_safe_redirect( add_query_arg(
-			array(
-				'page'   => 'subsales-messages',
-				'thread' => rawurlencode( $oid ),
-				'phone'  => rawurlencode( $to ),
-				'sent'   => $sent,
-			),
-			admin_url( 'admin.php' )
-		) );
-		exit;
 	}
 
 	subsales_messages_styles();
@@ -200,19 +216,41 @@ function subsales_messages_thread_view( $order_id, $phone ) {
 		echo '<div class="card subsales-order-card">';
 		echo '<h2 style="margin-top:0">' . esc_html( $od['customer'] ?? 'Order' ) . '</h2>';
 		echo '<table class="widefat striped"><tbody>';
-		printf( '<tr><th style="width:170px">Address</th><td>%s</td></tr>', esc_html( $od['address'] ?? '' ) );
-		printf( '<tr><th>Items</th><td>%s</td></tr>', wp_kses_post( implode( ', ', $items ) ) );
-		printf( '<tr><th>Donation</th><td>%s</td></tr>', esc_html( '$' . number_format( (float) ( $od['donationAmount'] ?? 0 ), 2 ) ) );
-		printf( '<tr><th>Paid by</th><td>%s</td></tr>', esc_html( ucfirst( (string) ( $od['paymentMethod'] ?? '' ) ) ) );
-		printf( '<tr><th>Delivery notes</th><td>%s</td></tr>', esc_html( $od['notes'] ?? '' ) );
+		// Order total, worked out the same way the Orders screen does it:
+		// products plus the donation, which is part of what was charged.
+		$order_total = 0.0;
+		foreach ( (array) ( $od['products'] ?? array() ) as $p ) {
+			$order_total += intval( $p['qty'] ?? 0 ) * floatval( $p['price'] ?? 0 );
+		}
+		$donation     = (float) ( $od['donationAmount'] ?? 0 );
+		$order_total += $donation;
+
+		printf( '<tr><th style="width:40%%">Address</th><td>%s</td></tr>', esc_html( $od['address'] ?? '' ) );
+		printf( '<tr><th>Phone</th><td>%s</td></tr>', esc_html( subsales_format_phone( $od['cellNumber'] ?? '' ) ) );
+		printf( '<tr><th>Items</th><td>%s</td></tr>', wp_kses_post( $items ? implode( '<br>', $items ) : '&mdash;' ) );
+		if ( $donation > 0 ) {
+			printf( '<tr><th>Donation</th><td>%s</td></tr>', esc_html( '$' . number_format( $donation, 2 ) ) );
+		}
+		printf( '<tr><th>Total</th><td><strong>%s</strong></td></tr>', esc_html( '$' . number_format( $order_total, 2 ) ) );
+		printf( '<tr><th>Paid by</th><td>%s</td></tr>', esc_html( ucfirst( (string) ( $od['paymentMethod'] ?? '' ) ) ?: '&mdash;' ) );
+		if ( ! empty( $od['notes'] ) ) {
+			printf( '<tr><th>Delivery notes</th><td>%s</td></tr>', esc_html( $od['notes'] ) );
+		}
 		printf( '<tr><th>Taken by</th><td>%s</td></tr>', esc_html( $od['entered_by_name'] ?: ( 'user ' . $order['user_id'] ) ) );
 		printf( '<tr><th>Order taken</th><td>%s</td></tr>', esc_html( get_date_from_gmt( $order['created_at'], 'M j, Y g:i A' ) ) );
+		printf( '<tr><th>Order id</th><td><code style="font-size:11px">%s</code></td></tr>', esc_html( $order['order_id'] ) );
+		echo '</tbody></table>';
+
+		// Straight into the same edit dialog the Orders screen uses - that page
+		// already opens it from ?edit=<id>, so there is one edit form, not two.
 		printf(
-			'<tr><th>Order id</th><td><code>%s</code> &middot; <a href="%s">open in Orders</a></td></tr>',
-			esc_html( $order['order_id'] ),
-			esc_url( admin_url( 'admin.php?page=subsales-orders&search_query=' . rawurlencode( (string) ( $od['cellNumber'] ?? '' ) ) . '&season_id=0' ) )
+			'<p style="margin:12px 0 4px"><a class="button button-primary" href="%s">Edit this order</a></p>',
+			esc_url( admin_url( 'admin.php?page=subsales-orders&edit=' . intval( $order['id'] ) ) )
 		);
-		echo '</tbody></table></div>';
+
+		subsales_messages_order_history( intval( $order['id'] ) );
+
+		echo '</div>';
 	} elseif ( $order_id ) {
 		echo '<div class="notice notice-warning inline"><p>The order this reply was matched to is no longer available.</p></div>';
 	} else {
@@ -243,7 +281,12 @@ function subsales_messages_conversation( $phone, $order_id ) {
 		return;
 	}
 
-	echo '<div class="subsales-thread-scroll">';
+	$max_rendered = 0;
+	foreach ( $thread as $m ) {
+		$max_rendered = max( $max_rendered, intval( $m['id'] ) );
+	}
+
+	echo '<div class="subsales-thread-scroll" id="subsales-thread-scroll">';
 	foreach ( $thread as $m ) {
 		$inbound = ( 'in' === $m['direction'] );
 		$when    = get_date_from_gmt( $m['sent_at'] ?: $m['created_at'], 'M j, g:i A' );
@@ -273,7 +316,58 @@ function subsales_messages_conversation( $phone, $order_id ) {
 	}
 	echo '</div>';
 
+	subsales_messages_thread_poller( $phone, $max_rendered );
 	subsales_messages_reply_box( $order_id, $phone );
+}
+
+/**
+ * Watch for anything new in this conversation.
+ *
+ * Polls for the highest message id rather than re-fetching the messages, so the
+ * common answer - nothing new - costs one small query. When something does
+ * arrive it reloads once, which keeps one renderer for the thread instead of a
+ * second copy of the markup living in JavaScript.
+ */
+function subsales_messages_thread_poller( $phone, $max_rendered ) {
+	?>
+	<div id="subsales-thread-new" class="notice notice-info inline" style="display:none;margin:10px 0">
+		<p><strong>New message.</strong> <a href="#" id="subsales-thread-reload">Show it</a></p>
+	</div>
+	<script>
+	(function(){
+		var phone = <?php echo wp_json_encode( $phone ); ?>;
+		var seen  = <?php echo intval( $max_rendered ); ?>;
+		var nonce = <?php echo wp_json_encode( wp_create_nonce( 'subsales_thread_since' ) ); ?>;
+		var banner = document.getElementById('subsales-thread-new');
+		var link   = document.getElementById('subsales-thread-reload');
+		if (link) { link.addEventListener('click', function(e){ e.preventDefault(); location.reload(); }); }
+
+		// Keep the conversation pinned to the newest message, the way every
+		// other messaging app does. Without this a long thread opens at the top.
+		var box = document.getElementById('subsales-thread-scroll');
+		if (box) { box.scrollTop = box.scrollHeight; }
+
+		function poll(){
+			var body = new URLSearchParams();
+			body.append('action', 'subsales_thread_since');
+			body.append('nonce', nonce);
+			body.append('phone', phone);
+			fetch(ajaxurl, { method:'POST', credentials:'same-origin', body: body })
+				.then(function(r){ return r.json(); })
+				.then(function(j){
+					if (!j || !j.success) { return; }
+					if (parseInt(j.data.max_id, 10) > seen && banner) {
+						banner.style.display = '';
+					}
+					var bar = document.querySelector('#wp-admin-bar-subsales-inbound .ab-label');
+					if (bar) { bar.textContent = j.data.unread; }
+				})
+				.catch(function(){ /* offline or logged out; the next tick retries */ });
+		}
+		setInterval(poll, 15000);
+	})();
+	</script>
+	<?php
 }
 
 /**
@@ -308,7 +402,7 @@ function subsales_messages_reply_box( $order_id, $phone ) {
 	?>
 	<div style="max-width:720px;margin-top:18px">
 		<h2 style="margin-bottom:6px">Reply</h2>
-		<form method="post" action="<?php echo esc_url( admin_url( 'admin.php?page=subsales-messages' ) ); ?>">
+		<form method="post" action="<?php echo esc_url( add_query_arg( array( 'page' => 'subsales-messages', 'thread' => rawurlencode( (string) $order_id ), 'phone' => rawurlencode( $phone ) ), admin_url( 'admin.php' ) ) ); ?>">
 			<?php wp_nonce_field( 'subsales_send_reply' ); ?>
 			<input type="hidden" name="reply_phone" value="<?php echo esc_attr( $phone ); ?>" />
 			<input type="hidden" name="reply_order_id" value="<?php echo esc_attr( $order_id ); ?>" />
@@ -462,6 +556,33 @@ function subsales_messages_styles() {
 
 	.subsales-thread-main h2{ margin-top:0; }
 
+	/* History, under the order details. Compact - it is reference, not the
+	   subject of the page. */
+	.subsales-order-history{ margin:0; padding:0; list-style:none; }
+	.subsales-order-history li{
+		padding:7px 0;
+		border-top:1px solid #f0f0f1;
+		font-size:12px;
+		line-height:1.45;
+	}
+	.subsales-order-history li:first-child{ border-top:0; }
+	.subsales-hist-meta{ color:#667085; }
+	.subsales-hist-type{
+		display:inline-block;
+		font-size:10px;
+		text-transform:uppercase;
+		letter-spacing:.04em;
+		font-weight:700;
+		padding:1px 6px;
+		border-radius:8px;
+		margin-right:5px;
+		vertical-align:1px;
+	}
+	.subsales-hist-create{ background:#e7f5ec; color:#116533; }
+	.subsales-hist-update{ background:#eef4ff; color:#1d4ed8; }
+	.subsales-hist-delete{ background:#fdecec; color:#a4161a; }
+	.subsales-hist-restore{ background:#fff4e5; color:#7c4a03; }
+
 	@media (max-width:960px){
 		.subsales-thread-grid{ grid-template-columns:1fr; }
 		.subsales-thread-side .subsales-order-card{ position:static; }
@@ -469,4 +590,44 @@ function subsales_messages_styles() {
 	}
 	</style>
 	<?php
+}
+
+/**
+ * What has happened to this order since it was taken.
+ *
+ * Sits under the order details rather than behind another click - somebody
+ * reading "I need to change my order" wants to know whether it has already been
+ * changed, and by whom, before they reply.
+ */
+function subsales_messages_order_history( $order_db_id ) {
+	global $wpdb;
+
+	$rows = $wpdb->get_results( $wpdb->prepare(
+		"SELECT edit_type, edited_by_name, changes_summary, edit_reason, edited_at
+		   FROM {$wpdb->prefix}ss_edit_history
+		  WHERE order_id = %d
+		  ORDER BY edited_at DESC
+		  LIMIT 12",
+		$order_db_id
+	), ARRAY_A );
+
+	echo '<h3 style="margin:14px 0 6px;font-size:0.95rem">History</h3>';
+
+	if ( ! $rows ) {
+		echo '<p class="description" style="margin:0">No changes since it was taken.</p>';
+		return;
+	}
+
+	echo '<ul class="subsales-order-history">';
+	foreach ( $rows as $r ) {
+		printf(
+			'<li><span class="subsales-hist-type subsales-hist-%1$s">%1$s</span> %2$s<br><span class="subsales-hist-meta">%3$s &middot; %4$s</span>%5$s</li>',
+			esc_attr( $r['edit_type'] ),
+			esc_html( $r['changes_summary'] ?: '' ),
+			esc_html( $r['edited_by_name'] ?: 'unknown' ),
+			esc_html( get_date_from_gmt( $r['edited_at'], 'M j, g:i A' ) ),
+			$r['edit_reason'] ? '<br><span class="subsales-hist-meta">Reason: ' . esc_html( $r['edit_reason'] ) . '</span>' : ''
+		);
+	}
+	echo '</ul>';
 }

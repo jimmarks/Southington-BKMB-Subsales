@@ -30,6 +30,7 @@ class Subsales_SMS_Inbound {
 		add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'admin_bar_node' ), 80 );
 		add_action( 'wp_ajax_subsales_unread_sms_count', array( __CLASS__, 'ajax_unread_count' ) );
+		add_action( 'wp_ajax_subsales_thread_since', array( __CLASS__, 'ajax_thread_since' ) );
 	}
 
 	/**
@@ -212,6 +213,31 @@ class Subsales_SMS_Inbound {
 			  ORDER BY created_at DESC LIMIT 1",
 			$phone
 		) );
+	}
+
+	/**
+	 * Is there anything in this conversation newer than what the page is
+	 * showing? Returns the highest message id for the number, so the browser
+	 * can compare against what it rendered without shipping the messages twice.
+	 */
+	public static function ajax_thread_since() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( 'Insufficient permissions' );
+		}
+		check_ajax_referer( 'subsales_thread_since', 'nonce' );
+
+		global $wpdb;
+		$phone = self::normalize_phone( wp_unslash( $_POST['phone'] ?? '' ) );
+		if ( '' === $phone ) {
+			wp_send_json_error( 'No phone' );
+		}
+
+		$max = (int) $wpdb->get_var( $wpdb->prepare(
+			"SELECT COALESCE(MAX(id), 0) FROM {$wpdb->prefix}ss_sms_messages WHERE phone = %s",
+			$phone
+		) );
+
+		wp_send_json_success( array( 'max_id' => $max, 'unread' => self::unread_count() ) );
 	}
 
 	/** Unread inbound messages. Cheap: covered by idx_inbound_unread. */
