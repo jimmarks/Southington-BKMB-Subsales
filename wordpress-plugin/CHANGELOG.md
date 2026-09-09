@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.56.2] - 2026-09-09
+
+### Removed
+- **191 lines of a dead, half-commented-out copy of the login code.** An unclosed comment marker meant a whole superseded login handler sat inside a comment while still reading as live code to anyone searching the file. A fix was once applied to that copy and did nothing, because the working code lives elsewhere. Verified removed without touching anything that runs: the file's executable content is byte-identical before and after.
+
+## [3.56.1] - 2026-09-09
+
+### Fixed
+- **Customers who agreed to be texted were recorded as having refused.** The order form's text-message tick was saved on the phone but left out of the order sent to the server, so every order arrived looking as though consent had never been given and every receipt was skipped. No customer who ticked that box could have received a text. The tick is now sent with the order.
+
 ## [3.56.0] - 2026-09-09
 
 ### Fixed

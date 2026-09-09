@@ -3737,6 +3737,11 @@
             price_snapshot: order.price_snapshot || {},
             donationAmount: order.donationAmount,
             donationOnly: !!order.donationOnly,
+            // The consent tick was captured on the order but never sent. Every
+            // order reaching the server therefore looked like no consent, and
+            // every receipt was skipped as 'no_consent' - including the ones
+            // where the customer had actually agreed at the door.
+            smsConsent: !!order.smsConsent,
             paymentMethod: order.paymentMethod,
             checkNumber: order.checkNumber,
             cellNumber: order.cellNumber,

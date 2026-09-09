@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.56.0
+ * Version: 3.56.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.56.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.56.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -3984,197 +3984,6 @@ function get_app_config( WP_REST_Request $request ) {
         'debugLoggingEnabled' => $debug_logging_enabled,
         'digitalPaymentsEnabled' => (bool) get_option( 'subsales_digital_payments_enabled', false )
     ), 200 );
-}
-
-/**
- * PWA Functions (Backward Compatibility Wrappers)
-    
-    $login_mode = get_option( 'order_sync_login_mode', 'legacy' );
-    
-    // Legacy mode: Team + Access Code
-    if ( $login_mode === 'legacy' ) {
-        if ( ! isset( $data['team_name'] ) || ! isset( $data['access_code'] ) ) {
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'Missing team name or access code'
-            ), 400 );
-        }
-        
-        $team_name = sanitize_text_field( $data['team_name'] );
-        $access_code = sanitize_text_field( $data['access_code'] );
-        
-        $team = order_sync_get_team_by_credentials( $team_name, $access_code );
-        
-        if ( $team ) {
-            // Log successful legacy login
-            subsales_log_auth( 'login', null, $team_name, array(
-                'mode' => 'legacy',
-                'team_id' => $team['id']
-            ), 'pwa' );
-            
-            return new WP_REST_Response( array(
-                'success' => true,
-                'mode' => 'legacy',
-                'team' => array(
-                    'id' => $team['id'],
-                    'name' => $team['name'],
-                    'access_code' => $team['access_code']
-                ),
-                'message' => 'Team login successful'
-            ), 200 );
-        }
-        
-        // Log failed legacy login
-        subsales_log_auth( 'failed', null, $team_name, array(
-            'mode' => 'legacy',
-            'reason' => 'invalid_credentials'
-        ), 'pwa' );
-        
-        return new WP_REST_Response( array(
-            'success' => false,
-            'message' => 'Invalid team name or access code'
-        ), 401 );
-    }
-    
-    // User-based mode: Name + Phone + optional Team ID
-    if ( $login_mode === 'user' ) {
-        if ( ! isset( $data['name'] ) || ! isset( $data['phone'] ) ) {
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'Missing name or phone number'
-            ), 400 );
-        }
-        
-        $name = sanitize_text_field( $data['name'] );
-        $phone = preg_replace( '/[^0-9]/', '', sanitize_text_field( $data['phone'] ) );
-        $team_id = isset( $data['team_id'] ) ? intval( $data['team_id'] ) : 0;
-        
-        if ( ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'Phone number must be 10 digits'
-            ), 400 );
-        }
-        
-        // Find user by phone
-        $members_table = $wpdb->prefix . 'ss_team_members';
-        $user = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM {$members_table} WHERE phone = %s",
-            $phone
-        ), ARRAY_A );
-        
-        if ( ! $user ) {
-            // Log failed user login - phone not found
-            subsales_log_auth( 'failed', null, '', array(
-                'mode' => 'user',
-                'phone' => substr( $phone, 0, 3 ) . 'XXXXXXX', // Partial phone for privacy
-                'reason' => 'invalid_phone'
-            ), 'pwa' );
-            
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'Invalid phone number'
-            ), 401 );
-        }
-        
-        // Verify name matches (case-insensitive partial match)
-        if ( stripos( $user['name'], $name ) === false && stripos( $name, $user['name'] ) === false ) {
-            // Log failed user login - name mismatch
-            subsales_log_auth( 'failed', $user['id'], $user['name'], array(
-                'mode' => 'user',
-                'reason' => 'name_mismatch',
-                'provided_name' => $name
-            ), 'pwa' );
-            
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'Name does not match'
-            ), 401 );
-        }
-        
-        // Get user's teams
-        $user_teams_table = $wpdb->prefix . 'ss_user_teams';
-        $teams_table = $wpdb->prefix . 'ss_teams';
-        
-        $team_ids = $wpdb->get_col( $wpdb->prepare(
-            "SELECT team_id FROM {$user_teams_table} WHERE user_id = %d",
-            $user['id']
-        ));
-        
-        if ( empty( $team_ids ) ) {
-            // Log failed user login - no teams
-            subsales_log_auth( 'failed', $user['id'], $user['name'], array(
-                'mode' => 'user',
-                'reason' => 'no_teams_assigned'
-            ), 'pwa' );
-            
-            return new WP_REST_Response( array(
-                'success' => false,
-                'message' => 'User is not assigned to any teams'
-            ), 403 );
-        }
-        
-        $placeholders = implode( ',', array_fill( 0, count( $team_ids ), '%d' ) );
-        $teams = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT id, name, access_code FROM {$teams_table} WHERE id IN ({$placeholders})",
-                $team_ids
-            ),
-            ARRAY_A
-        );
-        
-        // If team_id provided, verify user belongs to it
-        $selected_team = null;
-        if ( $team_id > 0 ) {
-            foreach ( $teams as $team ) {
-                if ( $team['id'] == $team_id ) {
-                    $selected_team = $team;
-                    break;
-                }
-            }
-            
-            if ( ! $selected_team ) {
-                // Log failed user login - wrong team
-                subsales_log_auth( 'failed', $user['id'], $user['name'], array(
-                    'mode' => 'user',
-                    'reason' => 'invalid_team',
-                    'requested_team_id' => $team_id
-                ), 'pwa' );
-                
-                return new WP_REST_Response( array(
-                    'success' => false,
-                    'message' => 'User does not belong to the selected team'
-                ), 403 );
-            }
-        }
-        
-        // Log successful user login
-        subsales_log_auth( 'login', $user['id'], $user['name'], array(
-            'mode' => 'user',
-            'team_count' => count( $teams ),
-            'selected_team_id' => $selected_team ? $selected_team['id'] : null
-        ), 'pwa' );
-        
-        return new WP_REST_Response( array(
-            'success' => true,
-            'mode' => 'user',
-            'user' => array(
-                'id' => $user['id'],
-                'name' => $user['name'],
-                'email' => $user['email'],
-                'phone' => $user['phone'],
-                'role' => $user['role']
-            ),
-            'teams' => $teams,
-            'selected_team' => $selected_team,
-            'message' => 'User login successful'
-        ), 200 );
-    }
-    
-    return new WP_REST_Response( array(
-        'success' => false,
-        'message' => 'Invalid login mode configuration'
-    ), 500 );
 }
 
 /**
