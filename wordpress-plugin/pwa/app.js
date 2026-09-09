@@ -1154,6 +1154,7 @@
 
   let digitalPollInterval = null;
   let digitalWaitingMsgInterval = null;
+  let digitalExpiryInterval = null;
   let digitalCurrentAttemptId = null;
   let digitalExpiresAt = null;
   let digitalOrderData = null; // snapshot of buyer/items captured at "Ready" tap time
@@ -1828,6 +1829,7 @@
   function stopDigitalPolling(){
     if (digitalPollInterval) { clearInterval(digitalPollInterval); digitalPollInterval = null; }
     if (digitalWaitingMsgInterval) { clearInterval(digitalWaitingMsgInterval); digitalWaitingMsgInterval = null; }
+    if (digitalExpiryInterval) { clearInterval(digitalExpiryInterval); digitalExpiryInterval = null; }
   }
 
   // Resets the whole digital panel back to its starting (hidden) state. Deliberately does NOT
@@ -1870,10 +1872,14 @@
     let i = 0;
     if (digitalStatusText) digitalStatusText.textContent = DIGITAL_WAITING_MESSAGES[0];
     updateDigitalExpiryText();
+    // The countdown gets its own ticker. It used to ride on the waiting-message
+    // interval, which cycles every three seconds, so the clock jumped 15:07 to
+    // 15:04 to 15:01 and read as broken rather than as time passing.
+    if (digitalExpiryInterval) clearInterval(digitalExpiryInterval);
+    digitalExpiryInterval = setInterval(updateDigitalExpiryText, 1000);
     digitalWaitingMsgInterval = setInterval(()=>{
       i = (i + 1) % DIGITAL_WAITING_MESSAGES.length;
       if (digitalStatusText) digitalStatusText.textContent = DIGITAL_WAITING_MESSAGES[i];
-      updateDigitalExpiryText();
     }, 3000);
   }
 
@@ -2122,7 +2128,12 @@
       // "Y-m-d H:i:s" which is UTC on the server but which a browser would
       // otherwise read as local time. An installed app can be running cached
       // JS against a newer server, or the reverse, so accept either.
-      digitalExpiresAt = data.expires_at ? parseServerInstant(data.expires_at) : null;
+      // Prefer the duration: it needs no agreement between the phone's clock and
+      // the server's. The absolute timestamp stays as the fallback for an app
+      // running cached JS against an older server.
+      digitalExpiresAt = (typeof data.expires_in === 'number' && data.expires_in > 0)
+        ? Date.now() + (data.expires_in * 1000)
+        : (data.expires_at ? parseServerInstant(data.expires_at) : null);
 
       if (digitalConfirmPanel) digitalConfirmPanel.classList.add('hidden');
       if (digitalQrPanel) digitalQrPanel.classList.remove('hidden');

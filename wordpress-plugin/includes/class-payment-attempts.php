@@ -44,6 +44,7 @@ class Subsales_Payment_Attempts {
 
         $data = $request->get_json_params();
 
+        $donation     = isset( $data['donationAmount'] ) ? floatval( $data['donationAmount'] ) : 0;
         $customer     = isset( $data['customer'] ) ? $data['customer'] : '';
         $address      = isset( $data['address'] ) ? $data['address'] : '';
         $cell_number  = isset( $data['cellNumber'] ) ? $data['cellNumber'] : '';
@@ -96,6 +97,13 @@ class Subsales_Payment_Attempts {
             $price = isset( $product['price'] ) ? floatval( $product['price'] ) : 0;
             $subtotal_amount += $qty * $price;
         }
+        // A donation is money the customer agreed to pay, so it belongs in the
+        // amount we charge. It was left out entirely: the seller's screen said
+        // $45 while Square collected $40, and the saved order still recorded the
+        // $5 - so the customer was undercharged and the books did not balance.
+        if ( $donation > 0 ) {
+            $subtotal_amount += $donation;
+        }
 
         $fee_enabled    = (bool) get_option( 'subsales_convenience_fee_enabled', false );
         $fee_percentage = floatval( get_option( 'subsales_convenience_fee_percentage', 0 ) );
@@ -115,6 +123,15 @@ class Subsales_Payment_Attempts {
                 'name'     => isset( $product['name'] ) ? $product['name'] : 'Item',
                 'quantity' => isset( $product['qty'] ) ? intval( $product['qty'] ) : 1,
                 'price'    => isset( $product['price'] ) ? floatval( $product['price'] ) : 0,
+            );
+        }
+        // Its own line so the customer can see what they are paying for, and so
+        // the Square order reconciles against ours item by item.
+        if ( $donation > 0 ) {
+            $line_items[] = array(
+                'name'     => 'Donation',
+                'quantity' => 1,
+                'price'    => $donation,
             );
         }
         if ( $convenience_fee_amount > 0 ) {
@@ -152,6 +169,7 @@ class Subsales_Payment_Attempts {
             'customer'   => $customer,
             'address'    => $address,
             'cellNumber' => $cell_number,
+            'donationAmount' => $donation,
             'products'   => $products,
             'notes'      => $notes,
         ) );
@@ -197,6 +215,11 @@ class Subsales_Payment_Attempts {
             // LOCAL time, and this one is written with gmdate, so a phone four
             // hours behind UTC read a 15 minute window as 255 minutes.
             'expires_at'       => gmdate( 'Y-m-d\TH:i:s\Z', strtotime( $expires_at . ' UTC' ) ),
+            // How long is left, as a duration. Comparing two clocks made the
+            // countdown open at 15:07 on a phone seven seconds behind the
+            // server; counting down a duration is immune to that, and to a
+            // badly set phone clock generally.
+            'expires_in'       => max( 0, strtotime( $expires_at . ' UTC' ) - time() ),
             'amount'           => array(
                 'subtotal' => $subtotal_amount,
                 'fee'      => $convenience_fee_amount,
