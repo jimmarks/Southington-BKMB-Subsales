@@ -3839,10 +3839,13 @@
       }
       
       const resp = await fetch(url, { headers: headers });
-      if (!resp.ok) return [];
-      const j = await resp.json().catch(()=>[]);
-      return Array.isArray(j) ? j : [];
-    }catch(e){ console.warn('fetchRemoteOrders failed', e); return []; }
+      // null means "could not ask", which is not the same as "asked and there
+      // were none". Returning [] for both is what made My Orders tell a seller
+      // with no signal that they had no orders on the server.
+      if (!resp.ok) return null;
+      const j = await resp.json().catch(()=>null);
+      return Array.isArray(j) ? j : null;
+    }catch(e){ console.warn('fetchRemoteOrders failed', e); return null; }
   }
 
   // Show 'My orders' — local queued and remote orders for current user
@@ -3917,7 +3920,9 @@
     // Fetch and filter remote orders
     // Individual mode (user): show all untallied orders
     // Team mode (legacy): show today only
-    const remote = await fetchRemoteOrders(1000);
+    const remoteRaw = await fetchRemoteOrders(1000);
+    const remoteUnavailable = (remoteRaw === null);
+    const remote = remoteRaw || [];
     
     // Log remote fetch results
     if (window.PWALogger) {
@@ -3991,7 +3996,11 @@
       const hasOp = queuedOps && queuedOps.some(op=>String(op.order_id) === String(r.order_id || r.order_id));
       const badge = hasOp ? '<span class="sm-badge">Pending</span>' : '';
       return `<div class="order" data-remote-id="${r.order_id||r.order_id}"><strong>${cust} ${badge}</strong><div>${(od.address||r.address||'')}</div><div>${created}</div><div style="margin-top:6px"><button class="sm-btn edit-order-remote" data-remote-id="${r.order_id||r.order_id}">Edit</button> <button class="sm-btn delete-order-remote" data-remote-id="${r.order_id||r.order_id}" style="background:#dc2626;color:#fff">Delete</button></div></div>`;
-    }).join('') : '<div>No remote orders</div>';
+    }).join('') : (remoteUnavailable
+      ? '<div class="orders-unreachable"><strong>' + (navigator.onLine ? "Couldn't reach the server." : "You're offline.") + '</strong>'
+        + '<div>Orders you have already saved are safe on this phone and will send themselves when you have signal. '
+        + 'This list just can&rsquo;t be checked right now.</div></div>'
+      : '<div>No remote orders</div>');
 
     // Add export buttons (offline only) - for emergency data recovery
     const exportButtonsHtml = !navigator.onLine && localFiltered.length > 0 

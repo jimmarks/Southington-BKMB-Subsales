@@ -661,3 +661,9 @@ body.sm-modal-open{ overflow:hidden; }
    is the part a seller reads back to the customer at the door. */
 .confirm-total{margin-top:10px;padding-top:8px;border-top:1px solid #e3e6ea;font-size:1.05em}
 .confirm-paid{margin-top:4px;color:#4a5568}
+
+/* "Could not ask" is a different answer from "there are none", and a seller at
+   a doorstep needs to be able to tell them apart. */
+.orders-unreachable{background:#fff8e6;border-left:3px solid #e0913a;padding:10px 12px;border-radius:3px;font-size:0.9rem;line-height:1.45}
+.orders-unreachable strong{display:block;margin-bottom:4px;color:#8a5a12}
+.orders-unreachable div{color:#5b5b5b}
