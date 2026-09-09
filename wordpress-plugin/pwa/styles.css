@@ -644,3 +644,8 @@ body.sm-modal-open{ overflow:hidden; }
 }
 #subsales-location-btn:active{ background:#e2e9f5; }
 #subsales-location-btn:disabled{ opacity:0.6; cursor:not-allowed; }
+
+/* The money on the order confirmation. Set apart from the item lines because it
+   is the part a seller reads back to the customer at the door. */
+.confirm-total{margin-top:10px;padding-top:8px;border-top:1px solid #e3e6ea;font-size:1.05em}
+.confirm-paid{margin-top:4px;color:#4a5568}

@@ -540,12 +540,38 @@
       // Build details HTML
       let html = `<strong>Order #:</strong> ${escapeHtml(order.id)}<br>`;
       html += `<strong>Customer:</strong> ${escapeHtml(order.customer || order.name || '')}<br>`;
+      let orderTotal = 0;
       if (order.products && order.products.length) {
         html += `<strong>Products:</strong>`;
         order.products.forEach(p => {
-          html += `<div class="product-line">${escapeHtml(p.name || p.id)}: ${p.qty || p.quantity || 0}</div>`;
+          const qty = Number(p.qty || p.quantity || 0);
+          orderTotal += qty * Number(p.price || 0);
+          html += `<div class="product-line">${escapeHtml(p.name || p.id)}: ${qty}</div>`;
         });
       }
+
+      // The money is the part a seller reads back to the customer, and it was
+      // the part missing: products were listed while the donation, the total and
+      // how they paid were not. An order with a donation showed two subs and no
+      // hint of where the rest of the total came from.
+      const donation = Number(order.donationAmount || order.donation || 0) || 0;
+      if (donation > 0) {
+        orderTotal += donation;
+        html += `<div class="product-line">Donation: $${donation.toFixed(2)}</div>`;
+      }
+
+      html += `<div class="confirm-total"><strong>Total:</strong> $${orderTotal.toFixed(2)}</div>`;
+
+      const payLabels = { cash: 'Cash', check: 'Check', digital: 'Digital (card)' };
+      const method = order.paymentMethod || order.payment_method || '';
+      if (method) {
+        let payLine = payLabels[String(method).toLowerCase()] || method;
+        if (String(method).toLowerCase() === 'check' && (order.checkNumber || order.check_number)) {
+          payLine += ` #${escapeHtml(String(order.checkNumber || order.check_number))}`;
+        }
+        html += `<div class="confirm-paid"><strong>Paid by:</strong> ${escapeHtml(payLine)}</div>`;
+      }
+
       details.innerHTML = html;
       
       // Attach button handlers
