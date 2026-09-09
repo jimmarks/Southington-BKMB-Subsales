@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.47.0
+ * Version: 3.48.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.47.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.48.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -82,6 +82,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-order-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-display-helper.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-points-calculator.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-sheet.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-thank-you.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-square-payments.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-payment-attempts.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-twilio-sms.php';
@@ -101,6 +102,7 @@ Subsales_REST_API::init();
 
 // Initialize PWA
 Subsales_PWA::init();
+Subsales_Thank_You::init();
 
 // Initialize Orders
 Subsales_Orders::init();

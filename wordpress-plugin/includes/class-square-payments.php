@@ -149,8 +149,10 @@ class Subsales_Square_Payments {
                 'reference_id' => substr( (string) $reference_id, 0, 40 ),
             ),
             'checkout_options' => array(
-                // Placeholder - no dedicated post-payment landing page built yet.
-                'redirect_url' => home_url(),
+                // Where the customer lands the moment the card clears. This used
+                // to be the site root, so somebody who had just paid a child at
+                // their door got a homepage and no confirmation of anything.
+                'redirect_url' => Subsales_Thank_You::url(),
             ),
         );
 
