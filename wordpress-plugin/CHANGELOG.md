@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.68.2] - 2026-09-09
+
+### Removed
+- **An unused web address that gave out members' phone numbers and email addresses.** Anyone who knew a name could ask for it and get that person's contact details back, without logging in. Nothing in the sign-up pages or the app used it &mdash; they all use a different lookup that returns only a name. It has been switched off.
+
 ## [3.68.1] - 2026-09-09
 
 ### Fixed

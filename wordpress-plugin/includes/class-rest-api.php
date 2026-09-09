@@ -322,11 +322,22 @@ class Subsales_REST_API {
         // defined anywhere and would have been fatal if reached. The real ones are
         // DELETE|PUT /my-signups/{id} in class-signups.php.
 
-        register_rest_route( 'order-manager/v1', '/signup/check-name', array(
-            'methods' => 'GET',
-            'callback' => 'subsales_rest_check_name',
-            'permission_callback' => '__return_true',
-        ));
+        // /signup/check-name is deliberately NOT registered.
+        //
+        // It answered an exact name with that person's phone number and email
+        // address, unauthenticated - and nothing called it. The sign-up page,
+        // the driver page and the app all use /users/search, which returns an
+        // id and a name and nothing else. An open route handing out children's
+        // contact details for no working feature is not a trade-off worth
+        // keeping, so it is off.
+        //
+        // subsales_rest_check_name() is left in place in subsales-management.php
+        // in case the flow it was written for comes back; it is unreachable
+        // while this stays commented out. Do not re-register it without
+        // deciding what it should return - a name confirmation does not need to
+        // include contact details.
+        //
+        // register_rest_route( 'order-manager/v1', '/signup/check-name', ... );
         
 
         // Digital payments (Square)
