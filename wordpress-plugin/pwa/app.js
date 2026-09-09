@@ -2143,7 +2143,12 @@
     }
 
     if (note) {
-      if (paid) {
+      // The overlay says this now, in bigger type and with a number to call.
+      // Leaving the old sentence underneath showed the same message twice, the
+      // second one greyed out and half-covered.
+      if (paid && qs('#paidOrderLockOverlay')) {
+        note.style.display = 'none';
+      } else if (paid) {
         const phone = (window.SUBSALES_PWA_CONFIG && window.SUBSALES_PWA_CONFIG.adminContactPhone) || '';
         note.textContent = phone
           ? ("This order was paid by card, so the items can't be changed here. Please ask the customer to call the subsales administrator at " + phone + ".")
