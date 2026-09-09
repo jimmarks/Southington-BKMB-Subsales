@@ -133,7 +133,17 @@ class Subsales_Payment_Attempts {
         // Matches create_order()'s GMT-based time convention (current_time('mysql', true)).
         $expires_at = gmdate( 'Y-m-d H:i:s', time() + ( 15 * 60 ) );
 
-        $checkout = Subsales_Square_Payments::create_payment_link( $total_amount, $line_items, $attempt_uid, $expires_at );
+        $checkout = Subsales_Square_Payments::create_payment_link(
+            $total_amount,
+            $line_items,
+            $attempt_uid,
+            $expires_at,
+            array(
+                'customer' => $customer,
+                'address'  => $address,
+                'phone'    => $cell_number,
+            )
+        );
         if ( ! $checkout ) {
             return new WP_Error( 'square_checkout_failed', 'Could not create a Square checkout session.', array( 'status' => 500 ) );
         }

@@ -63,7 +63,65 @@ class Subsales_Square_Payments {
      *                              for aligning Square's own link TTL with our 15-minute sweep.
      * @return array|false ['checkout_id','checkout_url','square_order_id'] or false on failure.
      */
-    public static function create_payment_link( $amount, $line_items, $reference_id, $expires_at ) {
+    /**
+     * Build Square's pre_populated_data from the order the seller typed.
+     *
+     * The address arrives as one free-text line ("101 Annelise Av, Southington,
+     * CT 06489"), because that is what the seller app collects. Split on commas
+     * and take the ZIP by pattern; anything that does not parse is simply left
+     * out rather than guessed at - a half-filled checkout is better than a
+     * confidently wrong one.
+     *
+     * @param array $buyer customer / address / phone as captured on the order.
+     * @return array Square pre_populated_data, or empty when there is nothing to send.
+     * @since 3.45.0
+     */
+    protected static function buyer_prefill( $buyer ) {
+        $name    = isset( $buyer['customer'] ) ? trim( (string) $buyer['customer'] ) : '';
+        $address = isset( $buyer['address'] ) ? trim( (string) $buyer['address'] ) : '';
+        $phone   = isset( $buyer['phone'] ) ? preg_replace( '/\D/', '', (string) $buyer['phone'] ) : '';
+
+        $pre = array();
+
+        if ( 10 === strlen( $phone ) ) {
+            $pre['buyer_phone_number'] = '+1' . $phone;
+        }
+
+        $addr = array();
+        if ( '' !== $name ) {
+            $parts = preg_split( '/\s+/', $name );
+            $addr['first_name'] = array_shift( $parts );
+            if ( $parts ) {
+                $addr['last_name'] = implode( ' ', $parts );
+            }
+        }
+
+        if ( '' !== $address ) {
+            $bits = array_values( array_filter( array_map( 'trim', explode( ',', $address ) ) ) );
+            // Drop a trailing country, which the autocomplete likes to append.
+            if ( $bits && in_array( strtoupper( end( $bits ) ), array( 'USA', 'US', 'UNITED STATES' ), true ) ) {
+                array_pop( $bits );
+            }
+            if ( isset( $bits[0] ) ) { $addr['address_line_1'] = $bits[0]; }
+            if ( isset( $bits[1] ) ) { $addr['locality'] = $bits[1]; }
+            if ( isset( $bits[2] ) ) {
+                $state = trim( preg_replace( '/\d{5}(-\d{4})?/', '', $bits[2] ) );
+                if ( '' !== $state ) { $addr['administrative_district_level_1'] = $state; }
+            }
+            if ( preg_match( '/\b(\d{5})(?:-\d{4})?\b/', $address, $m ) ) {
+                $addr['postal_code'] = $m[1];
+            }
+        }
+
+        if ( $addr ) {
+            $addr['country'] = 'US';
+            $pre['buyer_address'] = $addr;
+        }
+
+        return $pre;
+    }
+
+    public static function create_payment_link( $amount, $line_items, $reference_id, $expires_at, $buyer = array() ) {
         $settings = self::get_settings();
         if ( ! $settings ) {
             return false;
@@ -86,12 +144,23 @@ class Subsales_Square_Payments {
             'order'            => array(
                 'location_id' => $settings['location_id'],
                 'line_items'  => $square_line_items,
+                // Ties the Square order back to our attempt without needing the
+                // webhook to carry it.
+                'reference_id' => substr( (string) $reference_id, 0, 40 ),
             ),
             'checkout_options' => array(
                 // Placeholder - no dedicated post-payment landing page built yet.
                 'redirect_url' => home_url(),
             ),
         );
+
+        // Hand Square what the seller already typed, so the customer is not
+        // asked for their name and address a second time on a phone held out
+        // at their own front door. Only fields we actually have are sent.
+        $pre = self::buyer_prefill( $buyer );
+        if ( $pre ) {
+            $body['pre_populated_data'] = $pre;
+        }
 
         $base_url = self::get_api_base_url( $settings['environment'] );
 
