@@ -1,0 +1,156 @@
+Southington BKMB sub sale - screenshots
+============================================
+
+38 images, named by ID. IDs match the shot list in both documents.
+
+SS-01  ss-01-the-set-up-season-tab-with-the-seller-sheet-download.jpg
+        The Set Up Season tab, with the seller-sheet download and the Set Up Season button.
+        The Set Up Season tab, with the seller-sheet download and the Set Up Season button.
+
+SS-02  ss-02-step-1-with-the-season-name-box-and-start-this-seaso.jpg
+        Step 1 with the season name box and Start this season button.
+        Step 1 with the season name box and Start this season button.
+
+SS-03  ss-03-the-sale-day-range-picker-with-dates-listed-below-it.png
+        The sale-day range picker with dates listed below it.
+        The sale-day range picker with dates listed below it.
+
+SS-04  ss-04-step-3-showing-the-roster-banner-and-the.jpg
+        Step 3 showing the roster banner and the 
+        Step 3 showing the roster banner and the "Coming back this year" tick list.
+
+SS-05  ss-05-the-paste-box-the-file-upload-and-the-check-this-but.png
+        The paste box, the file upload, and the Check this button.
+        The paste box, the file upload, and the Check this button.
+
+SS-06  ss-06-step-4-with-the-product-table-add-product-and-save-p.png
+        Step 4 with the product table, Add product and Save Products.
+        Step 4 with the product table, Add product and Save Products.
+
+SS-07  ss-07-step-5-with-teams-selected.png
+        Step 5 with Teams selected.
+        Step 5 with Teams selected.
+
+SS-08  ss-08-step-6-with-the-number-entered-and-both-previews-sho.png
+        Step 6 with the number entered and both previews showing.
+        Step 6 with the number entered and both previews showing.
+
+SS-09  ss-09-step-7-showing-sales-open.png
+        Step 7 showing sales OPEN.
+        Step 7 showing sales OPEN.
+
+SS-10  ss-10-step-1-with-a-name-being-picked-from-the-roster-auto.png
+        Step 1 with a name being picked from the roster autocomplete.
+        Step 1 with a name being picked from the roster autocomplete.
+
+SS-11  ss-11-step-2-showing-current-sign-ups-and-the-team-search.png
+        Step 2 showing current sign-ups and the team search.
+        Step 2 showing current sign-ups and the team search.
+
+SS-12  ss-12-the-date-chips-with-several-picked.png
+        The date chips, with several picked.
+        The date chips, with several picked.
+
+SS-13  ss-13-the-details-window-team-members-the-driver-box-and-t.png
+        The Details window: team members, the driver box, and the advanced actions.
+        The Details window: team members, the driver box, and the advanced actions.
+
+SS-14  ss-14-the-lookup-when-the-child-hasn-t-signed-up-yet-mdash.png
+        The lookup when the child hasn't signed up yet &mdash; the most common thing to go wrong.
+        The lookup when the child hasn't signed up yet - the most common thing to go wrong.
+
+SS-15  ss-15-the-day-picker-grouped-by-team-with-the-driver-s-own.png
+        The day picker, grouped by team, with the driver’s own details underneath.
+        The day picker, grouped by team, with the driver’s own details underneath.
+
+SS-16  ss-16-the-confirmation-listing-every-team-and-date-they-ar.png
+        The confirmation, listing every team and date they are driving.
+        The confirmation, listing every team and date they are driving.
+
+SS-17  ss-17-the-install-app-banner-above-the-login-screen.png
+        The Install App banner above the login screen
+        The offer appears above the login. Install Now on Android installs it; on iPhone it shows the Share &rarr; Add to Home Screen steps.
+
+SS-18  ss-18-the-warning-shown-after-tapping-not-now.png
+        The warning shown after tapping Not Now
+        Tapping Not Now says what it costs. The offer comes back in a week.
+
+SS-19  ss-19-the-seller-app-login-screen.png
+        The seller app login screen
+        Name, phone and team. This is the login for individual selling; team selling asks for a team name and access code instead.
+
+SS-20  ss-20-the-iphone-location-permission-prompt.jpg
+        The iPhone location permission prompt
+        The prompt, as it appears the first time. Allow.
+
+SS-21  ss-21-safari-page-menu-showing-website-settings-for-the-si.jpg
+        Safari Page Menu showing Website Settings for the site
+        Page Menu &rarr; Website Settings for subsales.southingtonbkmb.com &rarr; set Location to Allow. This one is for this site only.
+
+SS-22  ss-22-searching-settings-for-safari.jpg
+        Searching Settings for Safari
+        Open Settings and search for Safari.
+
+SS-23  ss-23-safari-settings-settings-for-websites-section.jpg
+        Safari settings, Settings for Websites section
+        Under Settings for Websites, tap Location.
+
+SS-24  ss-24-location-access-on-all-websites-set-to-ask.jpg
+        Location Access On All Websites set to Ask
+        Choose Allow. Note the heading: this one covers all websites, not just ours.
+
+SS-25  ss-25-the-order-form-as-it-opens.png
+        The order form as it opens
+        The order screen as it opens. Everything for one order is on this page.
+
+SS-26  ss-26-address-suggestions-appearing-as-the-seller-types-a-.png
+        Address suggestions appearing as the seller types a house number
+        Type the house number and the street appears. Note the dot at the top right is amber - this is working with no signal, from the address book downloade
+
+SS-27  ss-27-a-filled-order-with-the-total-showing.png
+        A filled order with the total showing
+        Two Turkey, two Combo and a $5 donation - the total keeps itself up to date.
+
+SS-28  ss-28-check-selected-with-the-check-number-field-showing.png
+        Check selected, with the check number field showing
+        Tap one and it fills in. Check adds a box for the number.
+
+SS-29  ss-29-cash-selected-no-extra-field.png
+        Cash selected, no extra field
+        Cash asks for nothing else - the selection is the whole job.
+
+SS-30  ss-30-a-check-with-the-number-in-the-top-right-corner-circ.jpg
+        A check with the number in the top right corner circled
+        The check number is the short number in the top right corner - not the long line along the bottom.
+
+SS-31  ss-31-the-qr-code-overlay-waiting-for-the-buyer-to-scan.png
+        The QR code overlay waiting for the buyer to scan
+        Turn the phone round and let them scan. The countdown is the life of the link, and Back out to Cash/Check is always there.
+
+SS-32  ss-32-order-saved-confirmation-showing-items-donation-tota.png
+        Order Saved confirmation showing items, donation, total and payment method
+        Every saved order reads back what was agreed: the items, the donation, the total and how they paid - with the check number when there is one. This is 
+
+SS-33  ss-33-my-orders-with-no-signal-the-order-held-locally-and-.png
+        My Orders with no signal: the order held locally, and an honest note that the server cannot be checked
+        My orders with no signal. The order is there under Local (pending sync) and will send itself. The panel says it cannot check the server rather than pr
+
+SS-34  ss-34-my-orders-after-syncing-local-list-empty-orders-now-.png
+        My Orders after syncing: local list empty, orders now on the server
+        The same panel back in signal. Local (pending sync) is empty because the orders moved across on their own - nobody pressed anything. That is what the 
+
+SS-35  ss-35-eod-tally-subs-donations-one-total-then-cash-check-a.png
+        EOD Tally: subs, donations, one total, then cash, check and digital
+        The end-of-day tally, and the number the seller hands money against. Subs and donations are listed separately, added once, and the payment methods sit
+
+SS-40  ss-40-driver-money-accountability-you-should-have-150-cash.png
+        Driver Money Accountability: you should have $150, cash $70, checks $80, digital $135 already paid
+        The driver's money screen. The big number is what should be in their hands right now - cash plus checks, nothing else. Refresh pulls in orders the kid
+
+SS-41  ss-41-the-login-screen-which-is-the-same-for-a-driver-as-f.png
+        The login screen, which is the same for a driver as for a seller
+        The same login screen a seller sees - there is nothing driver-specific about it. What changes is what appears after logging in: a driver gets the mone
+
+SS-42  ss-42-a-seller-s-row-expanded-to-show-every-order-they-hav.png
+        A seller's row expanded to show every order they have taken, each with an Edit button
+        Tapping a seller's name opens every order they have taken that day - time, how it was paid, the items, any donation, and the total. This is the list t
