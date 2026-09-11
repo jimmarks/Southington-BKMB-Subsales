@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.70.0] - 2026-09-11
+
+### Added
+- **A text when a customer replies.** Switch on *Text me when a customer replies* under Text Messages and every reply is forwarded to the subsales admin number &mdash; who it is from, their number, and the first line of what they said. Off by default.
+- The number it goes to is the **admin phone from Season Setup**, so it moves with the season when the job changes hands. Nobody needs an account with the phone company to point it at this year's organiser.
+
 ## [3.69.0] - 2026-09-09
 
 ### Fixed

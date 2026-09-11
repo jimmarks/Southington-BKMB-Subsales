@@ -138,6 +138,7 @@ class Subsales_SMS_Inbound {
 		) );
 
 		self::record_keyword( $from, $body );
+		self::forward_to_admin( $from, $body, $order_id );
 
 		subsales_log( 'INFO', 'sms', 'Inbound SMS stored', array(
 			'phone'    => $from,
@@ -166,6 +167,80 @@ class Subsales_SMS_Inbound {
 		}
 		echo '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 		return true;
+	}
+
+	/**
+	 * Text the reply on to whoever is running the sale.
+	 *
+	 * The destination is the admin phone from season setup, so it moves with the
+	 * season when the job changes hands - nobody has to log into Twilio to point
+	 * it at this year's chair.
+	 *
+	 * @param string $from     Customer's number, ten digits.
+	 * @param string $body     What they said.
+	 * @param string $order_id Matched order, if any.
+	 */
+	private static function forward_to_admin( $from, $body, $order_id ) {
+		if ( ! get_option( 'subsales_sms_forward_enabled', false ) ) {
+			return;
+		}
+
+		$to = self::normalize_phone( get_option( 'subsales_admin_contact_phone', '' ) );
+		if ( '' === $to ) {
+			subsales_log( 'WARNING', 'sms', 'Reply forwarding is on but no admin phone is set in season setup' );
+			return;
+		}
+
+		// Never forward the admin's own number back to itself: they would get a
+		// copy of everything they send, and each copy would arrive as an inbound
+		// message that forwards again.
+		if ( $to === $from ) {
+			return;
+		}
+
+		$who = '';
+		if ( $order_id ) {
+			global $wpdb;
+			$od = $wpdb->get_var( $wpdb->prepare(
+				"SELECT JSON_UNQUOTE(JSON_EXTRACT(order_data, '$.customer'))
+				   FROM {$wpdb->prefix}ss_orders WHERE order_id = %s",
+				$order_id
+			) );
+			if ( $od ) {
+				$who = ' from ' . $od;
+			}
+		}
+
+		// Trimmed so the alert stays one message. The whole thing is on the
+		// Text Messages screen; this only has to be enough to decide whether to
+		// stop what you are doing.
+		$snippet = trim( (string) $body );
+		if ( function_exists( 'mb_strimwidth' ) ) {
+			$snippet = mb_strimwidth( $snippet, 0, 90, '...' );
+		} elseif ( strlen( $snippet ) > 90 ) {
+			$snippet = substr( $snippet, 0, 87 ) . '...';
+		}
+
+		Subsales_SMS_Queue::enqueue( array(
+			'direction'    => 'out',
+			'message_type' => 'system',
+			'phone'        => $to,
+			'body'         => sprintf(
+				'Sub sale reply%s, %s: %s',
+				$who,
+				self::pretty_phone( $from ),
+				$snippet
+			),
+			'status'       => 'queued',
+		) );
+	}
+
+	/** (860) 418-7663 reads faster than 8604187663 when you are about to dial it. */
+	private static function pretty_phone( $digits ) {
+		$d = preg_replace( '/\D+/', '', (string) $digits );
+		return ( 10 === strlen( $d ) )
+			? sprintf( '(%s) %s-%s', substr( $d, 0, 3 ), substr( $d, 3, 3 ), substr( $d, 6 ) )
+			: $digits;
 	}
 
 	/**

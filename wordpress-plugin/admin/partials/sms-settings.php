@@ -26,6 +26,7 @@ if ( isset( $_POST['save_sms'] ) && ! wp_doing_ajax() ) {
     check_admin_referer( 'order_sync_settings_nonce' );
 
     update_option( 'subsales_sms_enabled', isset( $_POST['subsales_sms_enabled'] ) ? 1 : 0 );
+    update_option( 'subsales_sms_forward_enabled', isset( $_POST['subsales_sms_forward_enabled'] ) ? 1 : 0 );
 
     if ( isset( $_POST['subsales_receipt_link_days'] ) ) {
         update_option( 'subsales_receipt_link_days', max( 1, min( 3650, intval( $_POST['subsales_receipt_link_days'] ) ) ) );
@@ -164,6 +165,31 @@ if ( empty( $last_drain['at'] ) ) {
             <td>
                 <p class="description" style="max-width:640px">
                     <strong>Why these two are boxes you can type in:</strong> the phone companies decide the real limits, and Twilio only shows your actual numbers in its Console once your registration is approved. When you find out what they are, type them in here — nothing needs to be re-installed or re-released.
+                </p>
+            </td>
+        </tr>
+        <tr>
+            <th scope="row">Tell me about replies</th>
+            <td>
+                <label>
+                    <input type="checkbox" name="subsales_sms_forward_enabled" value="1" <?php checked( get_option( 'subsales_sms_forward_enabled', 0 ), 1 ); ?> />
+                    <strong>Text me when a customer replies</strong>
+                </label>
+                <?php
+                $fwd = trim( (string) get_option( 'subsales_admin_contact_phone', '' ) );
+                if ( '' !== $fwd && class_exists( 'Subsales_Season_Setup' ) ) {
+                    $fwd = Subsales_Season_Setup::format_phone( $fwd );
+                }
+                ?>
+                <p class="description">
+                    <?php if ( '' !== $fwd ) : ?>
+                        Goes to <strong><?php echo esc_html( $fwd ); ?></strong> &mdash; the subsales admin number from season setup. Change it there and these follow, without anyone touching the phone company's settings.
+                    <?php else : ?>
+                        <strong>No admin phone number is set.</strong> Add one in Season Setup and replies will be forwarded there.
+                    <?php endif; ?>
+                </p>
+                <p class="description">
+                    One text per reply, at the usual per-message cost. Every reply is on the <a href="<?php echo esc_url( admin_url( 'admin.php?page=subsales-messages' ) ); ?>">Text Messages</a> screen either way &mdash; this is only so you find out without looking.
                 </p>
             </td>
         </tr>
