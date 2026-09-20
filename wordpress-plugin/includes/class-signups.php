@@ -313,9 +313,18 @@ class Subsales_Signups {
         // Prefer the live driver from signups; fall back to the recorded name
         $driver_name = $roster['driver'] ? $roster['driver']['name'] : ( $driver_info ? $driver_info['driver_name'] : '' );
 
+        // A name typed into the old note box is NOT a driver. Both used to come
+        // back as driver_name, so a team that had only written a name down
+        // looked exactly like a team with a parent actually registered - and the
+        // screen that says "Driver Missing" is how a kid finds out they need to
+        // chase one. Say which it is.
+        $registered = ! empty( $roster['driver'] );
+
         return rest_ensure_response( array(
             'members'           => $members,
             'driver_name'       => $driver_name,
+            'driver_registered' => $registered,
+            'driver_signup_url' => home_url( '/driver-signup/' ),
             'driver_updated_by' => $driver_info ? $driver_info['driver_updated_by'] : '',
             'driver_updated_at' => $driver_info ? $driver_info['driver_updated_at'] : '',
         ) );

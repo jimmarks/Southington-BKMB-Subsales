@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.70.0
+ * Version: 3.71.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.70.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.71.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5204,10 +5204,14 @@ function subsales_serve_signup_page() {
                             try {
                                 const rosterResponse = await fetch(apiBase + '/team-roster?team_id=' + reg.team_id + '&campaign_id=' + reg.campaign_id);
                                 const roster = await rosterResponse.json();
-                                return { ...reg, driver_name: roster.driver_name || '' };
+                                return {
+                                    ...reg,
+                                    driver_name: roster.driver_name || '',
+                                    driver_registered: !!roster.driver_registered
+                                };
                             } catch (error) {
                                 console.error('Error fetching driver for signup:', error);
-                                return { ...reg, driver_name: '' };
+                                return { ...reg, driver_name: '', driver_registered: false };
                             }
                         }));
                         
@@ -5225,7 +5229,9 @@ function subsales_serve_signup_page() {
                                         const date = new Date(reg.campaign_date + 'T00:00:00');
                                         const formatted = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                                         const displayName = reg.campaign_name ? `${formatted} - ${reg.campaign_name}` : formatted;
-                                        const driverText = reg.driver_name ? `Driver: ${reg.driver_name}` : 'Driver Missing';
+                                        const driverText = reg.driver_registered
+                                            ? `Driver: ${reg.driver_name}`
+                                            : 'Driver missing';
                                         return `
                                             <tr>
                                                 <td>${reg.team_name} <span style="font-size: 11px; color: #666;">(${driverText})</span></td>
@@ -5264,6 +5270,10 @@ function subsales_serve_signup_page() {
                     const displayName = signup.campaign_name ? `${formatted} - ${signup.campaign_name}` : formatted;
                     
                     const currentDriver = roster.driver_name || '';
+                    // Registered means a parent actually signed up to drive. The
+                    // old box let anyone type a name, which then read as a driver.
+                    const driverRegistered = !!roster.driver_registered;
+                    const driverSignupUrl = roster.driver_signup_url || '/driver-signup/';
                     const driverUpdatedBy = roster.driver_updated_by || '';
                     const driverUpdatedAt = roster.driver_updated_at ? new Date(roster.driver_updated_at).toLocaleString() : '';
                     
@@ -5278,26 +5288,27 @@ function subsales_serve_signup_page() {
                             </ul>
                         </div>
                         
+                        ${driverRegistered ? `
+                        <div style="background: #e7f5ec; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                            <h4 style="margin-top: 0; margin-bottom: 6px; font-size: 16px; color: #116533;">Driver assigned</h4>
+                            <p style="margin: 0; font-size: 15px; font-weight: 600; color: #0f5132;">${currentDriver}</p>
+                        </div>
+                        ` : `
                         <div style="background: #fff3cd; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-                            <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 16px;">Driver</h4>
-                            <p style="margin: 0 0 10px 0; font-size: 13px; color: #856404; line-height: 1.4;">
-                                This is a note of who is driving. It does <strong>not</strong> sign them up.
-                                Your driver still has to register themselves at
-                                <a href="/driver-signup/" style="color: #856404; text-decoration: underline;">/driver-signup/</a>,
-                                using your name and phone number to find this team.
+                            <h4 style="margin-top: 0; margin-bottom: 6px; font-size: 16px; color: #856404;">Driver missing</h4>
+                            <p style="margin: 0; font-size: 13px; color: #856404; line-height: 1.5;">
+                                No parent has signed up to drive this team on this day.
+                                Ask one to register at
+                                <a href="${driverSignupUrl}" style="color: #856404; text-decoration: underline; font-weight: 600;">${driverSignupUrl}</a>
+                                &mdash; they will need your name and phone number to find the team.
                             </p>
-                            <input type="text" id="driver-name-input" value="${currentDriver}" placeholder="Enter driver name..." 
-                                style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; margin-bottom: 8px;">
-                            <button id="update-driver" style="background: #007bff; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%;">Update Driver</button>
+                        </div>
+                        `}
                     `;
                     
-                    if (driverUpdatedBy) {
-                        modalHTML += `<p style="margin: 10px 0 0 0; color: #856404; font-size: 12px;"><em>Last updated by ${driverUpdatedBy}`;
-                        if (driverUpdatedAt) {
-                            modalHTML += ` on ${driverUpdatedAt}`;
-                        }
-                        modalHTML += `</em></p>`;
-                    }
+                    // No "last updated by" line: it described edits to the note
+                    // box, which is gone. Who is driving now comes from their own
+                    // sign-up, not from whoever last typed in a field.
                     
                     modalHTML += `
                             <div id="driver-status" style="margin-top: 8px; font-size: 14px;"></div>
@@ -5330,11 +5341,9 @@ function subsales_serve_signup_page() {
                     };
                     
                     // Update driver button
-                    document.getElementById('update-driver').addEventListener('click', async function() {
-                        const driverName = document.getElementById('driver-name-input').value.trim();
-                        await updateTeamDriver(signup.team_id, signup.campaign_id, driverName);
-                    });
-                    
+                    // No driver handler here any more - the driver panel is a
+                    // statement of who has signed up, not a field.
+
                     // Delete signup button
                     document.getElementById('delete-signup').addEventListener('click', async function() {
                         if (confirm('Are you sure you want to remove this registration?')) {
@@ -5393,40 +5402,10 @@ function subsales_serve_signup_page() {
             }
 
             // Update team driver
-            async function updateTeamDriver(teamId, campaignId, driverName) {
-                const statusDiv = document.getElementById('driver-status');
-                statusDiv.innerHTML = '<span style="color: #666;">Saving...</span>';
-                
-                try {
-                    const response = await fetch(apiBase + '/team-driver', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            team_id: teamId,
-                            campaign_id: campaignId,
-                            driver_name: driverName,
-                            updated_by: userData.name
-                        })
-                    });
-                    
-                    if (response.ok) {
-                        statusDiv.innerHTML = '<span style="color: #28a745; font-weight: 600;">✓ Driver Updated!</span>';
-                        statusDiv.style.background = '#d4edda';
-                        statusDiv.style.padding = '8px';
-                        statusDiv.style.borderRadius = '4px';
-                        
-                        setTimeout(() => {
-                            statusDiv.style.background = 'transparent';
-                            statusDiv.innerHTML = '';
-                        }, 2000);
-                    } else {
-                        const error = await response.json();
-                        statusDiv.innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to save') + '</span>';
-                    }
-                } catch (error) {
-                    statusDiv.innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
-                }
-            }
+            // updateTeamDriver() removed with the field that called it. The
+            // /team-driver route still exists for the admin Teams screen, which
+            // has its own reason to record a name; the kids' page no longer
+            // writes one, so nothing here can make a note look like a driver.
             
             // User Step 2: Team Selection → Next
             document.getElementById('user-step2-next').addEventListener('click', async function() {

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.71.0] - 2026-09-20
+
+### Changed
+- **The driver on a sale day is no longer something a seller types in.** The Details panel used to hold a free-text box where anyone could write a note about the driver, which meant the name shown was whatever the last person typed &mdash; or a note that was not a name at all. It now reads the real driver sign-ups: **Driver assigned** with the parent's name when one has registered for that team and date, or **Driver missing** with the sign-up link and a note that the parent will need the seller's name and phone number to find the team. Nothing to type, and nothing to get wrong.
+
 ## [3.70.0] - 2026-09-11
 
 ### Added
