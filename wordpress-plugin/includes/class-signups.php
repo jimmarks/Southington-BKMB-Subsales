@@ -231,25 +231,71 @@ class Subsales_Signups {
         global $wpdb;
         
         $signup_id = intval( $request->get_param( 'id' ) );
-        $body = $request->get_json_params();
-        $new_team_name = isset( $body['team_name'] ) ? sanitize_text_field( $body['team_name'] ) : '';
-        
-        if ( empty( $new_team_name ) ) {
-            return new WP_Error( 'missing_team', 'Team name is required', array( 'status' => 400 ) );
-        }
-        
+        $body      = $request->get_json_params();
+        $team_id   = isset( $body['team_id'] ) ? intval( $body['team_id'] ) : 0;
+
         $signups_table = $wpdb->prefix . 'ss_signups';
-        
-        // Reuses the canonical resolver, which is already season-scoped and
-        // stamps season_id on create. The copy that used to live here did
-        // neither: switching to "Bulldogs" matched last season's Bulldogs, and
-        // any team it created landed on season 0 - which start_new_season()
-        // never deactivates, so it stayed in the picker forever.
-        $team          = Subsales_Database::get_or_create_team( $new_team_name );
-        $team_id       = $team['id'];
-        $new_team_name = $team['name'];
-        
-        // Update signup
+        $teams_table   = $wpdb->prefix . 'ss_teams';
+
+        // Takes a team_id now. The Details modal offers the same picker the
+        // sign-up page uses, which only lists teams that already exist this
+        // season, so a switch can no longer stand up "Team Bajas" beside
+        // "Team Baja" off a typo nobody sees. A team_name is still accepted
+        // and resolved the same way sign-up resolves it, for anything older
+        // still posting one.
+        if ( ! $team_id && ! empty( $body['team_name'] ) ) {
+            $team = Subsales_Database::get_or_create_team( sanitize_text_field( $body['team_name'] ) );
+            if ( ! $team || empty( $team['id'] ) ) {
+                return new WP_Error( 'team_failed', 'Could not set up that team. Please try again.', array( 'status' => 500 ) );
+            }
+            $team_id = intval( $team['id'] );
+        }
+
+        if ( ! $team_id ) {
+            return new WP_Error( 'missing_team', 'A team is required.', array( 'status' => 400 ) );
+        }
+
+        // Season-scoped, like get_or_create_team() - an id from last season
+        // must not be switchable onto this season's sale day.
+        $season_id = Subsales_Database::current_season_id();
+        $new_team_name = $wpdb->get_var( $wpdb->prepare(
+            "SELECT name FROM {$teams_table} WHERE id = %d AND season_id = %d",
+            $team_id, $season_id
+        ) );
+        if ( ! $new_team_name ) {
+            return new WP_Error( 'invalid_team', 'Team not found.', array( 'status' => 404 ) );
+        }
+
+        $signup = $wpdb->get_row( $wpdb->prepare(
+            "SELECT user_id, campaign_id, team_id FROM {$signups_table} WHERE id = %d AND status = 'active'",
+            $signup_id
+        ), ARRAY_A );
+        if ( ! $signup ) {
+            return new WP_Error( 'not_found', 'Registration not found.', array( 'status' => 404 ) );
+        }
+
+        if ( intval( $signup['team_id'] ) === $team_id ) {
+            return rest_ensure_response( array( 'success' => true, 'team_name' => $new_team_name ) );
+        }
+
+        // register_member_signups() refuses to put the same person on the same
+        // day twice; this did not, so switching onto a team they already had
+        // that day left two active rows for one sale - two roster entries, two
+        // places to look for their orders.
+        $duplicate = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$signups_table}
+              WHERE user_id = %d AND campaign_id = %d AND team_id = %d
+                AND id != %d AND status = 'active'",
+            $signup['user_id'], $signup['campaign_id'], $team_id, $signup_id
+        ) );
+        if ( $duplicate ) {
+            return new WP_Error(
+                'already_on_team',
+                'You are already signed up with that team for this day.',
+                array( 'status' => 409 )
+            );
+        }
+
         $wpdb->update(
             $signups_table,
             array( 'team_id' => $team_id ),
@@ -257,8 +303,14 @@ class Subsales_Signups {
             array( '%d' ),
             array( '%d' )
         );
-        
-        return rest_ensure_response( array( 'success' => true ) );
+
+        // Sign-up writes the persistent roster (ss_user_teams); the switch never
+        // did, so the admin Teams screen and /team-members never learned the kid
+        // had moved. Idempotent add - it does not unlink the old team, which is
+        // deliberate: that table is a cross-season history, not current state.
+        Subsales_Database::link_member_to_team( intval( $signup['user_id'] ), $team_id );
+
+        return rest_ensure_response( array( 'success' => true, 'team_name' => $new_team_name ) );
     }
     
     /**

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.72.0] - 2026-09-20
+
+### Fixed
+- **Switching teams asked you to type the team name, and a typo made a whole new team.** *Switch to Different Team* was a plain text box wired straight into get-or-create: type &ldquo;Team Bajas&rdquo; instead of &ldquo;Team Baja&rdquo; and it did not warn you, it quietly stood up a second team with you alone on it &mdash; which splits a delivery run in half. It now uses the same pick-from-the-list box as the sign-up page, and unlike sign-up it will not create: you can only move to a team that already exists this season.
+- **Switching could put you on the same day twice.** Signing up refuses to put one person on the same sale day twice; switching never checked, so moving onto a team you already had that day left two live registrations for one sale &mdash; two roster entries and two places to look for your orders. Switching now refuses it the same way.
+- **Switching did not tell the team roster you had moved.** It changed the sale-day registration but never the persistent roster behind the admin Teams screen, so that screen still had you on the old team. Both are updated now.
+- A team id from a previous season can no longer be switched onto a current sale day.
+
 ## [3.71.0] - 2026-09-20
 
 ### Changed

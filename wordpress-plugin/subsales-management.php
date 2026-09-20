@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.71.0
+ * Version: 3.72.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.71.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.72.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4907,11 +4907,15 @@ function subsales_serve_signup_page() {
             }
 
             // Setup autocomplete handlers for both modes
-            function setupOneBoxTeam(fieldId, resultsId, hintId) {
+            // allowCreate: sign-up may stand up a team nobody has made yet.
+            // Switching may not - the copy has to say so, or a kid types a
+            // name, sees "we'll create it", and ends up alone on a new team.
+            function setupOneBoxTeam(fieldId, resultsId, hintId, allowCreate) {
                 const field = document.getElementById(fieldId);
                 const results = document.getElementById(resultsId);
                 const hint = document.getElementById(hintId);
                 let timer = null;
+                if (allowCreate === undefined) allowCreate = true;
 
                 field.addEventListener('input', function() {
                     const query = field.value.trim();
@@ -4925,7 +4929,9 @@ function subsales_serve_signup_page() {
                     clearTimeout(timer);
                     if (query.length < 2) {
                         results.innerHTML = '';
-                        hint.textContent = "Start typing and pick your team from the list. If nobody has made your team yet, type the whole name and we'll create it - only one of you needs to.";
+                        hint.textContent = allowCreate
+                            ? "Start typing and pick your team from the list. If nobody has made your team yet, type the whole name and we'll create it - only one of you needs to."
+                            : 'Start typing and pick your team from the list.';
                         return;
                     }
 
@@ -4936,12 +4942,16 @@ function subsales_serve_signup_page() {
 
                             if (!data.length) {
                                 results.innerHTML = '';
-                                hint.textContent = 'No team called "' + query + '" yet. Press Next and we\'ll create it. '
-                                                 + 'Only one person on your team needs to do this - everyone else picks it off the list afterwards.';
+                                hint.textContent = allowCreate
+                                    ? 'No team called "' + query + '" yet. Press Next and we\'ll create it. '
+                                      + 'Only one person on your team needs to do this - everyone else picks it off the list afterwards.'
+                                    : 'No team called "' + query + '" this season. Check the spelling - you can only move to a team that already exists.';
                                 return;
                             }
 
-                            hint.textContent = 'Pick your team from the list, or keep typing to make a new one.';
+                            hint.textContent = allowCreate
+                                ? 'Pick your team from the list, or keep typing to make a new one.'
+                                : 'Pick your team from the list.';
                             results.innerHTML = data.map(team =>
                                 `<button class="btn btn-secondary" style="margin: 5px 0;" data-team-id="${team.id}" data-team-name="${team.name}">${team.name}</button>`
                             ).join('');
@@ -4951,7 +4961,7 @@ function subsales_serve_signup_page() {
                                     selectedTeam = { id: this.dataset.teamId, name: this.dataset.teamName };
                                     field.value = selectedTeam.name;
                                     results.innerHTML = '';
-                                    hint.textContent = 'Joining ' + selectedTeam.name + '.';
+                                    hint.textContent = (allowCreate ? 'Joining ' : 'Moving to ') + selectedTeam.name + '.';
                                 });
                             });
                         } catch (error) {
@@ -5320,6 +5330,12 @@ function subsales_serve_signup_page() {
                                 <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px;">Advanced Actions</summary>
                                 <div style="padding-top: 10px;">
                                     <button id="change-team" style="background: #ffc107; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%; margin-bottom: 8px;">Switch to Different Team</button>
+                                    <div id="team-switch" style="display: none; margin-bottom: 8px;">
+                                        <input id="switch-team-name" type="text" autocomplete="off" placeholder="Start typing your team name" style="width: 100%; padding: 8px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                                        <div id="switch-team-results"></div>
+                                        <div id="switch-team-hint" style="font-size: 12px; color: #666; margin-top: 6px; line-height: 1.4;">Start typing and pick your team from the list.</div>
+                                        <button id="switch-team-confirm" disabled style="background: #ffc107; color: #000; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%; margin-top: 8px; opacity: 0.5;">Move me to this team</button>
+                                    </div>
                                     <button id="delete-signup" style="background: #dc3545; color: white; border: none; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; width: 100%;">Remove This Registration</button>
                                     <div id="action-status" style="margin-top: 10px; font-size: 14px;"></div>
                                 </div>
@@ -5369,29 +5385,75 @@ function subsales_serve_signup_page() {
                     });
                     
                     // Change team button
-                    document.getElementById('change-team').addEventListener('click', async function() {
-                        const newTeamName = prompt('Enter the name of the team you want to switch to:');
-                        if (newTeamName && newTeamName.trim()) {
-                            try {
-                                const response = await fetch(apiBase + '/my-signups/' + signup.signup_id, {
-                                    method: 'PUT',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ team_name: newTeamName.trim() })
-                                });
-                                
-                                if (response.ok) {
-                                    document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Team changed successfully!</span>';
-                                    setTimeout(() => {
-                                        document.getElementById('signup-details-modal').style.display = 'none';
-                                        loadUserSignups();
-                                    }, 1500);
-                                } else {
-                                    const error = await response.json();
-                                    document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to change team') + '</span>';
-                                }
-                            } catch (error) {
-                                document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
+                    // Switching used to be a prompt() whose text went straight to
+                    // get_or_create_team(), so one typo made a second team with
+                    // this kid alone on it and no warning. It now uses the same
+                    // picker as the sign-up page - and unlike sign-up it will not
+                    // create: you can only move to a team that already exists,
+                    // because a team nobody has made yet is not one you are on.
+                    const switchBox     = document.getElementById('team-switch');
+                    const switchConfirm = document.getElementById('switch-team-confirm');
+
+                    function setSwitchEnabled(on) {
+                        switchConfirm.disabled = !on;
+                        switchConfirm.style.opacity = on ? '1' : '0.5';
+                    }
+
+                    document.getElementById('change-team').addEventListener('click', function() {
+                        const opening = switchBox.style.display === 'none';
+                        switchBox.style.display = opening ? 'block' : 'none';
+                        if (!opening) return;
+                        selectedTeam = null;
+                        setSwitchEnabled(false);
+                        setupOneBoxTeam('switch-team-name', 'switch-team-results', 'switch-team-hint', false);
+                        document.getElementById('switch-team-name').focus();
+                    });
+
+                    // setupOneBoxTeam only sets selectedTeam when a team is picked
+                    // off the list, so polling it is what tells us a real team is
+                    // chosen rather than half-typed.
+                    document.getElementById('switch-team-name').addEventListener('input', function() {
+                        setSwitchEnabled(false);
+                    });
+                    document.getElementById('switch-team-results').addEventListener('click', function() {
+                        setTimeout(() => setSwitchEnabled(!!(selectedTeam && selectedTeam.id)), 0);
+                    });
+
+                    switchConfirm.addEventListener('click', async function() {
+                        if (!selectedTeam || !selectedTeam.id) {
+                            document.getElementById('switch-team-hint').textContent = 'Pick your team from the list first.';
+                            return;
+                        }
+                        if (String(selectedTeam.id) === String(signup.team_id)) {
+                            document.getElementById('switch-team-hint').textContent = 'That is the team you are already on.';
+                            return;
+                        }
+                        setSwitchEnabled(false);
+                        switchConfirm.textContent = 'Moving...';
+                        try {
+                            const response = await fetch(apiBase + '/my-signups/' + signup.signup_id, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ team_id: parseInt(selectedTeam.id, 10) })
+                            });
+                            const data = await response.json();
+
+                            if (response.ok) {
+                                document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Moved to ' + (data.team_name || selectedTeam.name) + '.</span>';
+                                selectedTeam = null;
+                                setTimeout(() => {
+                                    document.getElementById('signup-details-modal').style.display = 'none';
+                                    loadUserSignups();
+                                }, 1500);
+                            } else {
+                                switchConfirm.textContent = 'Move me to this team';
+                                setSwitchEnabled(true);
+                                document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">' + (data.message || 'Could not change team.') + '</span>';
                             }
+                        } catch (error) {
+                            switchConfirm.textContent = 'Move me to this team';
+                            setSwitchEnabled(true);
+                            document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + error.message + '</span>';
                         }
                     });
                     
