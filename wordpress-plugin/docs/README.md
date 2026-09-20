@@ -21,4 +21,7 @@ replace that image rather than adding another ID.
 The playbook's appendix tracks which IDs still need capturing. Outstanding at
 the time of writing: the receipt and conversation screens (SS-36 to SS-39) and
 an order in edit mode (SS-44), which needs taking against 3.66.1 or later
-because earlier builds show two bugs that have since been fixed.
+because earlier builds show two bugs that have since been fixed, and the
+sign-up Details panel with **Advanced Actions** expanded (SS-45) &mdash; the
+kid guide's "Changing your mind later" step currently reuses step 3's image,
+which does not show the buttons that step tells them to press.
