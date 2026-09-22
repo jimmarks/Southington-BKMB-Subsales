@@ -314,6 +314,46 @@ class Subsales_Signups {
     }
 
     /**
+     * Take the drivers linked to this child off one team+day, and tell them.
+     * @return string|null 'removed' when a driver was taken off.
+     */
+    private static function release_linked_drivers( $child_id, $team_id, $campaign_id ) {
+        global $wpdb;
+        $t = $wpdb->prefix . 'ss_signups';
+        $drivers = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.id, s.user_id, m.name FROM {$t} s
+               JOIN {$wpdb->prefix}ss_team_members m ON m.id = s.user_id
+              WHERE s.driver_for_user_id = %d AND s.team_id = %d AND s.campaign_id = %d
+                AND s.is_driver = 1 AND s.status = 'active'",
+            $child_id, $team_id, $campaign_id
+        ), ARRAY_A );
+        if ( ! $drivers ) {
+            return null;
+        }
+
+        $child = (string) $wpdb->get_var( $wpdb->prepare(
+            "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", $child_id
+        ) );
+        $day = Subsales_Driver_Signup::day_label( $campaign_id );
+
+        foreach ( $drivers as $d ) {
+            $wpdb->update( $t, array( 'status' => 'cancelled' ), array( 'id' => intval( $d['id'] ) ), array( '%s' ), array( '%d' ) );
+            Subsales_Database::clear_team_campaign_driver( $team_id, $campaign_id, $d['name'] );
+            Subsales_Driver_Signup::email_driver( intval( $d['user_id'] ),
+                'Your child is no longer selling that day - you are no longer driving',
+                "Hi {$d['name']},\n\n"
+                . "Your child ({$child}) is no longer signed up for {$day}, so you are no longer assigned as a driver for that day.\n\n"
+                . "Thank you for offering to drive.\n"
+            );
+            subsales_log( 'INFO', 'signup', 'Driver followed child off a day', array(
+                'driver_id' => intval( $d['user_id'] ), 'child_id' => $child_id,
+                'team_id' => $team_id, 'campaign_id' => $campaign_id,
+            ) );
+        }
+        return 'removed';
+    }
+
+    /**
      * A driver who signed up through this child drives WITH this child: they
      * are a pair representing the team. When the child switches teams:
      *   - the new team has no driver  -> the driver moves too  (email B)
@@ -399,7 +439,12 @@ class Subsales_Signups {
         
         $signup_id = intval( $request->get_param( 'id' ) );
         $signups_table = $wpdb->prefix . 'ss_signups';
-        
+
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT user_id, team_id, campaign_id, is_driver FROM {$signups_table} WHERE id = %d AND status = 'active'",
+            $signup_id
+        ), ARRAY_A );
+
         $wpdb->update(
             $signups_table,
             array( 'status' => 'cancelled' ),
@@ -407,8 +452,17 @@ class Subsales_Signups {
             array( '%s' ),
             array( '%d' )
         );
-        
-        return rest_ensure_response( array( 'success' => true ) );
+
+        // The driver who signed up through this child comes off the day with
+        // them - they drive as a pair. The team is left with no driver, which
+        // its Details panel says; a new parent signs up so the admin knows
+        // who is actually driving.
+        $driver = null;
+        if ( $row && ! intval( $row['is_driver'] ) ) {
+            $driver = self::release_linked_drivers( intval( $row['user_id'] ), intval( $row['team_id'] ), intval( $row['campaign_id'] ) );
+        }
+
+        return rest_ensure_response( array( 'success' => true, 'driver' => $driver ) );
     }
     
     /**

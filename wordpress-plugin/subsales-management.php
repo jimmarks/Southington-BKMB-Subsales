@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.73.0
+ * Version: 3.74.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.73.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.74.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5369,11 +5369,14 @@ function subsales_serve_signup_page() {
                                 });
                                 
                                 if (response.ok) {
-                                    document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Registration removed successfully!</span>';
+                                    const removed = await response.json().catch(() => ({}));
+                                    const tookDriver = removed && removed.driver === 'removed';
+                                    document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Registration removed.' +
+                                        (tookDriver ? ' Your driver is off this day too &mdash; tell your team they need a new one.' : '') + '</span>';
                                     setTimeout(() => {
                                         document.getElementById('signup-details-modal').style.display = 'none';
                                         loadUserSignups();
-                                    }, 1500);
+                                    }, tookDriver ? 4000 : 1500);
                                 } else {
                                     const error = await response.json();
                                     document.getElementById('action-status').innerHTML = '<span style="color: #dc3545;">Error: ' + (error.message || 'Failed to remove') + '</span>';

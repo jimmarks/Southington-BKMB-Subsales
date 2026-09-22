@@ -139,11 +139,22 @@ class Subsales_Driver_Signup {
             );
         }
 
+        // A day that already has a driver is shown, not offered: the parent
+        // sees who is driving and their number, so the two can sort it out
+        // between themselves. Only after proving the child's name + phone.
+        $signups = $lookup['signups'];
+        foreach ( $signups as &$sig ) {
+            $d = Subsales_Database::get_campaign_team_roster( intval( $sig['team_id'] ), intval( $sig['campaign_id'] ) )['driver'];
+            $sig['driver_name']  = $d ? $d['name'] : '';
+            $sig['driver_phone'] = $d ? self::format_phone( $d['phone'] ) : '';
+        }
+        unset( $sig );
+
         return rest_ensure_response( array(
             'success'    => true,
             'child_id'   => intval( $lookup['user']['id'] ),
             'child_name' => $child_actual_name,
-            'signups'    => $lookup['signups'],
+            'signups'    => $signups,
         ) );
     }
 
@@ -208,6 +219,28 @@ class Subsales_Driver_Signup {
             return new WP_Error( 'invalid_selection', "The selected days could not be matched to your child's signups.", array( 'status' => 400 ) );
         }
 
+        // One driver per team per day. set_driver() used to make whoever signed
+        // up last the driver and quietly turn the previous one into a seller on
+        // the roster. Re-signing yourself is fine; taking someone's day is not.
+        global $wpdb;
+        $me    = intval( $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}ss_team_members WHERE phone = %s", $driver_phone
+        ) ) );
+        $taken = array();
+        foreach ( $by_team as $team_id => $campaign_ids ) {
+            foreach ( $campaign_ids as $cid ) {
+                $d = Subsales_Database::get_campaign_team_roster( $team_id, $cid )['driver'];
+                if ( $d && intval( $d['id'] ) !== $me ) {
+                    $taken[] = self::day_label( $cid ) . ' (' . $d['name'] . ', ' . self::format_phone( $d['phone'] ) . ')';
+                }
+            }
+        }
+        if ( $taken ) {
+            return new WP_Error( 'already_has_driver',
+                'Already has a driver: ' . implode( '; ', $taken ) . '. Call them if you would like to talk it over.',
+                array( 'status' => 409 ) );
+        }
+
         // Register the driver per team via the canonical signup writer
         $processed = array();
         foreach ( $by_team as $team_id => $campaign_ids ) {
@@ -230,7 +263,6 @@ class Subsales_Driver_Signup {
             }
         }
 
-        global $wpdb;
         $wpdb->update( $wpdb->prefix . 'ss_team_members', array( 'email' => $driver_email ), array( 'id' => $driver_id ), array( '%s' ), array( '%d' ) );
 
         subsales_log( 'INFO', 'driver-signup', 'Driver self-registered', array(
@@ -358,6 +390,12 @@ class Subsales_Driver_Signup {
         return $c['campaign_name'] ? $label . ' (' . $c['campaign_name'] . ')' : $label;
     }
 
+    /** 8605551234 -> (860) 555-1234; anything else unchanged. */
+    public static function format_phone( $phone ) {
+        $d = preg_replace( '/\D/', '', (string) $phone );
+        return strlen( $d ) === 10 ? sprintf( '(%s) %s-%s', substr( $d, 0, 3 ), substr( $d, 3, 3 ), substr( $d, 6 ) ) : (string) $phone;
+    }
+
     public static function team_name( $team_id ) {
         global $wpdb;
         return (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", $team_id ) );
@@ -447,6 +485,9 @@ class Subsales_Driver_Signup {
         .day-option input { width: 18px; height: 18px; flex: 0 0 auto; }
         .day-option .day-team { font-weight: 600; }
         .day-option .day-date { color: #666; font-size: 14px; }
+        .day-option.day-taken { background: #f8f9fa; cursor: default; }
+        .day-option .day-driver { font-size: 14px; color: #555; }
+        .day-option .day-driver a { color: inherit; }
         /* Name autocomplete dropdown */
         .autocomplete-results { border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; max-height: 220px; overflow-y: auto; background: #fff; }
         .autocomplete-results button { display: block; width: 100%; text-align: left; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid #f0f0f0; font-size: 15px; cursor: pointer; }
@@ -570,16 +611,24 @@ class Subsales_Driver_Signup {
             ).join('');
         }
 
-        // Per-day checkboxes (all checked by default)
+        // Per-day checkboxes, checked by default - except days that already
+        // have a driver, which show who it is and how to reach them instead.
         function renderDayPicker(signups) {
-            return signups.map((s, i) =>
-                '<label class="day-option">' +
+            return signups.map((s, i) => {
+                const head = '<span class="day-team">' + escapeHtml(s.team_name) + '</span><br>' +
+                             '<span class="day-date">' + escapeHtml(dayLabel(s)) + '</span>';
+                if (s.driver_name) {
+                    return '<div class="day-option day-taken">' +
+                        '<span>' + head + '<br><span class="day-driver">Already has a driver: <strong>' +
+                        escapeHtml(s.driver_name) + '</strong>' +
+                        (s.driver_phone ? ' &mdash; <a href="tel:' + escapeHtml(s.driver_phone.replace(/\D/g, '')) + '">' + escapeHtml(s.driver_phone) + '</a>' : '') +
+                        '</span></span></div>';
+                }
+                return '<label class="day-option">' +
                     '<input type="checkbox" class="day-check" data-team-id="' + parseInt(s.team_id, 10) +
                         '" data-campaign-id="' + parseInt(s.campaign_id, 10) + '" checked>' +
-                    '<span><span class="day-team">' + escapeHtml(s.team_name) + '</span><br>' +
-                    '<span class="day-date">' + escapeHtml(dayLabel(s)) + '</span></span>' +
-                '</label>'
-            ).join('');
+                    '<span>' + head + '</span></label>';
+            }).join('');
         }
 
         // ---- Child-name autocomplete (shared /users/search endpoint) ----
@@ -645,9 +694,14 @@ class Subsales_Driver_Signup {
                 }
 
                 childData = data;
+                const open = data.signups.filter(s => !s.driver_name).length;
+                const taken = data.signups.length - open;
                 $('childSummary').innerHTML = '<h3>' + escapeHtml(data.child_name) + '</h3>' +
-                    '<p style="font-size:14px;color:#666;">Uncheck any days you are not driving.</p>';
+                    '<p style="font-size:14px;color:#666;">' +
+                    (open ? 'Uncheck any days you are not driving.' : 'Every day already has a driver.') +
+                    (taken ? ' If you would like to talk about a day that already has a driver, call them.' : '') + '</p>';
                 $('dayPicker').innerHTML = renderDayPicker(data.signups);
+                $('registerBtn').disabled = !open;
                 $('step1').classList.add('hidden');
                 $('step2').classList.remove('hidden');
             } catch (e) {

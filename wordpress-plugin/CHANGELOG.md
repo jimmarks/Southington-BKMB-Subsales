@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.74.0] - 2026-09-22
+
+### Changed
+- **One driver per team per day.** A second parent can no longer sign up to drive a day that already has a driver. They see that day with the driver's name and phone number instead, so the two parents can talk it over. Before this, whoever signed up last became the driver and the previous one was quietly turned into a seller on the team.
+- **When a child removes a day, their driver comes off it too** &mdash; they drive as a pair. The driver is emailed, the child is told their driver is off that day as well, and the team shows *Driver missing* until a new parent signs up, so the subsales admin knows who is actually driving.
+
 ## [3.73.0] - 2026-09-22
 
 ### Changed
