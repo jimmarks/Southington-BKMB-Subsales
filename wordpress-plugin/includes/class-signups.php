@@ -296,21 +296,99 @@ class Subsales_Signups {
             );
         }
 
-        $wpdb->update(
-            $signups_table,
-            array( 'team_id' => $team_id ),
-            array( 'id' => $signup_id ),
-            array( '%d' ),
-            array( '%d' )
-        );
+        // Also links the persistent roster (ss_user_teams), which the switch
+        // used to skip, and survives the UNIQUE (user, team, day) key.
+        $old_team_id = intval( $signup['team_id'] );
+        $moved = Subsales_Database::move_signup_to_team( $signup_id, $team_id );
+        if ( is_wp_error( $moved ) ) {
+            return $moved;
+        }
 
-        // Sign-up writes the persistent roster (ss_user_teams); the switch never
-        // did, so the admin Teams screen and /team-members never learned the kid
-        // had moved. Idempotent add - it does not unlink the old team, which is
-        // deliberate: that table is a cross-season history, not current state.
-        Subsales_Database::link_member_to_team( intval( $signup['user_id'] ), $team_id );
+        $driver = self::carry_driver_along( intval( $signup['user_id'] ), $old_team_id, $team_id, intval( $signup['campaign_id'] ), $new_team_name );
 
-        return rest_ensure_response( array( 'success' => true, 'team_name' => $new_team_name ) );
+        return rest_ensure_response( array(
+            'success'      => true,
+            'team_name'    => $new_team_name,
+            'driver'       => $driver,   // null | 'moved' | 'unassigned'
+        ) );
+    }
+
+    /**
+     * A driver who signed up through this child drives WITH this child: they
+     * are a pair representing the team. When the child switches teams:
+     *   - the new team has no driver  -> the driver moves too  (email B)
+     *   - the new team has a driver   -> that driver stays; this one is taken
+     *                                    off the day             (email C)
+     * The old team is left without a driver either way - its Details panel
+     * already says "Driver missing" with the sign-up link.
+     *
+     * Drivers with no recorded child (signed up before 3.73.0, or made by an
+     * admin) are not touched and stay with the team, as before.
+     *
+     * Never fails the child's switch: it has already happened.
+     */
+    private static function carry_driver_along( $child_id, $old_team_id, $new_team_id, $campaign_id, $new_team_name ) {
+        global $wpdb;
+        $t = $wpdb->prefix . 'ss_signups';
+
+        $drivers = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.id, s.user_id, m.name FROM {$t} s
+               JOIN {$wpdb->prefix}ss_team_members m ON m.id = s.user_id
+              WHERE s.driver_for_user_id = %d AND s.team_id = %d AND s.campaign_id = %d
+                AND s.is_driver = 1 AND s.status = 'active'",
+            $child_id, $old_team_id, $campaign_id
+        ), ARRAY_A );
+        if ( ! $drivers ) {
+            return null;
+        }
+
+        $child = (string) $wpdb->get_var( $wpdb->prepare(
+            "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", $child_id
+        ) );
+        $day = Subsales_Driver_Signup::day_label( $campaign_id );
+        $outcome = null;
+
+        foreach ( $drivers as $d ) {
+            Subsales_Database::clear_team_campaign_driver( $old_team_id, $campaign_id, $d['name'] );
+
+            $has_driver = $wpdb->get_var( $wpdb->prepare(
+                "SELECT id FROM {$t} WHERE team_id = %d AND campaign_id = %d AND is_driver = 1 AND status = 'active' LIMIT 1",
+                $new_team_id, $campaign_id
+            ) );
+
+            if ( ! $has_driver ) {
+                $moved = Subsales_Database::move_signup_to_team( intval( $d['id'] ), $new_team_id );
+                if ( is_wp_error( $moved ) ) {
+                    // Logged inside move_signup_to_team. Leave them where they
+                    // were rather than cancel a driver on a failed write.
+                    continue;
+                }
+                Subsales_Database::upsert_team_campaign_driver( $new_team_id, $campaign_id, $d['name'] );
+                Subsales_Driver_Signup::email_driver( intval( $d['user_id'] ),
+                    'Your child changed teams - you are still driving',
+                    "Hi {$d['name']},\n\n"
+                    . "Your child ({$child}) has moved teams and you have been updated to drive for {$new_team_name} on {$day}.\n\n"
+                    . "Nothing else to do. If you can no longer drive, take yourself off at " . home_url( '/driver-signup/' ) . ".\n"
+                );
+                $outcome = 'moved';
+            } else {
+                $wpdb->update( $t, array( 'status' => 'cancelled' ), array( 'id' => intval( $d['id'] ) ), array( '%s' ), array( '%d' ) );
+                Subsales_Driver_Signup::email_driver( intval( $d['user_id'] ),
+                    'Your child changed teams - you are no longer driving that day',
+                    "Hi {$d['name']},\n\n"
+                    . "Your child ({$child}) has moved teams, but that team already has a driver, you are no longer assigned as a driver for {$day}.\n\n"
+                    . "Thank you for offering to drive.\n"
+                );
+                $outcome = 'unassigned';
+            }
+
+            subsales_log( 'INFO', 'signup', 'Driver followed child on team switch', array(
+                'driver_id' => intval( $d['user_id'] ), 'child_id' => $child_id, 'campaign_id' => $campaign_id,
+                'from_team' => $old_team_id, 'to_team' => $new_team_id, 'outcome' => $outcome,
+            ) );
+        }
+
+        return $outcome;
     }
     
     /**

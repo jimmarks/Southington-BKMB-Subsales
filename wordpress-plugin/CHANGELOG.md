@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.73.0] - 2026-09-22
+
+### Changed
+- **A driver now goes with the child they signed up through.** A parent and their child are a pair representing a team. When the child switches teams, their driver moves to the new team with them &mdash; unless that team already has a driver, in which case the existing driver stays and the moving parent is taken off that day. The team left behind shows *Driver missing*, as it does for any team without one. The child sees which of the two happened when they switch.
+- Drivers who signed up before this version, or were added by an admin, are not linked to a child and stay with their team as before.
+
+### Added
+- **Driver sign-up asks for an email address**, and the driver gets an email: when they sign up (the days they committed to), when their child's move takes them to a new team, and when their child's move means they are no longer driving that day. If an email cannot be sent, that is recorded in the log rather than passing silently.
+- **Drivers can take themselves off a day.** On the driver sign-up page, *Already driving? Manage your days* &rarr; their own name and phone number &rarr; their driving days, each with a Remove button. It checks the day really is theirs before removing it.
+
+### Fixed
+- **Switching teams could report success and not move you.** Each person can have only one row per team per day, including cancelled ones, so switching back to a team you had once left failed at the database &mdash; and nothing checked. It now reuses that row, and a failed move is reported as a failure.
+
 ## [3.72.0] - 2026-09-20
 
 ### Fixed

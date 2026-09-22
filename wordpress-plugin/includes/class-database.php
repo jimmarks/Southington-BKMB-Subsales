@@ -294,6 +294,7 @@ class Subsales_Database {
             team_id bigint(20) unsigned NOT NULL,
             campaign_id bigint(20) unsigned NOT NULL,
             is_driver tinyint(1) DEFAULT 0,
+            driver_for_user_id bigint(20) unsigned DEFAULT NULL,
             notes text,
             status enum('active','cancelled') NOT NULL DEFAULT 'active',
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
@@ -304,6 +305,7 @@ class Subsales_Database {
             KEY team_id (team_id),
             KEY campaign_id (campaign_id),
             KEY is_driver (is_driver),
+            KEY driver_for_user_id (driver_for_user_id),
             KEY status (status)
         ) $charset_collate;";
         
@@ -3187,6 +3189,60 @@ class Subsales_Database {
      * @param string $team_name
      * @return array { id, name }
      */
+    /**
+     * Move one signup row to another team on the same day.
+     *
+     * UNIQUE (user_id, team_id, campaign_id) means a plain UPDATE of team_id
+     * fails if this person ever had a row on the target team that day - a
+     * cancelled one counts - and $wpdb reports that as a false return that
+     * nothing was checking, so the switch said "moved" and moved nothing.
+     * Reuse that row instead and retire this one.
+     *
+     * @return int|WP_Error Id of the row that is now active on the new team.
+     */
+    public static function move_signup_to_team( $signup_id, $new_team_id ) {
+        global $wpdb;
+        $t = $wpdb->prefix . 'ss_signups';
+
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, user_id, campaign_id, is_driver, driver_for_user_id FROM {$t} WHERE id = %d",
+            $signup_id
+        ), ARRAY_A );
+        if ( ! $row ) {
+            return new WP_Error( 'not_found', 'Registration not found.', array( 'status' => 404 ) );
+        }
+
+        $other = $wpdb->get_var( $wpdb->prepare(
+            "SELECT id FROM {$t} WHERE user_id = %d AND team_id = %d AND campaign_id = %d AND id != %d",
+            $row['user_id'], $new_team_id, $row['campaign_id'], $signup_id
+        ) );
+
+        if ( $other ) {
+            $ok = $wpdb->update( $t, array(
+                'status'             => 'active',
+                'is_driver'          => intval( $row['is_driver'] ),
+                'driver_for_user_id' => $row['driver_for_user_id'],
+            ), array( 'id' => $other ) );
+            if ( $ok !== false ) {
+                $ok = $wpdb->update( $t, array( 'status' => 'cancelled' ), array( 'id' => $signup_id ) );
+            }
+            $moved_id = intval( $other );
+        } else {
+            $ok       = $wpdb->update( $t, array( 'team_id' => $new_team_id ), array( 'id' => $signup_id ) );
+            $moved_id = intval( $signup_id );
+        }
+
+        if ( $ok === false ) {
+            subsales_log( 'ERROR', 'signup', 'Could not move signup to new team', array(
+                'signup_id' => $signup_id, 'team_id' => $new_team_id, 'error' => $wpdb->last_error,
+            ) );
+            return new WP_Error( 'move_failed', 'Could not change team. Please try again.', array( 'status' => 500 ) );
+        }
+
+        self::link_member_to_team( intval( $row['user_id'] ), $new_team_id );
+        return $moved_id;
+    }
+
     public static function get_or_create_team( $team_name ) {
         global $wpdb;
         $teams_table = $wpdb->prefix . 'ss_teams';
@@ -3276,6 +3332,11 @@ class Subsales_Database {
         $phone        = isset( $args['phone'] ) ? preg_replace( '/\D/', '', $args['phone'] ) : '';
         $campaign_ids = isset( $args['campaign_ids'] ) ? array_map( 'intval', (array) $args['campaign_ids'] ) : array();
         $is_driver    = ! empty( $args['is_driver'] );
+        // The child whose phone the parent used to sign up. A driver and that
+        // child are a pair: when the child switches teams the driver follows
+        // (see Subsales_Signups::rest_update_signup). NULL for older rows and
+        // admin-made drivers, which stay with the team as before.
+        $driver_for   = $is_driver && ! empty( $args['driver_for_user_id'] ) ? intval( $args['driver_for_user_id'] ) : null;
 
         if ( $name === '' || $phone === '' || empty( $campaign_ids ) ) {
             return new WP_Error( 'missing_params', 'Name, phone, and at least one campaign are required.', array( 'status' => 400 ) );
@@ -3384,18 +3445,18 @@ class Subsales_Database {
             // Driver-signup semantics: ensure an active row exists, then make sole driver
             if ( ! $existing ) {
                 $wpdb->insert( $signups_table, array(
-                    'user_id'    => $user_id,
-                    'team_id'    => $team_id,
-                    'campaign_id'=> $campaign_id,
-                    'is_driver'  => 1,
-                    'status'     => 'active',
-                    'created_at' => current_time( 'mysql' ),
-                ), array( '%d', '%d', '%d', '%d', '%s', '%s' ) );
+                    'user_id'            => $user_id,
+                    'team_id'            => $team_id,
+                    'campaign_id'        => $campaign_id,
+                    'is_driver'          => 1,
+                    'driver_for_user_id' => $driver_for,
+                    'status'             => 'active',
+                    'created_at'         => current_time( 'mysql' ),
+                ) );
             } else {
                 $wpdb->update( $signups_table,
-                    array( 'status' => 'active' ),
-                    array( 'user_id' => $user_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id ),
-                    array( '%s' ), array( '%d', '%d', '%d' )
+                    array( 'status' => 'active', 'driver_for_user_id' => $driver_for ),
+                    array( 'user_id' => $user_id, 'team_id' => $team_id, 'campaign_id' => $campaign_id )
                 );
             }
 
@@ -3412,6 +3473,21 @@ class Subsales_Database {
             'signups_created' => $signups_created,
             'skipped'         => $skipped,
             'is_driver'       => $is_driver,
+        );
+    }
+
+    /**
+     * Forget the recorded driver name on a team+campaign, but only if it is
+     * this driver's - so a driver leaving never wipes a name someone else
+     * recorded. The admin Teams screen shows this name with a green tick, so a
+     * stale one reads as "this team has a driver" after they have gone.
+     */
+    public static function clear_team_campaign_driver( $team_id, $campaign_id, $driver_name ) {
+        global $wpdb;
+        $wpdb->update( $wpdb->prefix . 'ss_team_campaigns',
+            array( 'driver_name' => '', 'driver_updated_by' => 'Driver left', 'driver_updated_at' => current_time( 'mysql' ) ),
+            array( 'team_id' => $team_id, 'campaign_id' => $campaign_id, 'driver_name' => $driver_name ),
+            array( '%s', '%s', '%s' ), array( '%d', '%d', '%s' )
         );
     }
 

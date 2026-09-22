@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.72.0
+ * Version: 3.73.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.72.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.73.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -5439,12 +5439,20 @@ function subsales_serve_signup_page() {
                             const data = await response.json();
 
                             if (response.ok) {
-                                document.getElementById('action-status').innerHTML = '<span style="color: #28a745;">✓ Moved to ' + (data.team_name || selectedTeam.name) + '.</span>';
+                                // Their driver goes with them unless the new team
+                                // already has one. Say which - it decides whether
+                                // anybody is driving this kid on the day.
+                                let msg = '✓ Moved to ' + (data.team_name || selectedTeam.name) + '.';
+                                if (data.driver === 'moved') msg += ' Your driver is coming with you.';
+                                if (data.driver === 'unassigned') msg += ' That team already has a driver, so yours is not driving this day any more.';
+                                const statusEl = document.getElementById('action-status');
+                                statusEl.style.color = '#28a745';
+                                statusEl.textContent = msg; // team names are typed by kids
                                 selectedTeam = null;
                                 setTimeout(() => {
                                     document.getElementById('signup-details-modal').style.display = 'none';
                                     loadUserSignups();
-                                }, 1500);
+                                }, data.driver ? 4000 : 1500);
                             } else {
                                 switchConfirm.textContent = 'Move me to this team';
                                 setSwitchEnabled(true);

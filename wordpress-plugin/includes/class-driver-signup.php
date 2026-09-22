@@ -76,6 +76,21 @@ class Subsales_Driver_Signup {
             'callback' => array( __CLASS__, 'rest_driver_signup' ),
             'permission_callback' => '__return_true',
         ));
+
+        // A driver's own days, and taking themselves off one. Identified by
+        // their own name + phone - the same proof the kids' page uses - and
+        // every removal re-checks that the row is theirs, so this does not lean
+        // on the open DELETE /my-signups/{id}.
+        register_rest_route( 'order-manager/v1', '/driver-signup/my-days', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'rest_my_days' ),
+            'permission_callback' => '__return_true',
+        ));
+        register_rest_route( 'order-manager/v1', '/driver-signup/remove', array(
+            'methods' => 'POST',
+            'callback' => array( __CLASS__, 'rest_remove_day' ),
+            'permission_callback' => '__return_true',
+        ));
     }
 
     /**
@@ -143,10 +158,17 @@ class Subsales_Driver_Signup {
         $child_phone  = isset( $body['child_phone'] ) ? preg_replace( '/\D/', '', $body['child_phone'] ) : '';
         $driver_name  = isset( $body['driver_name'] ) ? sanitize_text_field( $body['driver_name'] ) : '';
         $driver_phone = isset( $body['driver_phone'] ) ? preg_replace( '/\D/', '', $body['driver_phone'] ) : '';
+        $driver_email = isset( $body['driver_email'] ) ? sanitize_email( $body['driver_email'] ) : '';
         $selections   = ( isset( $body['selections'] ) && is_array( $body['selections'] ) ) ? $body['selections'] : array();
 
         if ( empty( $child_phone ) || empty( $driver_name ) || empty( $driver_phone ) ) {
             return new WP_Error( 'missing_params', 'Child phone, driver name, and driver phone are required.', array( 'status' => 400 ) );
+        }
+
+        // Required: it is the only way we can tell a driver their child moved
+        // teams and took them along - or that they are no longer driving.
+        if ( ! is_email( $driver_email ) ) {
+            return new WP_Error( 'invalid_email', 'Please enter a valid email address so we can tell you about changes.', array( 'status' => 400 ) );
         }
 
         if ( ! preg_match( '/^[0-9]{10}$/', $driver_phone ) ) {
@@ -190,32 +212,187 @@ class Subsales_Driver_Signup {
         $processed = array();
         foreach ( $by_team as $team_id => $campaign_ids ) {
             $result = Subsales_Database::register_member_signups( array(
-                'name'         => $driver_name,
-                'phone'        => $driver_phone,
-                'team_id'      => $team_id,
-                'campaign_ids' => $campaign_ids,
-                'is_driver'    => true,
+                'name'               => $driver_name,
+                'phone'              => $driver_phone,
+                'team_id'            => $team_id,
+                'campaign_ids'       => $campaign_ids,
+                'is_driver'          => true,
+                'driver_for_user_id' => intval( $lookup['user']['id'] ),
             ) );
 
             if ( is_wp_error( $result ) ) {
                 return $result;
             }
+            $driver_id = intval( $result['user_id'] );
 
             foreach ( $campaign_ids as $cid ) {
                 $processed[] = array( 'team_id' => intval( $team_id ), 'campaign_id' => intval( $cid ) );
             }
         }
 
+        global $wpdb;
+        $wpdb->update( $wpdb->prefix . 'ss_team_members', array( 'email' => $driver_email ), array( 'id' => $driver_id ), array( '%s' ), array( '%d' ) );
+
         subsales_log( 'INFO', 'driver-signup', 'Driver self-registered', array(
             'driver_name' => $driver_name,
             'processed'   => count( $processed ),
         ) );
 
+        $days = array();
+        foreach ( $processed as $p ) {
+            $days[] = '  ' . self::day_label( $p['campaign_id'] ) . ' - ' . self::team_name( $p['team_id'] );
+        }
+        $emailed = self::email_driver( $driver_id,
+            'You are driving for the Sub Sale',
+            "Hi {$driver_name},\n\n"
+            . "You've committed to driving on:\n\n" . implode( "\n", $days ) . "\n\n"
+            . "If you can no longer drive one of these days, take yourself off at " . home_url( '/driver-signup/' )
+            . " - choose \"Already driving? Manage your days\" and use your own name and phone number.\n\n"
+            . "Thank you for driving!\n"
+        );
+
         return rest_ensure_response( array(
             'success'   => true,
             'processed' => $processed,
+            'emailed'   => $emailed,
             'message'   => 'You are registered as the driver. Thank you!',
         ) );
+    }
+
+    /**
+     * POST /driver-signup/my-days  { driver_name, driver_phone }
+     */
+    public static function rest_my_days( $request ) {
+        $driver = self::verify_person( $request->get_json_params() );
+        if ( is_wp_error( $driver ) ) {
+            return $driver;
+        }
+        return rest_ensure_response( array(
+            'success' => true,
+            'name'    => $driver['name'],
+            'days'    => self::driving_days( $driver['id'] ),
+        ) );
+    }
+
+    /**
+     * POST /driver-signup/remove  { driver_name, driver_phone, signup_id }
+     */
+    public static function rest_remove_day( $request ) {
+        global $wpdb;
+        $body   = $request->get_json_params();
+        $driver = self::verify_person( $body );
+        if ( is_wp_error( $driver ) ) {
+            return $driver;
+        }
+
+        $signup_id = isset( $body['signup_id'] ) ? intval( $body['signup_id'] ) : 0;
+        $t   = $wpdb->prefix . 'ss_signups';
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, team_id, campaign_id FROM {$t}
+              WHERE id = %d AND user_id = %d AND is_driver = 1 AND status = 'active'",
+            $signup_id, $driver['id']
+        ), ARRAY_A );
+        if ( ! $row ) {
+            return new WP_Error( 'not_found', 'That driving day was not found on your sign-up.', array( 'status' => 404 ) );
+        }
+
+        $wpdb->update( $t, array( 'status' => 'cancelled' ), array( 'id' => $signup_id ), array( '%s' ), array( '%d' ) );
+        Subsales_Database::clear_team_campaign_driver( intval( $row['team_id'] ), intval( $row['campaign_id'] ), $driver['name'] );
+
+        subsales_log( 'INFO', 'driver-signup', 'Driver removed themselves from a day', array(
+            'member_id' => $driver['id'], 'team_id' => intval( $row['team_id'] ), 'campaign_id' => intval( $row['campaign_id'] ),
+        ) );
+
+        return rest_ensure_response( array( 'success' => true, 'days' => self::driving_days( $driver['id'] ) ) );
+    }
+
+    /**
+     * Name + phone -> member, with the same partial name match as
+     * rest_lookup_child(). Returns { id, name } or a WP_Error.
+     */
+    private static function verify_person( $body ) {
+        global $wpdb;
+        $name  = isset( $body['driver_name'] ) ? sanitize_text_field( $body['driver_name'] ) : '';
+        $phone = isset( $body['driver_phone'] ) ? preg_replace( '/\D/', '', $body['driver_phone'] ) : '';
+        if ( $name === '' || ! preg_match( '/^[0-9]{10}$/', $phone ) ) {
+            return new WP_Error( 'missing_params', 'Enter your name and 10-digit phone number.', array( 'status' => 400 ) );
+        }
+        $m = $wpdb->get_row( $wpdb->prepare(
+            "SELECT id, name FROM {$wpdb->prefix}ss_team_members WHERE phone = %s", $phone
+        ), ARRAY_A );
+        if ( ! $m || ( stripos( $m['name'], $name ) === false && stripos( $name, $m['name'] ) === false ) ) {
+            // One message for both: which half was wrong is not ours to confirm.
+            return new WP_Error( 'not_found', 'We could not find a driver with that name and phone number.', array( 'status' => 404 ) );
+        }
+        return array( 'id' => intval( $m['id'] ), 'name' => $m['name'] );
+    }
+
+    /** Active driving days for a member, current season only. */
+    private static function driving_days( $member_id ) {
+        global $wpdb;
+        $rows = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.id AS signup_id, s.campaign_id, t.name AS team_name
+               FROM {$wpdb->prefix}ss_signups s
+               JOIN {$wpdb->prefix}ss_teams t ON t.id = s.team_id
+               JOIN {$wpdb->prefix}ss_campaigns c ON c.id = s.campaign_id
+              WHERE s.user_id = %d AND s.is_driver = 1 AND s.status = 'active' AND c.season_id = %d
+              ORDER BY c.campaign_date",
+            $member_id, Subsales_Database::current_season_id()
+        ), ARRAY_A );
+        foreach ( $rows as &$r ) {
+            $r['day'] = self::day_label( $r['campaign_id'] );
+        }
+        return $rows;
+    }
+
+    /** "Tuesday, September 22, 2026" (plus the sale's name when it has one). */
+    public static function day_label( $campaign_id ) {
+        global $wpdb;
+        $c = $wpdb->get_row( $wpdb->prepare(
+            "SELECT campaign_date, campaign_name FROM {$wpdb->prefix}ss_campaigns WHERE id = %d", $campaign_id
+        ), ARRAY_A );
+        if ( ! $c ) {
+            return '';
+        }
+        $label = date_i18n( 'l, F j, Y', strtotime( $c['campaign_date'] ) );
+        return $c['campaign_name'] ? $label . ' (' . $c['campaign_name'] . ')' : $label;
+    }
+
+    public static function team_name( $team_id ) {
+        global $wpdb;
+        return (string) $wpdb->get_var( $wpdb->prepare( "SELECT name FROM {$wpdb->prefix}ss_teams WHERE id = %d", $team_id ) );
+    }
+
+    /**
+     * Email a driver. Returns whether it was handed to the mail transport.
+     *
+     * Every failure is logged, because the failure mode here is silence: no
+     * address on file, or a site with no working mailer, both look exactly
+     * like "sent" to the person who triggered it. The address itself is not
+     * logged - it is a parent's personal contact detail.
+     */
+    public static function email_driver( $member_id, $subject, $body ) {
+        global $wpdb;
+        $email = $wpdb->get_var( $wpdb->prepare(
+            "SELECT email FROM {$wpdb->prefix}ss_team_members WHERE id = %d", $member_id
+        ) );
+        if ( ! $email || ! is_email( $email ) ) {
+            subsales_log( 'WARNING', 'driver-email', 'No email on file - driver not told', array( 'member_id' => $member_id, 'subject' => $subject ) );
+            return false;
+        }
+
+        $headers = array();
+        $reply   = get_option( 'subsales_admin_email' );
+        if ( $reply && is_email( $reply ) ) {
+            $headers[] = 'Reply-To: ' . $reply;
+        }
+        $body .= "\n-- \n" . get_option( 'subsales_branding', 'Southington BKMB' ) . "\n";
+
+        $sent = wp_mail( $email, $subject, $body, $headers );
+        subsales_log( $sent ? 'INFO' : 'ERROR', 'driver-email',
+            $sent ? 'Driver emailed' : 'wp_mail failed - driver not told; check the mail setup',
+            array( 'member_id' => $member_id, 'subject' => $subject ) );
+        return $sent;
     }
 
     /**
@@ -249,7 +426,7 @@ class Subsales_Driver_Signup {
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
         .form-group { margin-bottom: 20px; position: relative; }
         label { display: block; font-weight: 600; margin-bottom: 8px; color: #555; }
-        input[type="text"], input[type="tel"] { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        input[type="text"], input[type="tel"], input[type="email"] { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
         input:focus { outline: none; border-color: <?php echo esc_attr( $primary_color ); ?>; }
         .btn { width: 100%; padding: 14px; background: <?php echo esc_attr( $primary_color ); ?>; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
         .btn:hover { opacity: 0.9; }
@@ -275,6 +452,10 @@ class Subsales_Driver_Signup {
         .autocomplete-results button { display: block; width: 100%; text-align: left; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid #f0f0f0; font-size: 15px; cursor: pointer; }
         .autocomplete-results button:hover { background: #f5f7ff; }
         .autocomplete-results .ac-help { padding: 8px 12px; color: #777; font-size: 13px; }
+        .link-btn { background: none; border: none; color: <?php echo esc_attr( $primary_color ); ?>; font-size: 15px; text-decoration: underline; cursor: pointer; padding: 0; margin-top: 16px; }
+        .my-day { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #eee; }
+        .my-day:last-child { border-bottom: none; }
+        .my-day .btn { width: auto; padding: 8px 14px; font-size: 14px; background: #dc3545; flex: 0 0 auto; }
         .footer { text-align: center; padding: 20px 0; margin-top: 20px; }
         .footer-email-btn { display: inline-block; padding: 10px 20px; background: <?php echo esc_attr( $primary_color ); ?>; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; }
     </style>
@@ -302,6 +483,26 @@ class Subsales_Driver_Signup {
             </div>
             <button class="btn" id="lookupBtn">Find My Child's Team</button>
             <div class="error hidden" id="step1Error"></div>
+            <button type="button" class="link-btn" id="manageLink">Already driving? Manage your days</button>
+        </div>
+
+        <!-- A driver's own days: identified by THEIR name + phone -->
+        <div class="card hidden" id="manage">
+            <h2 style="font-size: 20px; margin-bottom: 16px;">Your driving days</h2>
+            <div id="manageLogin">
+                <div class="form-group">
+                    <label for="mName">Your Name (Driver)</label>
+                    <input type="text" id="mName" placeholder="Your full name" autocomplete="name" autocapitalize="words">
+                </div>
+                <div class="form-group">
+                    <label for="mPhone">Your Phone Number</label>
+                    <input type="text" inputmode="tel" id="mPhone" placeholder="(555) 555-5555" autocomplete="tel">
+                </div>
+                <button class="btn" id="mFindBtn">Show My Days</button>
+            </div>
+            <div id="mDays"></div>
+            <div class="error hidden" id="mError"></div>
+            <button class="btn btn-secondary" id="mBackBtn">Back</button>
         </div>
 
         <!-- Step 2: Driver details -->
@@ -318,6 +519,11 @@ class Subsales_Driver_Signup {
             <div class="form-group">
                 <label for="driverPhone">Your Phone Number</label>
                 <input type="text" inputmode="tel" id="driverPhone" placeholder="(555) 555-5555" autocomplete="new-password" autocorrect="off" spellcheck="false">
+            </div>
+            <div class="form-group">
+                <label for="driverEmail">Your Email</label>
+                <input type="email" id="driverEmail" placeholder="you@example.com" autocomplete="email" autocapitalize="off" spellcheck="false">
+                <p style="font-size: 13px; color: #777; margin-top: 6px;">We'll email you which days you're driving, and if your child changes teams.</p>
             </div>
             <button class="btn" id="registerBtn">Register as Driver</button>
             <button class="btn btn-secondary" id="backBtn">Back</button>
@@ -457,9 +663,10 @@ class Subsales_Driver_Signup {
             hideError($('step2Error'));
             const driver_name = $('driverName').value.trim();
             const driver_phone = $('driverPhone').value.trim();
+            const driver_email = $('driverEmail').value.trim();
 
-            if (!driver_name || !driver_phone) {
-                showError($('step2Error'), 'Please enter your name and phone number.');
+            if (!driver_name || !driver_phone || !driver_email) {
+                showError($('step2Error'), 'Please enter your name, phone number and email.');
                 return;
             }
 
@@ -483,6 +690,7 @@ class Subsales_Driver_Signup {
                         child_phone: $('childPhone').value.trim(),
                         driver_name,
                         driver_phone,
+                        driver_email,
                         selections
                     })
                 });
@@ -514,6 +722,72 @@ class Subsales_Driver_Signup {
             $('step2').classList.add('hidden');
             $('step1').classList.remove('hidden');
             hideError($('step2Error'));
+        });
+
+        // ---- Manage your days ----
+        $('manageLink').addEventListener('click', () => {
+            $('step1').classList.add('hidden');
+            $('manage').classList.remove('hidden');
+            $('mName').focus();
+        });
+        $('mBackBtn').addEventListener('click', () => {
+            $('manage').classList.add('hidden');
+            $('step1').classList.remove('hidden');
+            hideError($('mError'));
+        });
+
+        function driverCreds() {
+            return { driver_name: $('mName').value.trim(), driver_phone: $('mPhone').value.trim() };
+        }
+
+        function renderMyDays(days) {
+            if (!days.length) {
+                $('mDays').innerHTML = '<p style="color:#666;">You are not signed up to drive any days.</p>';
+                return;
+            }
+            $('mDays').innerHTML = days.map(d =>
+                '<div class="my-day"><span><strong>' + escapeHtml(d.team_name) + '</strong><br>' +
+                '<span style="color:#666;font-size:14px;">' + escapeHtml(d.day) + '</span></span>' +
+                '<button class="btn" data-id="' + parseInt(d.signup_id, 10) + '">Remove</button></div>'
+            ).join('');
+            $('mDays').querySelectorAll('button').forEach(btn => btn.addEventListener('click', async () => {
+                if (!confirm('Stop driving this day? The team will show that it needs a driver.')) return;
+                btn.disabled = true;
+                hideError($('mError'));
+                try {
+                    const res = await fetch(apiBase + '/driver-signup/remove', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(Object.assign(driverCreds(), { signup_id: parseInt(btn.dataset.id, 10) }))
+                    });
+                    const data = await res.json();
+                    if (!res.ok) { showError($('mError'), (data && data.message) || 'Could not remove that day.'); btn.disabled = false; return; }
+                    renderMyDays(data.days || []);
+                } catch (e) {
+                    showError($('mError'), 'Something went wrong. Please try again.');
+                    btn.disabled = false;
+                }
+            }));
+        }
+
+        $('mFindBtn').addEventListener('click', async () => {
+            hideError($('mError'));
+            $('mFindBtn').disabled = true;
+            try {
+                const res = await fetch(apiBase + '/driver-signup/my-days', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(driverCreds())
+                });
+                const data = await res.json();
+                if (!res.ok) { showError($('mError'), (data && data.message) || 'We could not find you.'); return; }
+                $('manageLogin').classList.add('hidden');
+                renderMyDays(data.days || []);
+            } catch (e) {
+                showError($('mError'), 'Something went wrong. Please try again.');
+            } finally {
+                $('mFindBtn').disabled = false;
+            }
         });
     </script>
 </body>
