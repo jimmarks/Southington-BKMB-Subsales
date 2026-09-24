@@ -185,12 +185,18 @@ class Subsales_Signups {
             return $result;
         }
 
-        subsales_log( 'INFO', 'signup', 'Signup completed', array(
-            'user_id'     => $result['user_id'],
-            'team_id'     => $result['team_id'],
-            'new_signups' => $result['signups_created'],
-            'skipped'     => $result['skipped'],
-        ) );
+        // "Signup completed" with new_signups 0 was logged nine times on
+        // 2026-09-24 while a seller could not sign up at all. Nothing created is
+        // not a completed signup - say so at a level someone will notice.
+        $nothing = ( intval( $result['signups_created'] ) === 0 );
+        subsales_log( $nothing ? 'WARNING' : 'INFO', 'signup',
+            $nothing ? 'Signup created nothing - every day was skipped' : 'Signup completed',
+            array(
+                'user_id'     => $result['user_id'],
+                'team_id'     => $result['team_id'],
+                'new_signups' => $result['signups_created'],
+                'skipped'     => $result['skipped'],
+            ) );
 
         return rest_ensure_response( array(
             'success'         => true,

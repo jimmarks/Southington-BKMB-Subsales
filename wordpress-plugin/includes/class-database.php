@@ -3418,9 +3418,30 @@ class Subsales_Database {
             ), ARRAY_A );
 
             if ( ! $is_driver ) {
-                // Kid-signup semantics: skip if a signup row already exists
-                if ( $existing ) {
+                // Kid-signup semantics. A cancelled row is NOT a signup - it is
+                // a day they took themselves off. Skipping it meant that once a
+                // kid removed a day they could never sign up for it again: the
+                // request came back "success" with nothing created, and the page
+                // had nothing new to show. Reactivate instead, which is also what
+                // the UNIQUE (user, team, campaign) key requires - a plain INSERT
+                // here would fail.
+                if ( $existing && $existing['status'] === 'active' ) {
                     $skipped[] = $campaign_id;
+                    continue;
+                }
+                if ( $existing ) {
+                    $reactivated = $wpdb->update( $signups_table,
+                        array( 'status' => 'active' ),
+                        array( 'id' => intval( $existing['id'] ) ),
+                        array( '%s' ), array( '%d' )
+                    );
+                    if ( $reactivated === false ) {
+                        subsales_log( 'ERROR', 'signup', 'Failed to reactivate cancelled signup', array(
+                            'signup_id' => intval( $existing['id'] ), 'error' => $wpdb->last_error,
+                        ) );
+                    } else {
+                        $signups_created++;
+                    }
                     continue;
                 }
                 $inserted = $wpdb->insert( $signups_table, array(

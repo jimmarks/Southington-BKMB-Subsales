@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.74.1] - 2026-09-24
+
+### Fixed
+- **Removing a day meant you could never sign up for it again.** Taking yourself off a sale day marks it cancelled rather than deleting it, and signing up again treated that cancelled day as one you already had &mdash; so it skipped every date, created nothing, and told the page it had succeeded. The date came back blank and there was nothing to show. A seller hit this nine times in a row tonight. Signing up for a day you previously removed now puts you back on it.
+- A sign-up that creates nothing is recorded as a warning instead of &ldquo;Signup completed&rdquo;.
+
 ## [3.74.0] - 2026-09-22
 
 ### Changed
