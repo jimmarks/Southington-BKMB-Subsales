@@ -3338,7 +3338,12 @@ class Subsales_Database {
         // admin-made drivers, which stay with the team as before.
         $driver_for   = $is_driver && ! empty( $args['driver_for_user_id'] ) ? intval( $args['driver_for_user_id'] ) : null;
 
-        if ( $name === '' || $phone === '' || empty( $campaign_ids ) ) {
+        // An admin acting on an existing person already knows the id, and does
+        // not have their name and phone to hand; the public pages still
+        // identify by name + phone. Both end up at the same writer.
+        $known_user_id = isset( $args['user_id'] ) ? intval( $args['user_id'] ) : 0;
+
+        if ( empty( $campaign_ids ) || ( ! $known_user_id && ( $name === '' || $phone === '' ) ) ) {
             return new WP_Error( 'missing_params', 'Name, phone, and at least one campaign are required.', array( 'status' => 400 ) );
         }
 
@@ -3368,7 +3373,9 @@ class Subsales_Database {
         // phone, restricted to the child's actual signups) already happened
         // upstream in Subsales_Driver_Signup::rest_driver_signup() before
         // this was ever called.
-        if ( $is_driver ) {
+        if ( $known_user_id ) {
+            $user_id = $known_user_id;
+        } elseif ( $is_driver ) {
             $user_id = self::get_or_create_driver_by_phone( $name, $phone );
             if ( is_wp_error( $user_id ) ) {
                 return $user_id;
@@ -3378,6 +3385,11 @@ class Subsales_Database {
             }
         } else {
             $user_id = self::get_active_member_by_phone( $name, $phone );
+        }
+        if ( $known_user_id && $name === '' ) {
+            $name = (string) $wpdb->get_var( $wpdb->prepare(
+                "SELECT name FROM {$wpdb->prefix}ss_team_members WHERE id = %d", $known_user_id
+            ) );
         }
         if ( is_wp_error( $user_id ) ) {
             return $user_id;

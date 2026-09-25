@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.75.0] - 2026-09-25
+
+### Changed
+- **Teams and Users rebuilt around dates.** The Teams tab no longer shows *Available Users* and *Available Teams*; it lists only the teams that exist, sorted by their next selling day, and opening one shows its scheduled dates with who is selling each day and that day's driver. Days with no driver are called out.
+- **The Users tab is about one person.** Pick someone from the list (or add a new one) and their details and their selling days are on the same screen: each day with its team, that day's driver, and a Remove. Adding a day is one row — pick a date, pick a team, Add.
+- **Admins can now change a seller's days and teams**, which was not possible before.
+
+### Fixed
+- Admin changes to a signup now follow the same rules as the seller's own page. Removing a day takes a linked driver off it, and moving a seller moves their driver or takes them off if the new team already has one. The admin screens wrote to the table directly before, so none of that happened.
+- The admin list of a seller's days showed previous seasons' days alongside this season's.
+
 ## [3.74.2] - 2026-09-25
 
 ### Changed

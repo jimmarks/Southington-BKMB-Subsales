@@ -234,11 +234,30 @@ class Subsales_Signups {
      * PUT /my-signups/{id} - Update signup (team switch)
      */
     public static function rest_update_signup( $request ) {
+        $body    = $request->get_json_params();
+        $team_id = isset( $body['team_id'] ) ? intval( $body['team_id'] ) : 0;
+        $result  = self::change_team(
+            intval( $request->get_param( 'id' ) ),
+            $team_id,
+            isset( $body['team_name'] ) ? $body['team_name'] : ''
+        );
+        return is_wp_error( $result ) ? $result : rest_ensure_response( $result );
+    }
+
+    /**
+     * Move one active signup to another team on the same day, with everything
+     * that has to happen around it: the season check, the one-team-per-day
+     * rule, the persistent roster, and the driver who signed up through this
+     * seller (carry_driver_along). The admin screens call this too, so an
+     * admin moving a seller gets the same behaviour as the seller doing it.
+     *
+     * @return array|WP_Error { success, team_name, driver: null|'moved'|'unassigned' }
+     */
+    public static function change_team( $signup_id, $team_id, $team_name = '' ) {
         global $wpdb;
-        
-        $signup_id = intval( $request->get_param( 'id' ) );
-        $body      = $request->get_json_params();
-        $team_id   = isset( $body['team_id'] ) ? intval( $body['team_id'] ) : 0;
+
+        $signup_id = intval( $signup_id );
+        $team_id   = intval( $team_id );
 
         $signups_table = $wpdb->prefix . 'ss_signups';
         $teams_table   = $wpdb->prefix . 'ss_teams';
@@ -249,8 +268,8 @@ class Subsales_Signups {
         // "Team Baja" off a typo nobody sees. A team_name is still accepted
         // and resolved the same way sign-up resolves it, for anything older
         // still posting one.
-        if ( ! $team_id && ! empty( $body['team_name'] ) ) {
-            $team = Subsales_Database::get_or_create_team( sanitize_text_field( $body['team_name'] ) );
+        if ( ! $team_id && $team_name !== '' ) {
+            $team = Subsales_Database::get_or_create_team( sanitize_text_field( $team_name ) );
             if ( ! $team || empty( $team['id'] ) ) {
                 return new WP_Error( 'team_failed', 'Could not set up that team. Please try again.', array( 'status' => 500 ) );
             }
@@ -281,7 +300,7 @@ class Subsales_Signups {
         }
 
         if ( intval( $signup['team_id'] ) === $team_id ) {
-            return rest_ensure_response( array( 'success' => true, 'team_name' => $new_team_name ) );
+            return array( 'success' => true, 'team_name' => $new_team_name, 'driver' => null );
         }
 
         // register_member_signups() refuses to put the same person on the same
@@ -312,11 +331,11 @@ class Subsales_Signups {
 
         $driver = self::carry_driver_along( intval( $signup['user_id'] ), $old_team_id, $team_id, intval( $signup['campaign_id'] ), $new_team_name );
 
-        return rest_ensure_response( array(
-            'success'      => true,
-            'team_name'    => $new_team_name,
-            'driver'       => $driver,   // null | 'moved' | 'unassigned'
-        ) );
+        return array(
+            'success'   => true,
+            'team_name' => $new_team_name,
+            'driver'    => $driver,   // null | 'moved' | 'unassigned'
+        );
     }
 
     /**
@@ -441,9 +460,19 @@ class Subsales_Signups {
      * DELETE /my-signups/{id} - Delete signup
      */
     public static function rest_delete_signup( $request ) {
+        return rest_ensure_response( self::cancel_signup( intval( $request->get_param( 'id' ) ) ) );
+    }
+
+    /**
+     * Take one signup off its day. Shared by the seller's own page and the
+     * admin screens so both take the linked driver off with them.
+     *
+     * @return array { success, driver: null|'removed' }
+     */
+    public static function cancel_signup( $signup_id ) {
         global $wpdb;
-        
-        $signup_id = intval( $request->get_param( 'id' ) );
+
+        $signup_id     = intval( $signup_id );
         $signups_table = $wpdb->prefix . 'ss_signups';
 
         $row = $wpdb->get_row( $wpdb->prepare(
@@ -468,9 +497,9 @@ class Subsales_Signups {
             $driver = self::release_linked_drivers( intval( $row['user_id'] ), intval( $row['team_id'] ), intval( $row['campaign_id'] ) );
         }
 
-        return rest_ensure_response( array( 'success' => true, 'driver' => $driver ) );
+        return array( 'success' => true, 'driver' => $driver );
     }
-    
+
     /**
      * GET /team-roster - Get team roster for a campaign
      */

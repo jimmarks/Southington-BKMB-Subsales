@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.74.2
+ * Version: 3.75.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.74.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -8066,6 +8066,48 @@ function ss_teams_page() {
         }
     }
 
+    // Handle selling-day edits from the Users tab. All three go through
+    // Subsales_Signups / register_member_signups rather than writing to
+    // ss_signups here, so an admin change does what the seller's own page
+    // does - including taking a linked driver along, or off.
+    $day_notice = '';
+    if ( isset( $_POST['subsales_day_action'] ) ) {
+        check_admin_referer( 'subsales_day_edit' );
+        $day_user   = intval( $_POST['day_user_id'] ?? 0 );
+        $day_signup = intval( $_POST['day_signup_id'] ?? 0 );
+        $day_team   = intval( $_POST['day_team_id'] ?? 0 );
+        $day_camp   = intval( $_POST['day_campaign_id'] ?? 0 );
+
+        if ( $_POST['subsales_day_action'] === 'add' && $day_user && $day_team && $day_camp ) {
+            $res = Subsales_Database::register_member_signups( array(
+                'user_id'      => $day_user,
+                'team_id'      => $day_team,
+                'campaign_ids' => array( $day_camp ),
+            ) );
+            if ( is_wp_error( $res ) ) {
+                $day_notice = '<div class="notice notice-error"><p>' . esc_html( $res->get_error_message() ) . '</p></div>';
+            } elseif ( intval( $res['signups_created'] ) === 0 ) {
+                $day_notice = '<div class="notice notice-warning"><p>Already signed up for that day.</p></div>';
+            } else {
+                $day_notice = '<div class="notice notice-success"><p>Day added.</p></div>';
+            }
+        } elseif ( $_POST['subsales_day_action'] === 'remove' && $day_signup ) {
+            $res = Subsales_Signups::cancel_signup( $day_signup );
+            $day_notice = '<div class="notice notice-success"><p>Day removed.'
+                . ( ! empty( $res['driver'] ) ? ' Their driver was taken off that day too and emailed.' : '' )
+                . '</p></div>';
+        } elseif ( $_POST['subsales_day_action'] === 'move' && $day_signup && $day_team ) {
+            $res = Subsales_Signups::change_team( $day_signup, $day_team );
+            if ( is_wp_error( $res ) ) {
+                $day_notice = '<div class="notice notice-error"><p>' . esc_html( $res->get_error_message() ) . '</p></div>';
+            } else {
+                $moved = $res['driver'] === 'moved' ? ' Their driver moved with them.'
+                    : ( $res['driver'] === 'unassigned' ? ' That team already had a driver, so theirs was taken off the day.' : '' );
+                $day_notice = '<div class="notice notice-success"><p>Moved to ' . esc_html( $res['team_name'] ) . '.' . $moved . '</p></div>';
+            }
+        }
+    }
+
     // Handle team creation
     if ( isset( $_POST['add_team'] ) ) {
         check_admin_referer( 'order_sync_add_team' );
@@ -8289,432 +8331,402 @@ function ss_teams_page() {
             <a href="?page=subsales-teams&tab=teams" class="nav-tab <?php echo $active_tab === 'teams' ? 'nav-tab-active' : ''; ?>">Teams</a>
         </h2>
 
+        <?php
+        // Shared season data for both tabs.
+        $ss_season_id   = Subsales_Database::current_season_id();
+        $ss_teams       = Subsales_Database::get_teams( 'active' );
+        $ss_campaigns   = Subsales_Database::get_campaigns( 'active', $ss_season_id );
+        $ss_today       = current_time( 'Y-m-d' );
+
+        // Every active signup once, then indexed three ways. Fetching per user
+        // and per team instead meant a query for each of them on every load.
+        $ss_all     = Subsales_Database::get_signups( array( 'status' => 'active' ) );
+        $ss_drivers = array();   // team|campaign => driver name
+        $ss_by_user = array();   // user_id      => rows
+        $ss_by_team = array();   // team_id      => rows
+
+        // get_signups() spans every season, so last season's days turned up in
+        // a seller's list. Keep only this season's campaigns.
+        $ss_season_campaigns = array();
+        foreach ( $ss_campaigns as $ss_c ) { $ss_season_campaigns[ intval( $ss_c['id'] ) ] = true; }
+
+        foreach ( $ss_all as $ss_row ) {
+            if ( ! isset( $ss_season_campaigns[ intval( $ss_row['campaign_id'] ) ] ) ) { continue; }
+            if ( ! empty( $ss_row['is_driver'] ) ) {
+                $ss_drivers[ $ss_row['team_id'] . '|' . $ss_row['campaign_id'] ] = $ss_row['user_name'];
+            }
+            $ss_by_user[ intval( $ss_row['user_id'] ) ][] = $ss_row;
+            $ss_by_team[ intval( $ss_row['team_id'] ) ][] = $ss_row;
+        }
+
+        $ss_day_label = function( $date ) {
+            return $date ? date_i18n( 'D, M j', strtotime( $date ) ) : '—';
+        };
+        ?>
+        <?php echo isset( $day_notice ) ? $day_notice : ''; ?>
+
         <?php if ( $active_tab === 'users' ) : ?>
-            <!-- USERS TAB -->
-            <div class="subsales-tab-content" style="margin-top: 20px;">
-                <h2><?php echo $editing_user ? 'Edit User' : 'Add New User'; ?></h2>
-                <form method="post" action="?page=subsales-teams&tab=users">
-                    <?php if ( $editing_user ): wp_nonce_field( 'order_sync_edit_user' ); else: wp_nonce_field( 'order_sync_add_user' ); endif; ?>
-                    <input type="hidden" name="user_id" value="<?php echo esc_attr( $edit_user['id'] ); ?>" />
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="user_active">Status</label></th>
-                            <td>
-                                <label>
-                                    <input type="checkbox" id="user_active" name="user_active" value="1" <?php checked( ( $edit_user['status'] ?? 'active' ), 'active' ); ?> />
-                                    Active
-                                </label>
-                                <p class="description">Uncheck to make this user inactive. Inactive users cannot log into the PWA.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="user_name">Name *</label></th>
-                            <td><input type="text" id="user_name" name="user_name" class="regular-text" required value="<?php echo esc_attr( $edit_user['name'] ); ?>" /></td>
-                        </tr>
-                        <tr>
-                            <th><label for="user_phone">Phone *</label></th>
-                            <td>
-                                <input type="tel" id="user_phone" name="user_phone" class="regular-text" required value="<?php echo esc_attr( $edit_user['phone'] ?? '' ); ?>" pattern="[0-9]{3}[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}" placeholder="555-123-4567" />
-                                <p class="description">Required. 10-digit phone number (unique per user).</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="user_email">Email</label></th>
-                            <td><input type="email" id="user_email" name="user_email" class="regular-text" value="<?php echo esc_attr( $edit_user['email'] ); ?>" placeholder="(optional)" /></td>
-                        </tr>
-                    </table>
-                    <?php if ( $editing_user ): ?>
-                        <p>
-                            <button name="edit_user" class="button button-primary">Update User</button>
-                            <a href="?page=subsales-teams&tab=users" class="button">Cancel</a>
-                        </p>
-                    <?php else: ?>
-                        <p><button name="add_user" class="button button-primary">Add User</button></p>
-                    <?php endif; ?>
-                </form>
+            <!-- USERS TAB: one person at a time -->
+            <?php
+            $sel_user_id = isset( $_GET['user'] ) ? intval( $_GET['user'] ) : ( $editing_user ? intval( $edit_user['id'] ) : 0 );
+            $sel_user    = null;
+            if ( $sel_user_id ) {
+                $sel_user = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$members_table} WHERE id = %d", $sel_user_id ), ARRAY_A );
+            }
+            $sel_days = $sel_user ? ( $ss_by_user[ $sel_user_id ] ?? array() ) : array();
+            $sel_taken = array();
+            foreach ( $sel_days as $d ) { $sel_taken[ intval( $d['campaign_id'] ) ] = true; }
+            $adding_user = isset( $_GET['new_user'] );
+            ?>
 
-                <h2 style="margin-top: 30px;">All Users</h2>
-                <?php if ( ! empty( $all_users ) ) : ?>
-                <input type="text" id="allUsersSearchBox" placeholder="Search users by name, phone, or email..." style="width: 100%; max-width: 400px; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
-                <table class="wp-list-table widefat fixed striped" id="allUsersTable">
-                    <thead>
-                        <tr>
-                            <th style="width: 30%;">Name - Phone</th>
-                            <th style="width: 25%;">Email</th>
-                            <th style="width: 15%;">This season</th>
-                            <th style="width: 30%;">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ( $all_users as $user ) : ?>
-                        <?php $is_active = ( $user['status'] ?? 'active' ) === 'active'; ?>
-                        <tr style="background-color: <?php echo $is_active ? '#e8f5e9' : '#f5f5f5'; ?>;<?php echo $is_active ? '' : ' opacity: 0.7;'; ?>">
-                            <td>
-                                <strong><?php echo esc_html( wp_unslash( $user['name'] ) ); ?></strong><br>
-                                <span style="color: #666; font-size: 13px;">📞 <?php echo esc_html( $user['phone'] ?? 'No phone' ); ?></span>
-                            </td>
-                            <td><?php echo esc_html( wp_unslash( $user['email'] ?: '—' ) ); ?></td>
-                            <td><?php echo esc_html( $season_roles[ intval( $user['id'] ) ] ?? '—' ); ?></td>
-                            <td>
-                                <a href="?page=subsales-teams&tab=users&edit_user=<?php echo intval( $user['id'] ); ?>" class="button button-small">Edit</a>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-                <?php else : ?>
-                <p>No users yet. Add your first user above.</p>
-                <?php endif; ?>
-            </div>
+            <div class="subsales-tab-content subsales-users-layout">
 
-        <?php else : ?>
-            <!-- TEAMS TAB -->
-            <div class="subsales-tab-content" style="margin-top: 20px;">
-                <h2><?php echo $editing_team ? 'Edit Team' : 'Add New Team'; ?></h2>
-                <form method="post" action="?page=subsales-teams&tab=teams">
-                    <?php if ( $editing_team ): wp_nonce_field( 'order_sync_edit_team' ); else: wp_nonce_field( 'order_sync_add_team' ); endif; ?>
-                    <input type="hidden" name="team_id" value="<?php echo esc_attr( $edit_team['id'] ); ?>" />
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="team_active">Status</label></th>
-                            <td>
-                                <label>
-                                    <input type="checkbox" id="team_active" name="team_active" value="1" <?php checked( ( $edit_team['status'] ?? 'active' ), 'active' ); ?> />
-                                    Active
-                                </label>
-                                <p class="description">Uncheck to make this team inactive. Inactive teams appear greyed out.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="team_name">Team Name</label></th>
-                            <td><input type="text" id="team_name" name="team_name" class="regular-text" required value="<?php echo esc_attr( $edit_team['name'] ); ?>" /></td>
-                        </tr>
-                        <tr>
-                            <th><label for="team_code">Access Code</label></th>
-                            <td><input type="text" id="team_code" name="team_code" class="regular-text" required value="<?php echo esc_attr( $edit_team['access_code'] ); ?>" /></td>
-                        </tr>
-                        <tr>
-                            <th><label for="team_description">Description</label></th>
-                            <td><textarea id="team_description" name="team_description" class="large-text" rows="3"><?php echo esc_textarea( $edit_team['description'] ); ?></textarea></td>
-                        </tr>
-                    </table>
-                    <?php if ( $editing_team ): ?>
-                        <p>
-                            <button name="edit_team" class="button button-primary">Update Team</button>
-                            <a href="?page=subsales-teams&tab=teams" class="button">Cancel</a>
-                        </p>
-                    <?php else: ?>
-                        <p><button name="add_team" class="button button-primary">Add Team</button></p>
-                    <?php endif; ?>
-                </form>
-
-                <h2 style="margin-top: 30px;">Team Management</h2>
-                <p class="description">Drag users from the available users box into team boxes to assign them. Users can belong to multiple teams.</p>
-                
-                <style>
-                    .subsales-team-grid-wrapper {
-                        display: grid;
-                        gap: 20px;
-                        margin-top: 20px;
-                    }
-                    
-                    /* Large screens: 2 equal columns */
-                    @media (min-width: 900px) {
-                        .subsales-team-grid-wrapper {
-                            grid-template-columns: 1fr 1fr;
-                        }
-                    }
-                    
-                    /* Small screens: single column stacked */
-                    @media (max-width: 899px) {
-                        .subsales-team-grid-wrapper {
-                            grid-template-columns: 1fr;
-                        }
-                    }
-                    
-                    .available-users-column {
-                        background: #f9f9f9;
-                        border: 1px solid #ddd;
-                        border-radius: 4px;
-                        padding: 15px;
-                    }
-                    
-                    .available-teams-column {
-                        background: #f9f9f9;
-                        border: 1px solid #ddd;
-                        border-radius: 4px;
-                        padding: 15px;
-                    }
-                    
-                    .teams-list {
-                        display: grid;
-                        gap: 15px;
-                    }
-                    
-                    /* Large screens: 3 columns inside teams container */
-                    @media (min-width: 1600px) {
-                        .teams-list {
-                            grid-template-columns: repeat(3, 1fr);
-                        }
-                    }
-                    
-                    /* Medium-large screens: 2 columns inside teams container */
-                    @media (min-width: 1200px) and (max-width: 1599px) {
-                        .teams-list {
-                            grid-template-columns: repeat(2, 1fr);
-                        }
-                    }
-                    
-                    /* Medium and small screens: 1 column inside teams container */
-                    @media (max-width: 1199px) {
-                        .teams-list {
-                            grid-template-columns: 1fr;
-                        }
-                    }
-                    
-                    .team-box {
-                        height: fit-content;
-                        margin-bottom: 0 !important;
-                    }
-                </style>
-                
-                <div class="subsales-team-grid-wrapper">
-                    <!-- Available Users -->
-                    <div class="available-users-column">
-                        <h3 style="margin-top: 0;">Available Users</h3>
-                        <input type="text" id="userSearchBox" placeholder="Search by name or phone..." style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
-                        <div class="available-users-list" id="availableUsersList" style="min-height: 200px;">
-                            <?php
-                            // Show only active users in the available list
-                            if ( ! empty( $all_users ) ) :
-                                foreach ( $all_users as $user ) :
-                                    // Skip inactive users
-                                    if ( ( $user['status'] ?? 'active' ) !== 'active' ) continue;
-                            ?>
-                                <div class="user-card draggable" draggable="true" data-user-id="<?php echo intval( $user['id'] ); ?>" 
-                                     style="background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 10px; margin-bottom: 8px; cursor: move;">
-                                    <strong><?php echo esc_html( wp_unslash( $user['name'] ) ); ?></strong><br>
-                                    <small style="color: #666;"><?php echo esc_html( $user['email'] ?: 'No email' ); ?></small>
-                                    <?php if ( ! empty( $user['phone'] ) ) : ?>
-                                        <br><small style="color: #666;">📞 <?php echo esc_html( $user['phone'] ); ?></small>
-                                    <?php endif; ?>
-                                </div>
-                            <?php
-                                endforeach;
-                            else :
-                            ?>
-                                <p style="color: #666; font-style: italic;">No users available. Create users in the Users tab.</p>
-                            <?php endif; ?>
-                        </div>
+                <div class="subsales-panel subsales-people">
+                    <div class="subsales-panel-head">
+                        <label for="allUsersSearchBox">Find a person</label>
+                        <input type="text" id="allUsersSearchBox" placeholder="Name, phone or email…" />
+                        <a href="?page=subsales-teams&amp;tab=users&amp;new_user=1" class="button button-primary" style="width: 100%; text-align: center;">+ Add New User</a>
                     </div>
-
-                    <!-- Available Teams -->
-                    <div class="available-teams-column">
-                        <h3 style="margin-top: 0;">Available Teams</h3>
-                        <input type="text" id="teamSearchBox" placeholder="Search teams by name, code, or member..." 
-                               style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 4px;" />
-                        <div class="teams-list" id="teamsList" style="min-height: 200px;">
-                            <?php if ( ! empty( $teams ) ) : ?>
-                                <?php foreach ( $teams as $team ) : ?>
-                                    <?php $team_is_active = ( $team['status'] ?? 'active' ) === 'active'; ?>
-                                    <div class="team-box postbox" data-team-id="<?php echo intval( $team['id'] ); ?>" 
-                                         style="margin-bottom: 20px; border: 2px solid #ccc; border-radius: 6px;<?php echo $team_is_active ? '' : ' opacity: 0.6;'; ?>">
-                                        <div class="postbox-header" style="background: <?php echo $team_is_active ? '#e8f5e9' : '#f5f5f5'; ?>; padding: 12px 15px; border-bottom: 1px solid #ccc; display: flex; justify-content: space-between; align-items: center;">
-                                            <h3 style="margin: 0;">
-                                                <?php echo esc_html( wp_unslash( $team['name'] ) ); ?>
-                                                <?php if ( ! $team_is_active ) : ?>
-                                                    <span style="font-size: 12px; color: #999; font-weight: normal;">(Inactive)</span>
-                                                <?php endif; ?>
-                                                <span style="font-weight: normal; color: #666; font-size: 14px;">
-                                                    (Code: <?php echo esc_html( wp_unslash( $team['access_code'] ) ); ?>)
-                                                </span>
-                                            </h3>
-                                            <div>
-                                                <a href="?page=subsales-teams&tab=teams&edit_team=<?php echo intval( $team['id'] ); ?>" class="button button-small">Edit</a>
-                                            </div>
-                                        </div>
-                                        <div class="inside team-dropzone" data-team-id="<?php echo intval( $team['id'] ); ?>" 
-                                             style="padding: 15px; min-height: 100px; background: #fafafa;">
-                                            <?php if ( ! empty( $team['description'] ) ) : ?>
-                                                <p style="margin: 0 0 10px 0; font-style: italic; color: #666;"><?php echo esc_html( $team['description'] ); ?></p>
-                                            <?php endif; ?>
-                                            
-                                            <h4 style="margin: 10px 0;">Team Members</h4>
-                                            <div class="team-members-list">
-                                                <?php
-                                                // Canonical team membership; each member tagged is_driver
-                                                // (derived from active driver signups). Sort sales first
-                                                // and drivers last so we can render a divider between them.
-                                                $team_members_new = Subsales_Database::get_team_membership( $team['id'] );
-                                                usort( $team_members_new, function( $a, $b ) {
-                                                    $ad = ! empty( $a['is_driver'] ) ? 1 : 0;
-                                                    $bd = ! empty( $b['is_driver'] ) ? 1 : 0;
-                                                    if ( $ad !== $bd ) { return $ad - $bd; }
-                                                    return strcasecmp( $a['name'], $b['name'] );
-                                                } );
-                                                $driver_divider_shown = false;
-                                                
-                                                if ( ! empty( $team_members_new ) ) : ?>
-                                                <?php foreach ( $team_members_new as $member ) : ?>
-                                                    <?php $member_is_active = ( $member['status'] ?? 'active' ) === 'active'; ?>
-                                                    <?php $member_is_driver = ! empty( $member['is_driver'] ); ?>
-                                                    <?php if ( $member_is_driver && ! $driver_divider_shown ) : $driver_divider_shown = true; ?>
-                                                        <div style="border-top: 2px solid #e0e0e0; margin: 14px 0 10px; padding-top: 8px; font-size: 12px; font-weight: 600; color: #f0a020; text-transform: uppercase; letter-spacing: 0.5px;">Drivers</div>
-                                                    <?php endif; ?>
-                                                    <div class="user-card team-member-card" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
-                                                         style="background: <?php echo $member_is_active ? '#fff' : '#f5f5f5'; ?>; border: 1px solid <?php echo $member_is_driver ? '#f0a020' : ( $member_is_active ? '#4CAF50' : '#ccc' ); ?>; border-radius: 4px; padding: 10px; margin-bottom: 8px; position: relative;<?php echo $member_is_active ? '' : ' opacity: 0.7;'; ?>">
-                                                        <button type="button" class="remove-from-team" data-user-id="<?php echo intval( $member['id'] ); ?>" data-team-id="<?php echo intval( $team['id'] ); ?>" 
-                                                                style="position: absolute; top: 5px; right: 5px; background: #dc3232; color: #fff; border: none; border-radius: 3px; cursor: pointer; padding: 2px 6px; font-size: 11px;"
-                                                                title="Remove from team">×</button>
-                                                        <strong><?php echo esc_html( $member['name'] ); ?></strong> <?php if ( $member_is_driver ) : ?><span style="display:inline-block; margin-left:6px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#fff; background:#f0a020; padding:2px 6px; border-radius:3px;">Driver</span><?php endif; ?>
-                                                        <?php if ( ! $member_is_active ) : ?>
-                                                            <span style="font-size: 11px; color: #999;">(Inactive)</span>
-                                                        <?php endif; ?>
-                                                        <br>
-                                                        <small style="color: #666;"><?php echo esc_html( $member['email'] ?: 'No email' ); ?></small>
-                                                        <?php if ( ! empty( $member['phone'] ) ) : ?>
-                                                            <br><small style="color: #666;">📞 <?php echo esc_html( $member['phone'] ); ?></small>
-                                                        <?php endif; ?>
-                                                    </div>
-                                                <?php endforeach; ?>
-                                            <?php else : ?>
-                                                <p style="color: #999; font-style: italic;">No members assigned yet. Drag users here to assign.</p>
-                                            <?php endif; ?>
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
+                    <div id="allUsersTable">
+                        <?php if ( empty( $all_users ) ) : ?>
+                            <p style="padding: 14px; color: #646970;">No users yet.</p>
                         <?php else : ?>
-                            <p style="color: #666; font-style: italic;">No teams created yet. Add your first team above.</p>
+                            <?php foreach ( $all_users as $user ) :
+                                $uid       = intval( $user['id'] );
+                                $u_active  = ( $user['status'] ?? 'active' ) === 'active';
+                                $u_days    = $ss_by_user[ $uid ] ?? array();
+                                $u_teams   = array();
+                                foreach ( $u_days as $ud ) { $u_teams[ $ud['team_name'] ] = true; }
+                                ?>
+                                <a class="subsales-person<?php echo $uid === $sel_user_id ? ' is-selected' : ''; ?><?php echo $u_active ? '' : ' is-inactive'; ?>"
+                                   href="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $uid; ?>">
+                                    <span class="subsales-person-name"><?php echo esc_html( wp_unslash( $user['name'] ) ); ?><?php echo $u_active ? '' : ' <em>— inactive</em>'; ?></span>
+                                    <span class="subsales-person-meta">
+                                        <?php echo esc_html( $user['phone'] ?: 'no phone' ); ?>
+                                        · <?php echo count( $u_days ) ? count( $u_days ) . ' day' . ( count( $u_days ) === 1 ? '' : 's' ) : 'no days yet'; ?>
+                                        <?php if ( $u_teams ) : ?>· <?php echo esc_html( implode( ', ', array_keys( $u_teams ) ) ); ?><?php endif; ?>
+                                    </span>
+                                </a>
+                            <?php endforeach; ?>
                         <?php endif; ?>
-                        </div>
                     </div>
                 </div>
 
-                <!-- Drag and Drop JavaScript -->
-                <script>
-                (function($) {
-                    $(document).ready(function() {
-                        let draggedElement = null;
+                <div class="subsales-panel subsales-person-detail">
+                    <?php if ( ! $sel_user && ! $adding_user ) : ?>
+                        <div class="subsales-empty">
+                            <h2>Pick a person</h2>
+                            <p>Choose someone on the left to see their details and the days they are selling, or add a new person.</p>
+                        </div>
+                    <?php else : ?>
+                        <div class="subsales-panel-head subsales-detail-head">
+                            <h2><?php echo $sel_user ? esc_html( wp_unslash( $sel_user['name'] ) ) : 'New user'; ?></h2>
+                            <?php if ( $sel_user ) : ?>
+                                <span class="subsales-pill <?php echo ( $sel_user['status'] ?? 'active' ) === 'active' ? 'is-on' : 'is-off'; ?>">
+                                    <?php echo ( $sel_user['status'] ?? 'active' ) === 'active' ? 'Active' : 'Inactive'; ?>
+                                </span>
+                            <?php endif; ?>
+                        </div>
 
-                        // User search box - filters available users
-                        $('#userSearchBox').on('keyup', function() {
-                        const searchTerm = $(this).val().toLowerCase();
-                        $('#availableUsersList .user-card').each(function() {
-                            const text = $(this).text().toLowerCase();
-                            if (text.indexOf(searchTerm) > -1) {
-                                $(this).show();
-                            } else {
-                                $(this).hide();
-                            }
-                        });
-                    });
-                    
-                    // Team search box - filters team boxes
-                    $('#teamSearchBox').on('keyup', function() {
-                        const searchTerm = $(this).val().toLowerCase();
-                        $('.team-box').each(function() {
-                            const teamText = $(this).find('.postbox-header h3').text().toLowerCase();
-                            const membersText = $(this).find('.team-members-list').text().toLowerCase();
-                            const combinedText = teamText + ' ' + membersText;
-                            
-                            if (combinedText.indexOf(searchTerm) > -1) {
-                                $(this).show();
-                            } else {
-                                $(this).hide();
-                            }
-                        });
-                    });
+                        <form method="post" action="?page=subsales-teams&amp;tab=users" class="subsales-detail-form">
+                            <?php if ( $sel_user ) : wp_nonce_field( 'order_sync_edit_user' ); else : wp_nonce_field( 'order_sync_add_user' ); endif; ?>
+                            <input type="hidden" name="user_id" value="<?php echo $sel_user ? intval( $sel_user['id'] ) : 0; ?>" />
+                            <div class="subsales-field-row">
+                                <div>
+                                    <label for="user_name">Name</label>
+                                    <input type="text" id="user_name" name="user_name" value="<?php echo $sel_user ? esc_attr( wp_unslash( $sel_user['name'] ) ) : ''; ?>" required />
+                                </div>
+                                <div>
+                                    <label for="user_phone">Phone</label>
+                                    <input type="text" id="user_phone" name="user_phone" value="<?php echo $sel_user ? esc_attr( $sel_user['phone'] ) : ''; ?>" required />
+                                </div>
+                                <div>
+                                    <label for="user_email">Email</label>
+                                    <input type="email" id="user_email" name="user_email" value="<?php echo $sel_user ? esc_attr( wp_unslash( $sel_user['email'] ) ) : ''; ?>" />
+                                </div>
+                            </div>
+                            <p class="subsales-actions">
+                                <label class="subsales-check"><input type="checkbox" name="user_active" value="1" <?php checked( ! $sel_user || ( $sel_user['status'] ?? 'active' ) === 'active' ); ?> /> Active this season</label>
+                                <button type="submit" name="<?php echo $sel_user ? 'edit_user' : 'add_user'; ?>" class="button button-primary"><?php echo $sel_user ? 'Save details' : 'Create user'; ?></button>
+                                <span class="subsales-hint">Phone is how they sign in on the app. Changing it changes their login.</span>
+                            </p>
+                        </form>
 
-                    // Make user cards draggable
-                    $(document).on('dragstart', '.user-card', function(e) {
-                        draggedElement = this;
-                        $(this).css('opacity', '0.5');
-                        e.originalEvent.dataTransfer.effectAllowed = 'move';
-                        e.originalEvent.dataTransfer.setData('text/html', this.innerHTML);
-                    });
+                        <?php if ( $sel_user ) : ?>
+                            <div class="subsales-days">
+                                <h3>Selling days <span><?php echo count( $sel_days ); ?> this season</span></h3>
 
-                    $(document).on('dragend', '.user-card', function(e) {
-                        $(this).css('opacity', '1');
-                    });
+                                <table class="wp-list-table widefat striped subsales-day-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 200px;">Date</th>
+                                            <th>Team</th>
+                                            <th style="width: 210px;">Driver that day</th>
+                                            <th style="width: 110px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if ( empty( $sel_days ) ) : ?>
+                                            <tr><td colspan="4" style="color: #646970;">Not signed up for any days yet.</td></tr>
+                                        <?php endif; ?>
+                                        <?php foreach ( $sel_days as $d ) :
+                                            $dkey   = $d['team_id'] . '|' . $d['campaign_id'];
+                                            $driver = $ss_drivers[ $dkey ] ?? '';
+                                            ?>
+                                            <tr>
+                                                <td><strong><?php echo esc_html( $ss_day_label( $d['campaign_date'] ) ); ?></strong><?php if ( ! empty( $d['campaign_name'] ) ) : ?><br /><small><?php echo esc_html( $d['campaign_name'] ); ?></small><?php endif; ?></td>
+                                                <td>
+                                                    <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" class="subsales-inline">
+                                                        <?php wp_nonce_field( 'subsales_day_edit' ); ?>
+                                                        <input type="hidden" name="subsales_day_action" value="move" />
+                                                        <input type="hidden" name="day_signup_id" value="<?php echo intval( $d['id'] ); ?>" />
+                                                        <label class="screen-reader-text" for="team-<?php echo intval( $d['id'] ); ?>">Team for this day</label>
+                                                        <select id="team-<?php echo intval( $d['id'] ); ?>" name="day_team_id" onchange="this.form.submit();">
+                                                            <?php foreach ( $ss_teams as $t ) : ?>
+                                                                <option value="<?php echo intval( $t['id'] ); ?>" <?php selected( intval( $t['id'] ), intval( $d['team_id'] ) ); ?>><?php echo esc_html( $t['name'] ); ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select>
+                                                        <noscript><button type="submit" class="button button-small">Move</button></noscript>
+                                                    </form>
+                                                </td>
+                                                <td><?php if ( $driver ) : ?><span class="subsales-driver-on"><?php echo esc_html( $driver ); ?></span><?php else : ?><span class="subsales-driver-off">No driver yet</span><?php endif; ?></td>
+                                                <td>
+                                                    <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" onsubmit="return confirm('Remove this day? A driver who signed up through this seller comes off it too.');">
+                                                        <?php wp_nonce_field( 'subsales_day_edit' ); ?>
+                                                        <input type="hidden" name="subsales_day_action" value="remove" />
+                                                        <input type="hidden" name="day_signup_id" value="<?php echo intval( $d['id'] ); ?>" />
+                                                        <button type="submit" class="button-link subsales-remove">Remove</button>
+                                                    </form>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
 
-                    // Handle drag over team dropzones and available users list
-                    $(document).on('dragover', '.team-dropzone, #availableUsersList', function(e) {
-                        if (e.preventDefault) {
-                            e.preventDefault();
+                                        <tr class="subsales-add-row">
+                                            <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" id="subsales-add-day">
+                                                <?php wp_nonce_field( 'subsales_day_edit' ); ?>
+                                                <input type="hidden" name="subsales_day_action" value="add" />
+                                                <input type="hidden" name="day_user_id" value="<?php echo $sel_user_id; ?>" />
+                                            </form>
+                                            <td>
+                                                <label class="screen-reader-text" for="add_day_campaign">Add a date</label>
+                                                <select id="add_day_campaign" name="day_campaign_id" form="subsales-add-day">
+                                                    <?php foreach ( $ss_campaigns as $c ) : ?>
+                                                        <?php if ( isset( $sel_taken[ intval( $c['id'] ) ] ) ) { continue; } ?>
+                                                        <option value="<?php echo intval( $c['id'] ); ?>"><?php echo esc_html( $ss_day_label( $c['campaign_date'] ) ); ?><?php echo $c['campaign_date'] < $ss_today ? ' (past)' : ''; ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td>
+                                                <label class="screen-reader-text" for="add_day_team">Team for that date</label>
+                                                <select id="add_day_team" name="day_team_id" form="subsales-add-day">
+                                                    <?php foreach ( $ss_teams as $t ) : ?>
+                                                        <option value="<?php echo intval( $t['id'] ); ?>"><?php echo esc_html( $t['name'] ); ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </td>
+                                            <td class="subsales-hint">Set by the driver's own sign-up</td>
+                                            <td><button type="submit" class="button" form="subsales-add-day">Add</button></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+
+                                <div class="subsales-note">
+                                    <strong>Removing a day also removes their driver from it.</strong>
+                                    A parent who signed up through this seller drives with them, so taking a day away here takes the parent off that day too and emails them — the same as when the seller does it themselves.
+                                </div>
+                            </div>
+                        <?php endif; ?>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+        <?php else : ?>
+            <!-- TEAMS TAB: teams that exist, by date -->
+            <?php
+            $open_team = isset( $_GET['team'] ) ? intval( $_GET['team'] ) : ( $editing_team ? intval( $edit_team['id'] ) : 0 );
+
+            // Each team's days, and the next one coming up, so teams with
+            // nothing scheduled sink to the bottom.
+            $team_rows = array();
+            foreach ( $ss_teams as $t ) {
+                $tid  = intval( $t['id'] );
+                $days = array();
+                foreach ( ( $ss_by_team[ $tid ] ?? array() ) as $r ) {
+                    $cid = intval( $r['campaign_id'] );
+                    if ( ! isset( $days[ $cid ] ) ) {
+                        $days[ $cid ] = array( 'date' => $r['campaign_date'], 'name' => $r['campaign_name'], 'sellers' => array() );
+                    }
+                    if ( empty( $r['is_driver'] ) ) {
+                        $days[ $cid ]['sellers'][] = $r['user_name'];
+                    }
+                }
+                $next = '9999-99-99';
+                foreach ( $days as $d ) {
+                    if ( $d['date'] >= $ss_today && $d['date'] < $next ) { $next = $d['date']; }
+                }
+                $sellers = array();
+                foreach ( $days as $d ) { foreach ( $d['sellers'] as $n ) { $sellers[ $n ] = true; } }
+                $team_rows[] = array( 'team' => $t, 'days' => $days, 'next' => $next, 'sellers' => count( $sellers ) );
+            }
+            usort( $team_rows, function( $a, $b ) {
+                if ( $a['next'] === $b['next'] ) { return strcasecmp( $a['team']['name'], $b['team']['name'] ); }
+                return strcmp( $a['next'], $b['next'] );
+            } );
+            ?>
+
+            <div class="subsales-tab-content">
+                <div class="subsales-teams-bar">
+                    <label class="screen-reader-text" for="teamSearchBox">Search teams</label>
+                    <input type="text" id="teamSearchBox" placeholder="Search teams…" />
+                    <span class="subsales-hint"><?php echo count( $team_rows ); ?> team<?php echo count( $team_rows ) === 1 ? '' : 's'; ?> this season · sorted by next selling day</span>
+                    <a href="?page=subsales-teams&amp;tab=teams&amp;new_team=1" class="button button-primary">+ Add Team</a>
+                </div>
+
+                <?php if ( $editing_team || isset( $_GET['new_team'] ) ) : ?>
+                    <div class="subsales-panel subsales-team-form">
+                        <div class="subsales-panel-head"><h2><?php echo $editing_team ? 'Edit team' : 'Add team'; ?></h2></div>
+                        <form method="post" action="?page=subsales-teams&amp;tab=teams" class="subsales-detail-form">
+                            <?php if ( $editing_team ) : wp_nonce_field( 'order_sync_edit_team' ); else : wp_nonce_field( 'order_sync_add_team' ); endif; ?>
+                            <input type="hidden" name="team_id" value="<?php echo $editing_team ? intval( $edit_team['id'] ) : 0; ?>" />
+                            <div class="subsales-field-row">
+                                <div>
+                                    <label for="team_name">Team name</label>
+                                    <input type="text" id="team_name" name="team_name" value="<?php echo $editing_team ? esc_attr( $edit_team['name'] ) : ''; ?>" required />
+                                </div>
+                                <div>
+                                    <label for="team_code">Access code</label>
+                                    <input type="text" id="team_code" name="team_code" value="<?php echo $editing_team ? esc_attr( $edit_team['access_code'] ) : ''; ?>" />
+                                </div>
+                                <div>
+                                    <label for="team_description">Notes</label>
+                                    <input type="text" id="team_description" name="team_description" value="<?php echo $editing_team && isset( $edit_team['description'] ) ? esc_attr( $edit_team['description'] ) : ''; ?>" />
+                                </div>
+                            </div>
+                            <p class="subsales-actions">
+                                <label class="subsales-check"><input type="checkbox" name="team_active" value="1" <?php checked( ! $editing_team || ( $edit_team['status'] ?? 'active' ) === 'active' ); ?> /> Active</label>
+                                <button type="submit" name="<?php echo $editing_team ? 'edit_team' : 'add_team'; ?>" class="button button-primary"><?php echo $editing_team ? 'Save team' : 'Add team'; ?></button>
+                                <a href="?page=subsales-teams&amp;tab=teams" class="button">Cancel</a>
+                            </p>
+                            <div class="subsales-note">
+                                <strong>Who is on this team is not set here.</strong>
+                                Membership is per selling day now — add or remove sellers on a team's days below, or from a person's own page.
+                            </div>
+                        </form>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ( empty( $team_rows ) ) : ?>
+                    <p>No teams yet. A team is created from a seller's sign-up, or with Add Team above.</p>
+                <?php endif; ?>
+
+                <div id="teamsList">
+                    <?php foreach ( $team_rows as $row ) :
+                        $t    = $row['team'];
+                        $tid  = intval( $t['id'] );
+                        $open = $tid === $open_team;
+                        $no_driver_days = 0;
+                        foreach ( $row['days'] as $cid => $d ) {
+                            if ( empty( $ss_drivers[ $tid . '|' . $cid ] ) ) { $no_driver_days++; }
                         }
-                        e.originalEvent.dataTransfer.dropEffect = 'move';
-                        $(this).css('background', '#e8f5e9');
-                        return false;
-                    });
+                        ?>
+                        <div class="subsales-panel subsales-team<?php echo $open ? ' is-open' : ''; ?>" data-team-search="<?php echo esc_attr( strtolower( $t['name'] . ' ' . $t['access_code'] ) ); ?>">
+                            <div class="subsales-panel-head subsales-team-head">
+                                <h2><a href="?page=subsales-teams&amp;tab=teams&amp;team=<?php echo $open ? 0 : $tid; ?>"><?php echo esc_html( $t['name'] ); ?></a></h2>
+                                <code><?php echo esc_html( $t['access_code'] ); ?></code>
+                                <span class="subsales-hint">
+                                    <?php echo count( $row['days'] ); ?> selling day<?php echo count( $row['days'] ) === 1 ? '' : 's'; ?>
+                                    · <?php echo intval( $row['sellers'] ); ?> seller<?php echo intval( $row['sellers'] ) === 1 ? '' : 's'; ?>
+                                    <?php if ( $no_driver_days ) : ?> · <span class="subsales-driver-off"><?php echo $no_driver_days; ?> day<?php echo $no_driver_days === 1 ? '' : 's'; ?> with no driver</span><?php endif; ?>
+                                </span>
+                                <a href="?page=subsales-teams&amp;tab=teams&amp;edit_team=<?php echo $tid; ?>" class="button">Edit team</a>
+                            </div>
 
-                    $(document).on('dragleave', '.team-dropzone, #availableUsersList', function(e) {
-                        $(this).css('background', '');
-                    });
-
-                    // Handle drop
-                    $(document).on('drop', '.team-dropzone', function(e) {
-                        if (e.stopPropagation) {
-                            e.stopPropagation();
-                        }
-                        $(this).css('background', '');
-
-                        if (draggedElement) {
-                            const userId = $(draggedElement).data('user-id');
-                            const teamId = $(this).data('team-id');
-                            
-                            // Add to team via AJAX (don't move visually from available list)
-                            $.post(ajaxurl, {
-                                action: 'subsales_add_user_to_team',
-                                user_id: userId,
-                                team_id: teamId,
-                                nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
-                            }, function(response) {
-                                if (response.success) {
-                                    // Reload to show updated team membership
-                                    location.reload();
-                                } else {
-                                    alert(response.data.message || 'Failed to assign user to team.');
-                                }
-                            });
-                        }
-                        
-                        return false;
-                    });
-
-                    // Handle remove button click
-                    $(document).on('click', '.remove-from-team', function(e) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        
-                        const userId = $(this).data('user-id');
-                        const teamId = $(this).data('team-id');
-                        
-                        if (!confirm('Remove this user from the team?')) {
-                            return;
-                        }
-                        
-                        // Remove from team via AJAX
-                        $.post(ajaxurl, {
-                            action: 'subsales_remove_user_from_team',
-                            user_id: userId,
-                            team_id: teamId,
-                            nonce: '<?php echo wp_create_nonce( 'subsales_team_assign' ); ?>'
-                        }, function(response) {
-                            if (response.success) {
-                                location.reload();
-                            } else {
-                                alert('Failed to remove user from team.');
-                            }
-                        });
-                    });
-                    }); // End document.ready
-                })(jQuery);
-                </script>
+                            <?php if ( $open ) : ?>
+                                <table class="wp-list-table widefat striped subsales-day-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 200px;">Date</th>
+                                            <th>Selling that day</th>
+                                            <th style="width: 240px;">Driver</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if ( empty( $row['days'] ) ) : ?>
+                                            <tr><td colspan="3" style="color: #646970;">Nothing scheduled. Add a day from a person's page.</td></tr>
+                                        <?php endif; ?>
+                                        <?php
+                                        $days = $row['days'];
+                                        uasort( $days, function( $a, $b ) { return strcmp( $a['date'], $b['date'] ); } );
+                                        foreach ( $days as $cid => $d ) :
+                                            $driver = $ss_drivers[ $tid . '|' . $cid ] ?? '';
+                                            ?>
+                                            <tr>
+                                                <td><strong><?php echo esc_html( $ss_day_label( $d['date'] ) ); ?></strong><?php if ( ! empty( $d['name'] ) ) : ?><br /><small><?php echo esc_html( $d['name'] ); ?></small><?php endif; ?></td>
+                                                <td><?php echo $d['sellers'] ? esc_html( implode( ', ', $d['sellers'] ) ) : '<span style="color:#646970;">nobody yet</span>'; ?></td>
+                                                <td><?php if ( $driver ) : ?><span class="subsales-driver-on"><?php echo esc_html( $driver ); ?></span><?php else : ?><span class="subsales-driver-off">Driver missing</span><?php endif; ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
             </div>
         <?php endif; ?>
         
         <style>
+        /* Users tab: people list beside one person's detail */
+        .subsales-users-layout{display:grid;grid-template-columns:320px minmax(0,1fr);gap:18px;margin-top:18px;align-items:start}
+        .subsales-panel{background:#fff;border:1px solid #c3c4c7;border-radius:4px}
+        .subsales-panel-head{padding:14px 16px;border-bottom:1px solid #dcdcde;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+        .subsales-panel-head h2{margin:0;font-size:17px}
+        .subsales-people .subsales-panel-head{flex-direction:column;align-items:stretch;gap:8px}
+        .subsales-people label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#50575e}
+        .subsales-people input[type=text]{width:100%}
+        .subsales-person{display:block;padding:11px 14px;border-bottom:1px solid #f0f0f1;border-left:4px solid transparent;text-decoration:none;color:#1d2327}
+        .subsales-person:hover{background:#f6f7f7}
+        .subsales-person.is-selected{background:#f6f7f7;border-left-color:#2271b1}
+        .subsales-person.is-inactive{opacity:.6}
+        .subsales-person-name{display:block;font-weight:600;font-size:14px}
+        .subsales-person-meta{display:block;font-size:12px;color:#50575e;margin-top:2px}
+        .subsales-empty{padding:40px 24px;text-align:center;color:#50575e}
+        .subsales-empty h2{margin:0 0 6px 0}
+        .subsales-detail-head h2{flex-grow:1}
+        .subsales-pill{font-size:12px;font-weight:600;border-radius:10px;padding:3px 10px}
+        .subsales-pill.is-on{color:#0f5132;background:#e7f5ec;border:1px solid #b6e0c6}
+        .subsales-pill.is-off{color:#50575e;background:#f0f0f1;border:1px solid #dcdcde}
+        .subsales-detail-form{padding:18px 16px;border-bottom:1px solid #dcdcde}
+        .subsales-field-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+        .subsales-field-row label{display:block;font-size:12px;font-weight:600;color:#50575e;margin-bottom:4px}
+        .subsales-field-row input{width:100%}
+        .subsales-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:14px 0 0 0}
+        .subsales-check{font-size:13px}
+        .subsales-hint{font-size:12px;color:#646970}
+        .subsales-days{padding:18px 16px}
+        .subsales-days h3{margin:0 0 10px 0;font-size:15px}
+        .subsales-days h3 span{font-weight:400;color:#646970;font-size:13px;margin-left:8px}
+        .subsales-day-table td{vertical-align:middle}
+        .subsales-inline{display:inline}
+        .subsales-add-row td{background:#f6f7f7}
+        .subsales-remove{color:#b32d2e;text-decoration:none}
+        .subsales-driver-on{color:#0f5132;font-weight:600}
+        .subsales-driver-off{color:#8c4b00;font-weight:600}
+        .subsales-note{margin-top:14px;background:#fcf9e8;border:1px solid #f0e2a1;border-radius:4px;padding:12px 14px;font-size:13px;color:#614700}
+        /* Teams tab */
+        .subsales-teams-bar{display:flex;align-items:center;gap:14px;margin:18px 0 14px 0;flex-wrap:wrap}
+        .subsales-teams-bar input[type=text]{width:260px}
+        .subsales-teams-bar .button-primary{margin-left:auto}
+        .subsales-team{margin-bottom:12px}
+        .subsales-team.is-open{border-left:4px solid #2271b1}
+        .subsales-team-head h2{margin:0;font-size:17px;flex-grow:0}
+        .subsales-team-head h2 a{text-decoration:none}
+        .subsales-team-head .subsales-hint{flex-grow:1}
+        .subsales-team-form{margin-bottom:16px}
+        @media (max-width:1100px){
+            .subsales-users-layout{grid-template-columns:1fr}
+            .subsales-field-row{grid-template-columns:1fr}
+        }
         .nav-tab-wrapper {
             border-bottom: 1px solid #ccc;
             margin: 20px 0 0 0;
@@ -8750,16 +8762,18 @@ function ss_teams_page() {
         <script>
         (function($) {
             $(document).ready(function() {
-                // Search functionality for All Users table
+                // The people list is a list of links now, not table rows.
                 $('#allUsersSearchBox').on('keyup', function() {
-                    const searchTerm = $(this).val().toLowerCase();
-                    $('#allUsersTable tbody tr').each(function() {
-                        const text = $(this).text().toLowerCase();
-                        if (text.indexOf(searchTerm) > -1) {
-                            $(this).show();
-                        } else {
-                            $(this).hide();
-                        }
+                    const q = $(this).val().toLowerCase();
+                    $('#allUsersTable .subsales-person').each(function() {
+                        $(this).toggle($(this).text().toLowerCase().indexOf(q) > -1);
+                    });
+                });
+
+                $('#teamSearchBox').on('keyup', function() {
+                    const q = $(this).val().toLowerCase();
+                    $('#teamsList .subsales-team').each(function() {
+                        $(this).toggle(($(this).data('team-search') || '').indexOf(q) > -1);
                     });
                 });
             });
