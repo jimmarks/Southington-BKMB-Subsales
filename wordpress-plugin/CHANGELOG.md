@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.75.2] - 2026-09-25
+
+### Added
+- **Jump straight to a team from a person's days.** Each row on the Users tab links to that team on the Teams tab, already opened and scrolled to, so you can go from "who is this seller with on Saturday" to the whole team's day without hunting for it. On a seller's row it sits next to the team dropdown; on a driver's row the team name itself is the link.
+
 ## [3.75.1] - 2026-09-25
 
 ### Changed

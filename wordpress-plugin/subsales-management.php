@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.75.1
+ * Version: 3.75.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -8505,7 +8505,7 @@ function ss_teams_page() {
                                                 ?>
                                                 <tr>
                                                     <td><strong><?php echo esc_html( $ss_day_label( $d['campaign_date'] ) ); ?></strong><?php if ( ! empty( $d['campaign_name'] ) ) : ?><br /><small><?php echo esc_html( $d['campaign_name'] ); ?></small><?php endif; ?></td>
-                                                    <td><?php echo esc_html( $d['team_name'] ); ?></td>
+                                                    <td><a href="?page=subsales-teams&amp;tab=teams&amp;team=<?php echo intval( $d['team_id'] ); ?>#team-<?php echo intval( $d['team_id'] ); ?>"><?php echo esc_html( $d['team_name'] ); ?></a></td>
                                                     <td><?php echo $child ? esc_html( $child ) : '<span class="subsales-hint">not linked to a child</span>'; ?></td>
                                                     <td>
                                                         <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" onsubmit="return confirm('Take this parent off driving that day?');">
@@ -8537,6 +8537,10 @@ function ss_teams_page() {
                                                         </select>
                                                         <noscript><button type="submit" class="button button-small">Move</button></noscript>
                                                     </form>
+                                                    <a class="subsales-jump" href="?page=subsales-teams&amp;tab=teams&amp;team=<?php echo intval( $d['team_id'] ); ?>#team-<?php echo intval( $d['team_id'] ); ?>"
+                                                       aria-label="Open <?php echo esc_attr( $d['team_name'] ); ?> on the Teams tab" title="Open <?php echo esc_attr( $d['team_name'] ); ?> on the Teams tab">
+                                                        <span class="dashicons dashicons-external" aria-hidden="true"></span>
+                                                    </a>
                                                 </td>
                                                 <td><?php if ( ! $driver ) : ?><span class="subsales-driver-off">No driver</span><?php endif; ?></td>
                                                 <td>
@@ -8681,7 +8685,7 @@ function ss_teams_page() {
                             if ( empty( $ss_drivers[ $tid . '|' . $cid ] ) ) { $no_driver_days++; }
                         }
                         ?>
-                        <div class="subsales-panel subsales-team<?php echo $open ? ' is-open' : ''; ?>" data-team-search="<?php echo esc_attr( strtolower( $t['name'] . ' ' . $t['access_code'] ) ); ?>">
+                        <div id="team-<?php echo $tid; ?>" class="subsales-panel subsales-team<?php echo $open ? ' is-open' : ''; ?>" data-team-search="<?php echo esc_attr( strtolower( $t['name'] . ' ' . $t['access_code'] ) ); ?>">
                             <div class="subsales-panel-head subsales-team-head">
                                 <h2><a href="?page=subsales-teams&amp;tab=teams&amp;team=<?php echo $open ? 0 : $tid; ?>"><?php echo esc_html( $t['name'] ); ?></a></h2>
                                 <code><?php echo esc_html( $t['access_code'] ); ?></code>
@@ -8774,6 +8778,9 @@ function ss_teams_page() {
         .subsales-teams-bar .button-primary{margin-left:auto}
         .subsales-team{margin-bottom:12px}
         .subsales-team.is-open{border-left:4px solid #2271b1}
+        .subsales-team:target{box-shadow:0 0 0 2px #2271b1}
+        .subsales-jump{margin-left:8px;text-decoration:none;vertical-align:middle;color:#2271b1}
+        .subsales-jump .dashicons{font-size:16px;width:16px;height:16px;line-height:1}
         .subsales-team-head h2{margin:0;font-size:17px;flex-grow:0}
         .subsales-team-head h2 a{text-decoration:none}
         .subsales-team-head .subsales-hint{flex-grow:1}
