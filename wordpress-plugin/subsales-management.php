@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.75.0
+ * Version: 3.75.1
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.0' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.1' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -8377,6 +8377,22 @@ function ss_teams_page() {
             $sel_taken = array();
             foreach ( $sel_days as $d ) { $sel_taken[ intval( $d['campaign_id'] ) ] = true; }
             $adding_user = isset( $_GET['new_user'] );
+
+            // A parent's rows are driver rows. They do not pick a team - they
+            // follow their child - so the screen shows them a different table.
+            $sel_is_driver = false;
+            foreach ( $sel_days as $d ) { if ( ! empty( $d['is_driver'] ) ) { $sel_is_driver = true; break; } }
+
+            // Active by default; inactive people are still reachable.
+            $show_inactive = isset( $_GET['show'] ) && $_GET['show'] === 'all';
+            $people = array();
+            foreach ( $all_users as $u ) {
+                if ( $show_inactive || ( $u['status'] ?? 'active' ) === 'active' || intval( $u['id'] ) === $sel_user_id ) {
+                    $people[] = $u;
+                }
+            }
+            $inactive_total = 0;
+            foreach ( $all_users as $u ) { if ( ( $u['status'] ?? 'active' ) !== 'active' ) { $inactive_total++; } }
             ?>
 
             <div class="subsales-tab-content subsales-users-layout">
@@ -8385,13 +8401,17 @@ function ss_teams_page() {
                     <div class="subsales-panel-head">
                         <label for="allUsersSearchBox">Find a person</label>
                         <input type="text" id="allUsersSearchBox" placeholder="Name, phone or email…" />
+                        <div class="subsales-filter">
+                            <a class="<?php echo $show_inactive ? '' : 'is-on'; ?>" href="?page=subsales-teams&amp;tab=users<?php echo $sel_user_id ? '&amp;user=' . $sel_user_id : ''; ?>">Active</a>
+                            <a class="<?php echo $show_inactive ? 'is-on' : ''; ?>" href="?page=subsales-teams&amp;tab=users&amp;show=all<?php echo $sel_user_id ? '&amp;user=' . $sel_user_id : ''; ?>">All<?php echo $inactive_total ? ' (+' . $inactive_total . ' inactive)' : ''; ?></a>
+                        </div>
                         <a href="?page=subsales-teams&amp;tab=users&amp;new_user=1" class="button button-primary" style="width: 100%; text-align: center;">+ Add New User</a>
                     </div>
                     <div id="allUsersTable">
-                        <?php if ( empty( $all_users ) ) : ?>
-                            <p style="padding: 14px; color: #646970;">No users yet.</p>
+                        <?php if ( empty( $people ) ) : ?>
+                            <p style="padding: 14px; color: #646970;">No <?php echo $show_inactive ? '' : 'active '; ?>users<?php echo $show_inactive ? ' yet' : ' this season'; ?>.</p>
                         <?php else : ?>
-                            <?php foreach ( $all_users as $user ) :
+                            <?php foreach ( $people as $user ) :
                                 $uid       = intval( $user['id'] );
                                 $u_active  = ( $user['status'] ?? 'active' ) === 'active';
                                 $u_days    = $ss_by_user[ $uid ] ?? array();
@@ -8403,7 +8423,11 @@ function ss_teams_page() {
                                     <span class="subsales-person-name"><?php echo esc_html( wp_unslash( $user['name'] ) ); ?><?php echo $u_active ? '' : ' <em>— inactive</em>'; ?></span>
                                     <span class="subsales-person-meta">
                                         <?php echo esc_html( $user['phone'] ?: 'no phone' ); ?>
-                                        · <?php echo count( $u_days ) ? count( $u_days ) . ' day' . ( count( $u_days ) === 1 ? '' : 's' ) : 'no days yet'; ?>
+                                        <?php
+                                        $u_driving = false;
+                                        foreach ( $u_days as $ud ) { if ( ! empty( $ud['is_driver'] ) ) { $u_driving = true; break; } }
+                                        ?>
+                                        · <?php echo count( $u_days ) ? count( $u_days ) . ( $u_driving ? ' driving' : '' ) . ' day' . ( count( $u_days ) === 1 ? '' : 's' ) : 'no days yet'; ?>
                                         <?php if ( $u_teams ) : ?>· <?php echo esc_html( implode( ', ', array_keys( $u_teams ) ) ); ?><?php endif; ?>
                                     </span>
                                 </a>
@@ -8454,14 +8478,14 @@ function ss_teams_page() {
 
                         <?php if ( $sel_user ) : ?>
                             <div class="subsales-days">
-                                <h3>Selling days <span><?php echo count( $sel_days ); ?> this season</span></h3>
+                                <h3><?php echo $sel_is_driver ? 'Driving days' : 'Selling days'; ?> <span><?php echo count( $sel_days ); ?> this season</span></h3>
 
                                 <table class="wp-list-table widefat striped subsales-day-table">
                                     <thead>
                                         <tr>
                                             <th style="width: 200px;">Date</th>
                                             <th>Team</th>
-                                            <th style="width: 210px;">Driver that day</th>
+                                            <th style="width: 210px;"><?php echo $sel_is_driver ? 'Driving for' : ''; ?></th>
                                             <th style="width: 110px;"></th>
                                         </tr>
                                     </thead>
@@ -8469,6 +8493,31 @@ function ss_teams_page() {
                                         <?php if ( empty( $sel_days ) ) : ?>
                                             <tr><td colspan="4" style="color: #646970;">Not signed up for any days yet.</td></tr>
                                         <?php endif; ?>
+                                        <?php // A driver's row: no team control - they go where their child goes. ?>
+                                        <?php if ( $sel_is_driver ) : ?>
+                                            <?php foreach ( $sel_days as $d ) :
+                                                $child = '';
+                                                if ( ! empty( $d['driver_for_user_id'] ) ) {
+                                                    $child = (string) $wpdb->get_var( $wpdb->prepare(
+                                                        "SELECT name FROM {$members_table} WHERE id = %d", intval( $d['driver_for_user_id'] )
+                                                    ) );
+                                                }
+                                                ?>
+                                                <tr>
+                                                    <td><strong><?php echo esc_html( $ss_day_label( $d['campaign_date'] ) ); ?></strong><?php if ( ! empty( $d['campaign_name'] ) ) : ?><br /><small><?php echo esc_html( $d['campaign_name'] ); ?></small><?php endif; ?></td>
+                                                    <td><?php echo esc_html( $d['team_name'] ); ?></td>
+                                                    <td><?php echo $child ? esc_html( $child ) : '<span class="subsales-hint">not linked to a child</span>'; ?></td>
+                                                    <td>
+                                                        <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" onsubmit="return confirm('Take this parent off driving that day?');">
+                                                            <?php wp_nonce_field( 'subsales_day_edit' ); ?>
+                                                            <input type="hidden" name="subsales_day_action" value="remove" />
+                                                            <input type="hidden" name="day_signup_id" value="<?php echo intval( $d['id'] ); ?>" />
+                                                            <button type="submit" class="button-link subsales-remove">Remove</button>
+                                                        </form>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php else : ?>
                                         <?php foreach ( $sel_days as $d ) :
                                             $dkey   = $d['team_id'] . '|' . $d['campaign_id'];
                                             $driver = $ss_drivers[ $dkey ] ?? '';
@@ -8489,7 +8538,7 @@ function ss_teams_page() {
                                                         <noscript><button type="submit" class="button button-small">Move</button></noscript>
                                                     </form>
                                                 </td>
-                                                <td><?php if ( $driver ) : ?><span class="subsales-driver-on"><?php echo esc_html( $driver ); ?></span><?php else : ?><span class="subsales-driver-off">No driver yet</span><?php endif; ?></td>
+                                                <td><?php if ( ! $driver ) : ?><span class="subsales-driver-off">No driver</span><?php endif; ?></td>
                                                 <td>
                                                     <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" onsubmit="return confirm('Remove this day? A driver who signed up through this seller comes off it too.');">
                                                         <?php wp_nonce_field( 'subsales_day_edit' ); ?>
@@ -8500,7 +8549,9 @@ function ss_teams_page() {
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
+                                        <?php endif; ?>
 
+                                        <?php if ( ! $sel_is_driver ) : ?>
                                         <tr class="subsales-add-row">
                                             <form method="post" action="?page=subsales-teams&amp;tab=users&amp;user=<?php echo $sel_user_id; ?>" id="subsales-add-day">
                                                 <?php wp_nonce_field( 'subsales_day_edit' ); ?>
@@ -8527,10 +8578,11 @@ function ss_teams_page() {
                                             <td class="subsales-hint">Set by the driver's own sign-up</td>
                                             <td><button type="submit" class="button" form="subsales-add-day">Add</button></td>
                                         </tr>
+                                        <?php endif; ?>
                                     </tbody>
                                 </table>
 
-                                <div class="subsales-note">
+                                <div class="subsales-note"<?php echo $sel_is_driver ? ' style="display:none"' : ''; ?>>
                                     <strong>Removing a day also removes their driver from it.</strong>
                                     A parent who signed up through this seller drives with them, so taking a day away here takes the parent off that day too and emails them — the same as when the seller does it themselves.
                                 </div>
@@ -8690,6 +8742,9 @@ function ss_teams_page() {
         .subsales-person.is-inactive{opacity:.6}
         .subsales-person-name{display:block;font-weight:600;font-size:14px}
         .subsales-person-meta{display:block;font-size:12px;color:#50575e;margin-top:2px}
+        .subsales-filter{display:flex;gap:6px}
+        .subsales-filter a{flex:1 1 auto;text-align:center;font-size:12px;padding:5px 8px;border:1px solid #dcdcde;border-radius:3px;text-decoration:none;color:#50575e;background:#f6f7f7}
+        .subsales-filter a.is-on{background:#2271b1;border-color:#2271b1;color:#fff;font-weight:600}
         .subsales-empty{padding:40px 24px;text-align:center;color:#50575e}
         .subsales-empty h2{margin:0 0 6px 0}
         .subsales-detail-head h2{flex-grow:1}

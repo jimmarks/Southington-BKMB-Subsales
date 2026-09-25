@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.75.1] - 2026-09-25
+
+### Changed
+- **A parent's record no longer pretends they are a seller.** Opening a driver showed "Selling days", a team dropdown on every row, and named them as their own driver. They now get "Driving days" — the date, the team, and which child they are driving for — with no team control, because a parent follows their child rather than picking a team.
+- **A seller's days no longer name the driver**, which is team information and is on the Teams tab. The column now only speaks up when it matters: an amber "No driver" on a day nobody is driving.
+- **The people list shows active people by default**, with an All toggle that brings in inactive ones and says how many there are. Whoever is currently open stays visible either way.
+
+### Fixed
+- An admin could move a parent to a different team from the parent's own record, leaving them driving for a team their child is not on. The control is gone for drivers.
+
 ## [3.75.0] - 2026-09-25
 
 ### Changed
