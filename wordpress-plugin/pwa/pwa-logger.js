@@ -151,7 +151,22 @@
          */
         async snapshot(reason) {
             if (!this.debugEnabled) { return; }
+            try {
+                await this._snapshot(reason);
+            } catch (e) {
+                // Never let a snapshot fail silently: an unhandled rejection in
+                // here looks exactly like "logging is not working", which is
+                // the thing this whole feature exists to rule out.
+                this.log('device', 'Device snapshot failed', {
+                    reason: reason || 'manual',
+                    error: (e && e.message) || String(e),
+                    stack: (e && e.stack) ? String(e.stack).slice(0, 400) : null,
+                    user_agent: navigator.userAgent
+                });
+            }
+        },
 
+        async _snapshot(reason) {
             const nav = navigator || {};
             const out = {
                 reason: reason || 'manual',
@@ -269,6 +284,9 @@
 
             this.log('device', 'Device snapshot (' + out.reason + ')', out);
         },
+
+        // Fire one on demand, from the console or a future admin button.
+        snapshotNow(reason) { return this.snapshot(reason || 'on demand'); },
 
         // One snapshot immediately, then every five minutes while watched: a
         // battery draining, a network degrading or a permission being revoked
