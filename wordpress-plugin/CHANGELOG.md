@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.78.1] - 2026-09-29
+
+### Fixed
+- **Events in the first seconds of a session were thrown away even when that person was being logged.** Whether logging is on is only known once the app has asked the server, and anything recorded before the answer arrives was discarded &mdash; including the location prompt, which happens at login. Watching someone and still catching nothing is the worst possible outcome for a debug tool. Those events are now held and sent once the answer comes back, marked as having happened earlier.
+
 ## [3.78.0] - 2026-09-29
 
 ### Fixed

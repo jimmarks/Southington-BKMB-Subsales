@@ -13,6 +13,7 @@
         sessionId: '',
         initialized: false,
         _uiInstrumented: false,
+        _pending: [],
 
         /**
          * Initialize the logger with API configuration
@@ -48,6 +49,7 @@
                     // Check both formats for compatibility
                     this.debugEnabled = data.debugLoggingEnabled || data.debug_logging_enabled || false;
                     this.initialized = true;
+                    this.flushPending();
                     
                     console.warn('[PWA Logger] Initialized with debugEnabled:', this.debugEnabled, 'from config data:', data);
 
@@ -94,6 +96,7 @@
         updateDebugStatus(enabled) {
             const wasEnabled = this.debugEnabled;
             this.debugEnabled = !!enabled;
+            if (this.debugEnabled) { this.flushPending(); }
             
             console.warn('[PWA Logger] updateDebugStatus called - was:', wasEnabled, 'now:', this.debugEnabled);
             
@@ -114,11 +117,28 @@
         async log(category, message, context = {}) {
             console.warn('[PWA Logger] log() called:', {category, message, debugEnabled: this.debugEnabled, initialized: this.initialized});
             
+            // Hold rather than drop. Whether logging is on is only known once
+            // /config comes back, and the interesting events - the GPS prompt
+            // above all - happen in the seconds before that. Dropping them meant
+            // watching someone and still catching nothing: exactly what happened
+            // on 2026-09-29, GPS asked at 19:23:48, logging on at 19:24:04.
             if (!this.debugEnabled || !this.initialized) {
-                console.warn('[PWA Logger] Skipping log - debugEnabled:', this.debugEnabled, 'initialized:', this.initialized);
+                this._pending.push({ category, message, context, held_at: new Date().toISOString() });
+                if (this._pending.length > 50) { this._pending.shift(); }
                 return;
             }
+            this._send(category, message, context);
+        },
 
+        // Anything held from before logging was known to be on, oldest first.
+        flushPending() {
+            if (!this.debugEnabled || !this.initialized || !this._pending.length) { return; }
+            const held = this._pending.splice(0, this._pending.length);
+            held.forEach(e => this._send(e.category, e.message,
+                Object.assign({}, e.context, { held_before_logging_was_on: true, happened_at: e.held_at })));
+        },
+
+        _send(category, message, context = {}) {
             try {
                 const logData = {
                     level: 'DEBUG',
