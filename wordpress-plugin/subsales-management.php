@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.78.1
+ * Version: 3.78.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.78.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.78.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -6757,9 +6757,20 @@ function subsales_logs_page() {
             });
         });
         
-        // View context modal
-        $('.view-context-btn').on('click', function() {
+        // View context modal.
+        // Delegated, not bound to the buttons present at load: the live tail
+        // prepends rows as they arrive, and those buttons had no handler, so
+        // View did nothing on exactly the rows someone is watching for.
+        $(document).on('click', '.view-context-btn', function() {
             let context = $(this).data('context');
+            if (context === undefined || context === null || context === '') {
+                context = $(this).attr('data-context') || '';
+            }
+            if (context === '' ) {
+                $('#context-content').text('This entry has no extra detail recorded.');
+                $('#context-modal').css('display', 'flex');
+                return;
+            }
             
             // If context is already an object (jQuery auto-parsed it), stringify it
             if (typeof context === 'object') {
