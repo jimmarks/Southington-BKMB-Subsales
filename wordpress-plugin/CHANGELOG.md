@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.77.1] - 2026-09-29
+
+### Fixed
+- **A parent could sign up as a driver using their own details where the child's belong.** Drivers are stored alongside sellers, so entering a parent's own name and phone found them and offered their *driving* days as days to drive &mdash; an adult could attach themselves to themselves, or to another parent, and end up in the season with no child behind them. Only a seller's own selling days can be driven now, checked both when looking the child up and when the registration is actually written.
+
 ## [3.77.0] - 2026-09-29
 
 ### Fixed

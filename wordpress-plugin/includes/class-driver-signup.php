@@ -124,7 +124,19 @@ class Subsales_Driver_Signup {
             );
         }
 
-        if ( empty( $lookup['signups'] ) ) {
+        // A driver is a member with a name and phone like anyone else, so their
+        // own details entered here found them and offered their DRIVING days as
+        // days to drive: an adult could link themselves to themselves, or to
+        // another parent, and end up in the season with no child behind them.
+        // Only a seller's own selling days can be driven.
+        $selling = array();
+        foreach ( $lookup['signups'] as $sig ) {
+            if ( empty( $sig['is_driver'] ) ) {
+                $selling[] = $sig;
+            }
+        }
+
+        if ( empty( $selling ) ) {
             return new WP_Error(
                 'no_signups',
                 "Your child hasn't signed up yet, have them complete their signup first.",
@@ -135,7 +147,7 @@ class Subsales_Driver_Signup {
         // A day that already has a driver is shown, not offered: the parent
         // sees who is driving and their number, so the two can sort it out
         // between themselves. Only after proving the child's name + phone.
-        $signups = $lookup['signups'];
+        $signups = $selling;
         foreach ( $signups as &$sig ) {
             $d = Subsales_Database::get_campaign_team_roster( intval( $sig['team_id'] ), intval( $sig['campaign_id'] ) )['driver'];
             $sig['driver_name']  = $d ? $d['name'] : '';
@@ -189,9 +201,17 @@ class Subsales_Driver_Signup {
             return new WP_Error( 'child_not_found', "We couldn't find a child with that phone number.", array( 'status' => 404 ) );
         }
 
+        // Same rule as the lookup: only the child's own selling days may be
+        // driven. This is the check that matters - the lookup is a convenience,
+        // this is what actually writes rows.
         $allowed = array();
         foreach ( $lookup['signups'] as $s ) {
-            $allowed[ intval( $s['team_id'] ) . ':' . intval( $s['campaign_id'] ) ] = true;
+            if ( empty( $s['is_driver'] ) ) {
+                $allowed[ intval( $s['team_id'] ) . ':' . intval( $s['campaign_id'] ) ] = true;
+            }
+        }
+        if ( empty( $allowed ) ) {
+            return new WP_Error( 'child_not_found', "We couldn't find a child with that name and phone number.", array( 'status' => 404 ) );
         }
 
         // Validate selections against the allow-set, group campaigns by team
