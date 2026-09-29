@@ -1150,9 +1150,12 @@
           // not ask twice - once a kid taps "Don't Allow" at a doorstep the
           // prompt never comes back, and "enable location in your browser
           // settings" is not a usable instruction for a twelve year old.
+          // The last line is the get-out for the case the settings do not fix:
+          // Safari on an older iPhone can report Allow and still refuse, and a
+          // seller at a door needs somewhere to go rather than a dead end.
           errorMsg = isIOS()
-            ? 'Location is turned off for this site.\n\nTap the "aA" or page icon at the left of the address bar, choose Website Settings, and set Location to Allow. Then tap this button again.'
-            : 'Location is turned off for this site.\n\nTap the padlock or the icon at the left of the address bar, turn Location on, then tap this button again.';
+            ? 'Location is turned off for this site.\n\nTap the "aA" or page icon at the left of the address bar, choose Website Settings, and set Location to Allow. Then tap this button again.\n\nIf Location already says Allow and it still will not work, install the Chrome app from the App Store and open the sub sale in Chrome instead. You can still type the address in by hand.'
+            : 'Location is turned off for this site.\n\nTap the padlock or the icon at the left of the address bar, turn Location on, then tap this button again.\n\nIf Location is already allowed and it still will not work, try the Chrome browser instead. You can still type the address in by hand.';
           btn.innerHTML = '🚫 Location off';
           btn.style.background = '#f8d7da';
           btn.style.color = '#721c24';
