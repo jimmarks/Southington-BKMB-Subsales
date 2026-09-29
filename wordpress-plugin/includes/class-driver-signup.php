@@ -112,22 +112,15 @@ class Subsales_Driver_Signup {
 
         $lookup = Subsales_Database::get_member_signups_by_phone( $child_phone );
 
-        if ( ! $lookup['user'] ) {
+        // One answer for "no such number" and "wrong name for that number".
+        // Telling them apart said which numbers belong to a real child, so a
+        // guesser could collect working numbers and then try common names.
+        $child_actual_name = $lookup['user'] ? $lookup['user']['name'] : '';
+        if ( ! $lookup['user'] || ! self::name_matches( $child_name, $child_actual_name ) ) {
             return new WP_Error(
                 'child_not_found',
-                "We couldn't find a child with that phone number. Have them complete their signup first.",
+                "We couldn't find a child with that name and phone number. Check both, and make sure they have finished their own signup first.",
                 array( 'status' => 404 )
-            );
-        }
-
-        // Name match: case-insensitive partial, both directions
-        $child_actual_name = $lookup['user']['name'];
-        if ( stripos( $child_actual_name, $child_name ) === false
-            && stripos( $child_name, $child_actual_name ) === false ) {
-            return new WP_Error(
-                'name_mismatch',
-                'The name does not match the phone number on file.',
-                array( 'status' => 401 )
             );
         }
 
@@ -352,7 +345,7 @@ class Subsales_Driver_Signup {
         $m = $wpdb->get_row( $wpdb->prepare(
             "SELECT id, name FROM {$wpdb->prefix}ss_team_members WHERE phone = %s", $phone
         ), ARRAY_A );
-        if ( ! $m || ( stripos( $m['name'], $name ) === false && stripos( $name, $m['name'] ) === false ) ) {
+        if ( ! $m || ! self::name_matches( $name, $m['name'] ) ) {
             // One message for both: which half was wrong is not ours to confirm.
             return new WP_Error( 'not_found', 'We could not find a driver with that name and phone number.', array( 'status' => 404 ) );
         }
@@ -388,6 +381,43 @@ class Subsales_Driver_Signup {
         }
         $label = date_i18n( 'l, F j, Y', strtotime( $c['campaign_date'] ) );
         return $c['campaign_name'] ? $label . ' (' . $c['campaign_name'] . ')' : $label;
+    }
+
+    /**
+     * Does the typed name really belong to this record?
+     *
+     * This used to be "either string contains the other", which passed on a
+     * single letter: with a valid phone number, "a" returned the child's full
+     * name and every day they are selling. The phone is the secret; the name
+     * has to be a real second factor, not a formality.
+     *
+     * Accepts the full name in any word order, or one whole word of it of at
+     * least three letters - so a parent typing "Mike" for "Mike Miceli" is
+     * fine, while "M" or "a" is not.
+     */
+    public static function name_matches( $typed, $actual ) {
+        $norm = function( $v ) {
+            $v = strtolower( remove_accents( (string) $v ) );
+            $v = preg_replace( '/[^a-z ]+/', ' ', $v );
+            return array_values( array_filter( explode( ' ', $v ), 'strlen' ) );
+        };
+        $t = $norm( $typed );
+        $a = $norm( $actual );
+        if ( ! $t || ! $a ) {
+            return false;
+        }
+
+        $ts = $t; $as = $a;
+        sort( $ts ); sort( $as );
+        if ( $ts === $as ) {
+            return true;   // same words, any order
+        }
+
+        if ( count( $t ) === 1 && strlen( $t[0] ) >= 3 && in_array( $t[0], $a, true ) ) {
+            return true;   // one whole name word, e.g. "Mike" of "Mike Miceli"
+        }
+
+        return false;
     }
 
     /** 8605551234 -> (860) 555-1234; anything else unchanged. */

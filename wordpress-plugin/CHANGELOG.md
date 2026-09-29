@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.76.1] - 2026-09-29
+
+### Security
+- **The name on the driver sign-up is now a real check.** It used to pass whenever either name contained the other, so with a working phone number the single letter "a" returned a child's full name and every day they are selling. It now wants the child's full name in any order, or one whole word of it &mdash; "Mike" for Mike Miceli is fine, "M" is not.
+- **A wrong name and an unused phone number now give exactly the same answer.** They used to differ, which told anyone guessing which numbers belonged to a real child, so working numbers could be collected first and names guessed afterwards.
+
 ## [3.76.0] - 2026-09-29
 
 ### Added
