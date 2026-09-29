@@ -17,12 +17,21 @@
    page enough for the scrollbar to vanish - and everything then jumps sideways
    by its width, which reads as a stray right margin. Same jump happened when
    the QR panel set overflow:hidden. */
-html{scrollbar-gutter:stable}
-html,body{margin:0;padding:0;width:100%;height:100%;overflow-x:hidden;-webkit-overflow-scrolling:touch;
+html{scrollbar-gutter:stable;overflow-x:hidden}
+/* height:100% here made body a fixed-height box the height of the viewport:
+   with overflow-x:hidden that forces overflow-y:auto, so the page was clipped
+   at one screen and the rest scrolled inside body. The safe-area padding below
+   then sat OUTSIDE that height (no border-box), adding ~90px that painted as a
+   white band under the content - which is what iOS Chrome was showing. Grow
+   with the content instead, and count the padding inside the height. Kept to
+   html/body deliberately - a global box-sizing reset would restyle every
+   element in the app to fix a bug that only involves this one box. */
+html,body{margin:0;padding:0;width:100%;min-height:100%;box-sizing:border-box;
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased}
 input,select,textarea,button{font-family:inherit}
-body{padding-top:var(--safe-area-inset-top);padding-bottom:var(--safe-area-inset-bottom);padding-left:var(--safe-area-inset-left);padding-right:var(--safe-area-inset-right)}
+/* 100dvh tracks the collapsing address bar on iOS; 100% is the fallback. */
+body{min-height:100dvh;padding-top:var(--safe-area-inset-top);padding-bottom:var(--safe-area-inset-bottom);padding-left:var(--safe-area-inset-left);padding-right:var(--safe-area-inset-right)}
 .sm-root{--sm-primary:#2d6cdf}
 .sm-btn{background:var(--sm-primary);color:#fff;border:none;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600;box-shadow:0 6px 18px rgba(45,108,223,0.18);transition:transform .08s ease,box-shadow .12s ease}
 .sm-btn:active{transform:translateY(1px)}

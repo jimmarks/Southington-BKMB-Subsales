@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.75.3] - 2026-09-29
+
+### Fixed
+- **A white band under the order form on iPhone.** The page set the body to exactly one screen tall, which combined with hiding sideways overflow meant the form was clipped at one screen and scrolled inside that box, and the notch/home-bar padding sat outside the height and painted as empty white below the content. Reported on Chrome for iPhone; every iOS browser was affected. The page now grows with the form.
+
 ## [3.75.2] - 2026-09-25
 
 ### Added
