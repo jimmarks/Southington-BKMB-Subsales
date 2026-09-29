@@ -1124,6 +1124,12 @@
             user_agent: navigator.userAgent
           };
           window.PWALogger.log('gps', 'Use my location failed', gctx);
+          // The full picture at the moment it failed: battery, network,
+          // permissions, storage, service worker. Cheap, and it saves a
+          // round trip of "what does their phone say?"
+          if (typeof window.PWALogger.snapshot === 'function') {
+            window.PWALogger.snapshot('use-my-location failed');
+          }
           // Asked separately: the browser can say denied even when it never
           // prompted, which is the iOS "Location Services off for the app" case.
           try {

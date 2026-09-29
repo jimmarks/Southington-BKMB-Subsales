@@ -14,6 +14,7 @@
         initialized: false,
         _uiInstrumented: false,
         _pending: [],
+        _snapshotTimer: null,
 
         /**
          * Initialize the logger with API configuration
@@ -50,6 +51,7 @@
                     this.debugEnabled = data.debugLoggingEnabled || data.debug_logging_enabled || false;
                     this.initialized = true;
                     this.flushPending();
+                    this.startSnapshots('logging on at startup');
                     
                     console.warn('[PWA Logger] Initialized with debugEnabled:', this.debugEnabled, 'from config data:', data);
 
@@ -96,7 +98,12 @@
         updateDebugStatus(enabled) {
             const wasEnabled = this.debugEnabled;
             this.debugEnabled = !!enabled;
-            if (this.debugEnabled) { this.flushPending(); }
+            if (this.debugEnabled) {
+                this.flushPending();
+                this.startSnapshots('logging switched on');
+            } else {
+                this.stopSnapshots();
+            }
             
             console.warn('[PWA Logger] updateDebugStatus called - was:', wasEnabled, 'now:', this.debugEnabled);
             
@@ -128,6 +135,154 @@
                 return;
             }
             this._send(category, message, context);
+        },
+
+        /**
+         * Everything about this device worth knowing when someone is being
+         * watched: what it is, what it can do, what it is allowed to do, and
+         * what shape the network and storage are in.
+         *
+         * Nothing here prompts the person for anything. Location is read only
+         * when the browser already says permission is granted - asking would
+         * put a dialog in front of a seller standing at a door.
+         *
+         * Deliberately carries no customer or seller detail: this is about the
+         * device. Names, numbers and addresses stay out of the debug log.
+         */
+        async snapshot(reason) {
+            if (!this.debugEnabled) { return; }
+
+            const nav = navigator || {};
+            const out = {
+                reason: reason || 'manual',
+                app_version: ((window.SUBSALES_PWA_CONFIG || {}).assetVersion) || null,
+                url: window.location.href,
+
+                // Device and browser
+                user_agent: nav.userAgent,
+                platform: nav.platform || null,
+                languages: (nav.languages || []).join(',') || nav.language || null,
+                device_memory_gb: nav.deviceMemory || null,
+                cpu_cores: nav.hardwareConcurrency || null,
+                touch_points: nav.maxTouchPoints || null,
+
+                // How it is being run
+                installed_to_home_screen: !!(nav.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+                secure_context: window.isSecureContext,
+                screen: (window.screen ? (window.screen.width + 'x' + window.screen.height) : null),
+                viewport: window.innerWidth + 'x' + window.innerHeight,
+                pixel_ratio: window.devicePixelRatio || null,
+                orientation: (window.screen && window.screen.orientation && window.screen.orientation.type) || null,
+                dark_mode: !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches),
+                reduced_motion: !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+
+                // Time - a wrong clock breaks token expiry and looks like nothing else
+                timezone: (Intl.DateTimeFormat().resolvedOptions().timeZone || null),
+                device_time: new Date().toISOString(),
+
+                // Network
+                online: nav.onLine,
+            };
+
+            const conn = nav.connection || nav.mozConnection || nav.webkitConnection;
+            if (conn) {
+                out.network_type = conn.effectiveType || conn.type || null;
+                out.downlink_mbps = conn.downlink || null;
+                out.rtt_ms = conn.rtt || null;
+                out.save_data = !!conn.saveData;
+            }
+
+            // Battery: Chrome on Android has it, iOS does not. Its absence is
+            // itself worth recording rather than a silent gap.
+            try {
+                if (nav.getBattery) {
+                    const b = await nav.getBattery();
+                    out.battery_percent = Math.round(b.level * 100);
+                    out.battery_charging = b.charging;
+                } else {
+                    out.battery_percent = 'unsupported';
+                }
+            } catch (e) { out.battery_percent = 'error'; }
+
+            // What the browser will allow, without asking for anything
+            try {
+                if (nav.permissions && nav.permissions.query) {
+                    const names = ['geolocation', 'notifications', 'camera', 'persistent-storage'];
+                    for (const name of names) {
+                        try {
+                            const st = await nav.permissions.query({ name: name });
+                            out['permission_' + name.replace('-', '_')] = st.state;
+                        } catch (e) { out['permission_' + name.replace('-', '_')] = 'unqueryable'; }
+                    }
+                }
+            } catch (e) {}
+
+            // Where it is - only if already permitted, never prompting
+            try {
+                if (out.permission_geolocation === 'granted' && nav.geolocation) {
+                    const pos = await new Promise((res, rej) => {
+                        nav.geolocation.getCurrentPosition(res, rej, { timeout: 8000, maximumAge: 60000 });
+                    });
+                    out.gps_lat = pos.coords.latitude;
+                    out.gps_lng = pos.coords.longitude;
+                    out.gps_accuracy_m = Math.round(pos.coords.accuracy);
+                    out.gps_age_ms = Date.now() - pos.timestamp;
+                }
+            } catch (e) {
+                out.gps_error_code = e && e.code;
+                out.gps_error_message = e && e.message;
+            }
+
+            // Storage - a full or evicted store is why offline orders vanish
+            try {
+                if (nav.storage && nav.storage.estimate) {
+                    const est = await nav.storage.estimate();
+                    out.storage_used_mb = Math.round((est.usage || 0) / 1048576);
+                    out.storage_quota_mb = Math.round((est.quota || 0) / 1048576);
+                }
+                if (nav.storage && nav.storage.persisted) {
+                    out.storage_persisted = await nav.storage.persisted();
+                }
+            } catch (e) {}
+
+            // Service worker and caches - stale code is a whole class of "it
+            // works for me" that this answers in one line.
+            try {
+                if (nav.serviceWorker) {
+                    const reg = await nav.serviceWorker.getRegistration();
+                    out.service_worker = reg ? (reg.active ? 'active' : (reg.installing ? 'installing' : 'waiting')) : 'none';
+                    out.service_worker_scope = reg ? reg.scope : null;
+                    out.service_worker_waiting = !!(reg && reg.waiting);
+                }
+                if (window.caches && caches.keys) {
+                    out.cache_names = (await caches.keys()).join(',');
+                }
+            } catch (e) {}
+
+            // Queued offline work, counted not read - the contents are orders
+            try {
+                if (window.SubsalesStorage && typeof window.SubsalesStorage.allQueuedOps === 'function') {
+                    const ops = await window.SubsalesStorage.allQueuedOps();
+                    out.queued_operations = Array.isArray(ops) ? ops.length : null;
+                }
+            } catch (e) {}
+
+            this.log('device', 'Device snapshot (' + out.reason + ')', out);
+        },
+
+        // One snapshot immediately, then every five minutes while watched: a
+        // battery draining, a network degrading or a permission being revoked
+        // mid-shift are exactly the things a single snapshot at login misses.
+        startSnapshots(reason) {
+            if (!this.debugEnabled || this._snapshotTimer) { return; }
+            this.snapshot(reason);
+            this._snapshotTimer = setInterval(() => {
+                if (this.debugEnabled) { this.snapshot('periodic'); } else { this.stopSnapshots(); }
+            }, 300000);
+        },
+
+        stopSnapshots() {
+            if (this._snapshotTimer) { clearInterval(this._snapshotTimer); this._snapshotTimer = null; }
         },
 
         // Anything held from before logging was known to be on, oldest first.

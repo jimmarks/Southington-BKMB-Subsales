@@ -1194,6 +1194,11 @@
   return { add, all, remove, get, update, queueOperation, allQueuedOps, removeQueuedOp, opsClear };
   })();
 
+  // Read-only handle for the debug snapshot, which counts queued offline work.
+  // It never reads the contents: those are orders, and the debug log is not
+  // the place for customer details.
+  try { window.SubsalesStorage = Storage; } catch(e) {}
+
   // Elements
   const loginSection = qs('#loginSection');
   const appSection = qs('#appSection');

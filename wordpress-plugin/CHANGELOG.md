@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.80.0] - 2026-09-29
+
+### Added
+- **A full device snapshot whenever someone is being logged.** One entry covering the phone and everything around it: battery level and whether it is charging, network type, speed and round-trip time, whether it is online, what the browser will and will not allow (location, notifications, camera, storage), where it is if location is already permitted, screen and window size, dark mode, time zone and the device's own clock, free and used storage, which app version and service worker it is running, and how many orders are still waiting to sync. Taken when logging starts, again every five minutes, and immediately when a location attempt fails.
+- It never asks the seller for anything &mdash; location is read only when already permitted, so no dialog appears at a doorstep &mdash; and it carries no customer or seller details. Queued orders are counted, never read.
+
 ## [3.79.0] - 2026-09-29
 
 ### Added
