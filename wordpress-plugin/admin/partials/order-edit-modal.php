@@ -75,6 +75,15 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
                         </tr>
                     </table>
                     
+                    <!-- Square's own record of a digital order. Hidden for cash and
+                         check; filled from order.digital_payment on open. -->
+                    <div id="subsales-payment-panel" class="subsales-payment-panel" style="display:none">
+                        <h3>Digital payment <span id="subsales-payment-status" class="subsales-pay-badge"></span></h3>
+                        <table class="subsales-pay-table">
+                            <tbody id="subsales-payment-rows"></tbody>
+                        </table>
+                    </div>
+
                     <h3 class="subsales-products-heading">Products</h3>
                     <div class="subsales-products-group">
                         <table class="form-table">
@@ -263,6 +272,16 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
         .subsales-modal-footer { padding: 16px 24px; border-top: 1px solid #ddd; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
         .subsales-modal-footer button { margin-left: 0; }
         
+        .subsales-payment-panel { border: 1px solid #dcdcde; border-left: 4px solid #2271b1; border-radius: 4px; padding: 12px 16px; margin: 16px 0; background: #f6f7f7; }
+        .subsales-payment-panel h3 { margin: 0 0 8px 0; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+        .subsales-pay-badge { font-size: 12px; font-weight: 700; border-radius: 10px; padding: 3px 10px; }
+        .subsales-pay-badge.is-ok { color: #0f5132; background: #e7f5ec; border: 1px solid #b6e0c6; }
+        .subsales-pay-badge.is-warn { color: #614700; background: #fcf9e8; border: 1px solid #f0e2a1; }
+        .subsales-pay-badge.is-bad { color: #8a1f1c; background: #fcf0f0; border: 1px solid #f0c0be; }
+        .subsales-pay-table { border-collapse: collapse; }
+        .subsales-pay-table th { text-align: left; font-weight: 600; color: #50575e; padding: 3px 18px 3px 0; white-space: nowrap; font-size: 13px; }
+        .subsales-pay-table td { padding: 3px 0; font-size: 13px; }
+        .subsales-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
         .subsales-history-panel { position: fixed; top: 0; right: 0; width: 500px; height: 100%; background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.3); z-index: 100001; overflow-y: auto; }
         .subsales-history-header { padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: white; }
         .subsales-history-content { padding: 20px; }
@@ -488,6 +507,8 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
                         console.log('Order already refunded:', order.refund_id);
                     }
                 }
+
+                this.renderPaymentPanel(order.digital_payment);
 
                 // Show modal
                 document.getElementById('subsales-edit-modal').style.display = 'block';
@@ -850,6 +871,64 @@ define( 'SUBSALES_ORDER_EDIT_MODAL_RENDERED', true );
         /**
          * Claim edit lock on an order
          */
+        // What Square came back with, so an admin can confirm a digital order
+        // settled without leaving WordPress. Ids and amounts come from our own
+        // attempts table, written from the webhook - not from the order the
+        // seller's device sent, which can claim anything.
+        renderPaymentPanel(pay) {
+            const panel = document.getElementById('subsales-payment-panel');
+            const rows  = document.getElementById('subsales-payment-rows');
+            const badge = document.getElementById('subsales-payment-status');
+            if (!panel || !rows) { return; }
+
+            if (!pay) { panel.style.display = 'none'; rows.innerHTML = ''; return; }
+
+            const label = {
+                paid: 'Successful', cancelled_by_seller: 'Cancelled by seller',
+                expired: 'Expired', failed: 'Failed', refunded: 'Refunded',
+                initiated: 'Never completed'
+            }[pay.status] || pay.status;
+            badge.textContent = label;
+            badge.className = 'subsales-pay-badge ' + (pay.status === 'paid' ? 'is-ok'
+                : (pay.status === 'refunded' ? 'is-warn' : 'is-bad'));
+
+            const money = v => '$' + (v || '0.00');
+            const when  = v => v ? String(v).replace('T', ' ') : '\u2014';
+            const out = [];
+            const add = (k, v, mono) => {
+                if (v === '' || v === null || v === undefined) { return; }
+                const th = document.createElement('th');
+                th.textContent = k;
+                const td = document.createElement('td');
+                if (mono) { td.className = 'subsales-mono'; }
+                td.textContent = v;   // textContent: these are ids, never markup
+                const tr = document.createElement('tr');
+                tr.appendChild(th); tr.appendChild(td);
+                out.push(tr);
+            };
+
+            add('Amount charged', money(pay.total));
+            if (parseFloat(pay.fee) > 0) {
+                add('of which subtotal', money(pay.subtotal));
+                add('of which fee', money(pay.fee));
+            }
+            add('Square payment ID', pay.payment_id || '\u2014 none returned \u2014', true);
+            add('Square order ID', pay.order_id || '', true);
+            add('Checkout ID', pay.checkout_id || '', true);
+            add('Our attempt ID', pay.attempt_uid || '', true);
+            add('Taken by', pay.taken_by || '');
+            add('Started', when(pay.started_at));
+            add('Settled', when(pay.settled_at));
+            if (pay.refund_id) {
+                add('Refund ID', pay.refund_id, true);
+                add('Refunded', when(pay.refunded_at));
+            }
+
+            rows.innerHTML = '';
+            out.forEach(tr => rows.appendChild(tr));
+            panel.style.display = '';
+        },
+
         async claimEditLock(orderDbId) {
             try {
                 const resp = await fetch('<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>', {

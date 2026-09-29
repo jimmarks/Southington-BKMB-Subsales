@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.75.3
+ * Version: 3.76.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.75.3' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.76.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -2813,6 +2813,27 @@ function subsales_get_order_by_db_id_ajax() {
     $attempt = Subsales_Orders::captured_digital_payment( $order['order_data'] );
     $order['paid_amount'] = $attempt ? number_format( floatval( $attempt['total_amount'] ), 2, '.', '' ) : '';
     $order['refund_id']   = $attempt && ! empty( $attempt['refund_id'] ) ? $attempt['refund_id'] : '';
+
+    // The Square side of a digital order, shown on the edit screen so an admin
+    // can see it came back successfully without opening the Square dashboard.
+    // Any outcome, not just a capture: an attempt that failed or was cancelled
+    // is exactly what someone is looking for when an order looks wrong.
+    $any_attempt = Subsales_Orders::payment_attempt_for( $order['order_data'] );
+    $order['digital_payment'] = $any_attempt ? array(
+        'status'      => $any_attempt['status'],
+        'attempt_uid' => $any_attempt['attempt_uid'],
+        'payment_id'  => $any_attempt['square_payment_id'],
+        'order_id'    => $any_attempt['square_order_id'],
+        'checkout_id' => $any_attempt['square_checkout_id'],
+        'subtotal'    => number_format( floatval( $any_attempt['subtotal_amount'] ), 2, '.', '' ),
+        'fee'         => number_format( floatval( $any_attempt['convenience_fee_amount'] ), 2, '.', '' ),
+        'total'       => number_format( floatval( $any_attempt['total_amount'] ), 2, '.', '' ),
+        'taken_by'    => $any_attempt['entered_by_name'],
+        'started_at'  => $any_attempt['created_at'],
+        'settled_at'  => $any_attempt['updated_at'],
+        'refund_id'   => $any_attempt['refund_id'],
+        'refunded_at' => $any_attempt['refunded_at'],
+    ) : null;
 
     wp_send_json_success( $order );
 }

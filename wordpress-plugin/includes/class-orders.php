@@ -262,17 +262,34 @@ class Subsales_Orders {
      * @return array|null The paid attempt row, or null if no captured payment.
      */
     public static function captured_digital_payment( $order_data ) {
-        if ( ! is_array( $order_data ) ) {
-            return null;
-        }
+        $row = self::payment_attempt_for( $order_data );
+        return ( $row && $row['status'] === 'paid' ) ? $row : null;
+    }
 
-        $attempt_uid = '';
+    /**
+     * The attempt id this order carries, if any.
+     */
+    public static function payment_attempt_uid( $order_data ) {
+        if ( ! is_array( $order_data ) ) {
+            return '';
+        }
         foreach ( array( 'digitalAttemptId', 'digital_attempt_id', 'attempt_id' ) as $k ) {
             if ( ! empty( $order_data[ $k ] ) ) {
-                $attempt_uid = (string) $order_data[ $k ];
-                break;
+                return (string) $order_data[ $k ];
             }
         }
+        return '';
+    }
+
+    /**
+     * The payment attempt behind an order whatever its outcome, so the edit
+     * screen can show what Square actually came back with - paid, cancelled or
+     * failed - rather than only proving a successful capture.
+     *
+     * @return array|null The attempt row, or null if the order has no attempt.
+     */
+    public static function payment_attempt_for( $order_data ) {
+        $attempt_uid = self::payment_attempt_uid( $order_data );
         if ( '' === $attempt_uid ) {
             return null;
         }
@@ -280,9 +297,8 @@ class Subsales_Orders {
         global $wpdb;
         $table = $wpdb->prefix . 'ss_payment_attempts';
         $row = $wpdb->get_row( $wpdb->prepare(
-            "SELECT * FROM {$table} WHERE attempt_uid = %s AND status = %s",
-            $attempt_uid,
-            'paid'
+            "SELECT * FROM {$table} WHERE attempt_uid = %s",
+            $attempt_uid
         ), ARRAY_A );
 
         return $row ? $row : null;

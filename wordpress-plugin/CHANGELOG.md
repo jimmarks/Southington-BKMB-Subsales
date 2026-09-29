@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.76.0] - 2026-09-29
+
+### Added
+- **Digital orders now show what Square came back with.** Opening a card order shows a Digital payment panel: whether it succeeded, the amount (with the convenience fee broken out when there is one), the Square payment and order IDs, our own attempt ID, who took it, and when it started and settled — plus the refund ID once refunded. An attempt that failed, expired or was cancelled shows too, marked as such, since that is exactly what someone is looking for when an order looks wrong. Cash and check orders are unchanged.
+
 ## [3.75.3] - 2026-09-29
 
 ### Fixed
