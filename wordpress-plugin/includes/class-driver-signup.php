@@ -543,6 +543,7 @@ class Subsales_Driver_Signup {
         .autocomplete-results button { display: block; width: 100%; text-align: left; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid #f0f0f0; font-size: 15px; cursor: pointer; }
         .autocomplete-results button:hover { background: #f5f7ff; }
         .autocomplete-results .ac-help { padding: 8px 12px; color: #777; font-size: 13px; }
+        .field-hint { font-size: 13px; color: #666; margin: -2px 0 8px 0; line-height: 1.4; }
         .link-btn { background: none; border: none; color: <?php echo esc_attr( $primary_color ); ?>; font-size: 15px; text-decoration: underline; cursor: pointer; padding: 0; margin-top: 16px; }
         .my-day { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #eee; }
         .my-day:last-child { border-bottom: none; }
@@ -565,6 +566,7 @@ class Subsales_Driver_Signup {
         <div class="card" id="step1">
             <div class="form-group">
                 <label for="childName">Your Child's Name</label>
+                <p class="field-hint">If you are a parent looking to update your days, click the link below.</p>
                 <input type="text" id="childName" placeholder="Start typing your child's name" autocomplete="new-password" autocorrect="off" spellcheck="false" autocapitalize="words">
                 <div class="autocomplete-results hidden" id="childNameResults"></div>
             </div>

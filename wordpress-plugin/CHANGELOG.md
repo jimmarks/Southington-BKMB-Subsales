@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.77.2] - 2026-09-29
+
+### Changed
+- The driver sign-up page now says, under *Your Child's Name*, that a parent wanting to change their own days should use the link below &mdash; so a returning parent is not left typing their own details into a box asking for a child's.
+
 ## [3.77.1] - 2026-09-29
 
 ### Fixed
