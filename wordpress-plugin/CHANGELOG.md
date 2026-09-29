@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.78.0] - 2026-09-29
+
+### Fixed
+- **Turning on logging for one person did nothing if their app was shut.** The app only learned it was being watched from the reply to a heartbeat, every 30 seconds, so a watch switched on after someone closed the app never reached them &mdash; and even with it open the first half minute was lost, which is exactly when a location prompt happens. The app now asks at startup as well, so logging is on from the first moment.
+
+### Added
+- **A &ldquo;Currently logging&rdquo; panel on the App Sessions screen.** It lists everyone being watched whatever the session list happens to show &mdash; a watched person could drop off the ten most recent sessions, taking the Stop button with them &mdash; and says when each person's app last checked in. If that is before the watch was switched on it says so plainly: nothing is being collected, ask them to open the app.
+
 ## [3.77.2] - 2026-09-29
 
 ### Changed

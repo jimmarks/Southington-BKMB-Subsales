@@ -31,7 +31,17 @@
             // Check if debug mode is enabled on server
             // Note: /config endpoint is public, no auth required for debug status
             try {
-                const response = await fetch(`${this.apiBase}/config`);
+                // Say who is asking: a watch on one seller or one session is
+                // answered here, so logging can be on from the first moment
+                // rather than waiting for a heartbeat 30 seconds in.
+                const who = new URLSearchParams();
+                if (this.sessionId) { who.set('session_id', this.sessionId); }
+                try {
+                    const uid = localStorage.getItem('userId');
+                    if (uid) { who.set('user_id', uid); }
+                } catch (e) {}
+                const qs = who.toString();
+                const response = await fetch(`${this.apiBase}/config` + (qs ? '?' + qs : ''));
 
                 if (response.ok) {
                     const data = await response.json();

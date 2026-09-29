@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.77.2
+ * Version: 3.78.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.77.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.78.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4004,7 +4004,17 @@ function get_app_config( WP_REST_Request $request ) {
     
     // Get debug logging status - ALWAYS return this (not sensitive, just a boolean)
     // This allows PWA to know whether to send logs before authentication
-    $debug_logging_enabled = get_option( 'subsales_debug_logging_enabled', false );
+    //
+    // A watch on one person or session counts too, not just the global switch.
+    // The heartbeat already honoured it, but that is every 30 seconds and only
+    // after one has been sent: a watch turned on while somebody's app was shut
+    // never reached them at all, and even with the app open the first half
+    // minute was lost - which is exactly when a location prompt happens. The
+    // app asks for this config at startup, so honouring it here turns logging
+    // on from the first moment.
+    $cfg_session = isset( $_GET['session_id'] ) ? sanitize_text_field( wp_unslash( $_GET['session_id'] ) ) : '';
+    $cfg_user    = isset( $_GET['user_id'] ) ? intval( $_GET['user_id'] ) : 0;
+    $debug_logging_enabled = Subsales_Database::is_debug_watched( $cfg_session, $cfg_user );
 
     return new WP_REST_Response( array(
         'google_maps_api_key' => $google_maps_api_key,
@@ -6985,6 +6995,77 @@ function subsales_pwa_sessions_page() {
             App Client Sessions
         </h1>
         <?php subsales_logs_nav_tabs( 'sessions' ); ?>
+
+        <?php
+        // Everything currently being logged, whether or not that person's
+        // session is still in the ten rows below. A watch was invisible here
+        // once they dropped off the list - and so was the Stop button.
+        $active_watch = Subsales_Database::get_debug_watch();
+        $watch_rows   = array();
+        foreach ( array( 'users', 'sessions' ) as $bucket ) {
+            foreach ( (array) $active_watch[ $bucket ] as $key => $entry ) {
+                if ( 'users' === $bucket ) {
+                    $seen = $wpdb->get_var( $wpdb->prepare(
+                        "SELECT MAX(last_heartbeat) FROM {$wpdb->prefix}ss_pwa_sessions WHERE user_id = %d", intval( $key ) ) );
+                } else {
+                    $seen = $wpdb->get_var( $wpdb->prepare(
+                        "SELECT last_heartbeat FROM {$wpdb->prefix}ss_pwa_sessions WHERE session_id = %s", $key ) );
+                }
+                $watch_rows[] = array(
+                    'type'  => 'users' === $bucket ? 'user' : 'session',
+                    'id'    => $key,
+                    'label' => ! empty( $entry['label'] ) ? $entry['label'] : $key,
+                    'at'    => intval( $entry['at'] ?? 0 ),
+                    'until' => intval( $entry['until'] ?? 0 ),
+                    // last_heartbeat is written with current_time('mysql'), so it
+                    // is site-local; at/until are real Unix timestamps. Convert
+                    // before comparing, or the two are four hours apart and the
+                    // "has this reached them" answer is simply wrong.
+                    'seen'  => $seen ? strtotime( get_gmt_from_date( $seen ) . ' UTC' ) : 0,
+                );
+            }
+        }
+        ?>
+        <?php if ( $watch_rows ) : ?>
+            <div class="subsales-watch-panel">
+                <h2>Currently logging</h2>
+                <table class="wp-list-table widefat striped">
+                    <thead><tr><th>Who</th><th>Since</th><th>Until</th><th>Their app last checked in</th><th></th></tr></thead>
+                    <tbody>
+                    <?php foreach ( $watch_rows as $w ) :
+                        $reached = $w['seen'] && $w['at'] && $w['seen'] >= $w['at'];
+                        ?>
+                        <tr>
+                            <td><strong><?php echo esc_html( $w['label'] ); ?></strong> <small>(<?php echo esc_html( $w['type'] ); ?>)</small></td>
+                            <td><?php echo $w['at'] ? esc_html( wp_date( 'M j, g:i a', $w['at'] ) ) : '&mdash;'; ?></td>
+                            <td><?php echo $w['until'] ? esc_html( wp_date( 'M j, g:i a', $w['until'] ) ) : 'this session'; ?></td>
+                            <td>
+                                <?php if ( ! $w['seen'] ) : ?>
+                                    <span class="subsales-watch-pending">never</span>
+                                <?php else : ?>
+                                    <?php echo esc_html( wp_date( 'M j, g:i a', $w['seen'] ) ); ?>
+                                    <?php if ( ! $reached ) : ?>
+                                        <br /><span class="subsales-watch-pending">Before you switched this on &mdash; nothing is being collected. Ask them to open the app.</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+                                    <?php wp_nonce_field( 'subsales_debug_watch' ); ?>
+                                    <input type="hidden" name="action" value="subsales_debug_watch" />
+                                    <input type="hidden" name="op" value="stop" />
+                                    <input type="hidden" name="type" value="<?php echo esc_attr( $w['type'] ); ?>" />
+                                    <input type="hidden" name="id" value="<?php echo esc_attr( $w['id'] ); ?>" />
+                                    <button type="submit" class="button button-small">Stop</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
         <?php if ( isset( $_GET['watch'] ) ) :
             $watch_notices = array(
                 'started_session' => array( 'success', 'Logging this session. It starts on their next heartbeat, within about 30 seconds.' ),
@@ -6997,7 +7078,10 @@ function subsales_pwa_sessions_page() {
             <div class="notice notice-<?php echo esc_attr( $wn[0] ); ?> is-dismissible"><p><?php echo esc_html( $wn[1] ); ?></p></div>
         <?php endif; endif; ?>
         <style>
-          .subsales-watch-on{ display:inline-block; margin-right:8px; color:#b26a00; font-weight:600; font-size:12px; }
+          .subsales-watch-panel{margin:16px 0 8px 0}
+        .subsales-watch-panel h2{font-size:15px;margin:0 0 8px 0}
+        .subsales-watch-pending{color:#8c4b00;font-size:11px;font-weight:600;display:inline-block;max-width:260px;line-height:1.35;margin-top:3px}
+        .subsales-watch-on{ display:inline-block; margin-right:8px; color:#b26a00; font-weight:600; font-size:12px; }
         </style>
 
         <?php if ( isset( $_GET['debug'] ) && $_GET['debug'] === '1' ): ?>
@@ -7156,8 +7240,21 @@ function subsales_pwa_sessions_page() {
                         </td>
                         <td><small><?php echo esc_html( $session['ip_address'] ); ?></small></td>
                         <td>
+                            <?php
+                            // A watch only reaches the device when its app next
+                            // asks - startup, or a heartbeat every 30s. Turned on
+                            // while their app is shut, it never arrives, and the
+                            // row still said "logging" with nothing coming in.
+                            $watch_entry = $on_user ? $watch_now['users'][ (string) $member_id ] : ( $on_session ? $watch_now['sessions'][ $sid ] : null );
+                            $watch_at    = $watch_entry && ! empty( $watch_entry['at'] ) ? intval( $watch_entry['at'] ) : 0;
+                            $last_beat   = strtotime( get_gmt_from_date( $session['last_heartbeat'] ) . ' UTC' );
+                            $not_reached = $watch_at && $last_beat && $last_beat < $watch_at;
+                            ?>
                             <?php if ( $on_session || $on_user ) : ?>
                                 <span class="subsales-watch-on">&#9679; logging<?php echo $on_user ? ' (all day)' : ' (this session)'; ?></span>
+                                <?php if ( $not_reached ) : ?>
+                                    <br /><span class="subsales-watch-pending">Not on their device yet &mdash; their app has not checked in since you switched this on. Ask them to open it.</span><br />
+                                <?php endif; ?>
                                 <form method="post" action="<?php echo esc_url( $watch_action ); ?>" style="display:inline">
                                     <?php wp_nonce_field( 'subsales_debug_watch' ); ?>
                                     <input type="hidden" name="action" value="subsales_debug_watch" />
