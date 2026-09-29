@@ -2865,6 +2865,13 @@
         if (appSection) { appSection.classList.remove('hidden'); appSection.style.display='block'; }
         
         // Request GPS permission at login (non-blocking)
+        if (!navigator.geolocation && window.PWALogger) {
+          // Worth its own line: no geolocation at all reads as "nothing
+          // happened" otherwise, and it is a different problem from a refusal.
+          window.PWALogger.log('gps', 'Geolocation not available in this browser', {
+            secure_context: window.isSecureContext, user_agent: navigator.userAgent
+          });
+        }
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
             (pos) => {

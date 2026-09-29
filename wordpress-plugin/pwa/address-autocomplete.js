@@ -57,7 +57,7 @@
     const key = cacheKey(lat,lng,radius,max);
 
     // Log search initiation
-    if(window.PWALogger && window.PWALogger.debugEnabled){
+    if(window.PWALogger){
       window.PWALogger.log('address', 'Nearby address search initiated', {
         latitude: lat,
         longitude: lng,
@@ -71,7 +71,7 @@
       const cached = await idbGet(key);
       if(cached && cached.ts && (Date.now() - cached.ts) < CACHE_TTL_MS){
 
-        if(window.PWALogger && window.PWALogger.debugEnabled){
+        if(window.PWALogger){
           window.PWALogger.log('address', 'Address search: cache hit', {
             cache_type: 'IndexedDB',
             results_count: (cached.results||[]).length,
@@ -90,7 +90,7 @@
       const json = await resp.json();
 
       
-      if(window.PWALogger && window.PWALogger.debugEnabled){
+      if(window.PWALogger){
         window.PWALogger.log('address', 'Address search: server response', {
           results_count: (json && json.results && json.results.length) || 0,
           source: 'nearby_api'
@@ -113,7 +113,7 @@
         if(cachedResp){ 
           const j = await cachedResp.json(); 
 
-          if(window.PWALogger && window.PWALogger.debugEnabled){
+          if(window.PWALogger){
             window.PWALogger.log('address', 'Address search: Cache API fallback', {
               results_count: (j && j.results && j.results.length)||0
             });
@@ -134,7 +134,7 @@
     if(!/^[0-9]{5}$/.test(zip)) throw new Error('invalid zip');
     if(ZIP_CACHE[zip]){ 
 
-      if(window.PWALogger && window.PWALogger.debugEnabled){
+      if(window.PWALogger){
         window.PWALogger.log('address', 'ZIP data loaded from memory cache', {
           zip: zip,
           records_count: ZIP_CACHE[zip].length
@@ -144,7 +144,7 @@
     }
     const url = ZIP_BASE_URL + zip + '.json';
 
-    if(window.PWALogger && window.PWALogger.debugEnabled){
+    if(window.PWALogger){
       window.PWALogger.log('address', 'Loading ZIP data', {
         zip: zip,
         url: url
@@ -160,7 +160,7 @@
       // also persist small index in idb for offline
       try{ await idbPut('zip_' + zip, { ts: Date.now(), results: arr }); }catch(e){ console.warn('subsalesNearby: idb store zip failed', e); }
 
-      if(window.PWALogger && window.PWALogger.debugEnabled){
+      if(window.PWALogger){
         window.PWALogger.log('address', 'ZIP data loaded successfully', {
           zip: zip,
           records_count: arr.length,
@@ -180,7 +180,7 @@
         if(cached && cached.results){ 
           ZIP_CACHE[zip] = cached.results; 
 
-          if(window.PWALogger && window.PWALogger.debugEnabled){
+          if(window.PWALogger){
             window.PWALogger.log('address', 'ZIP data loaded from IndexedDB fallback', {
               zip: zip,
               records_count: cached.results.length
@@ -234,7 +234,7 @@
     }
 
     
-    if(window.PWALogger && window.PWALogger.debugEnabled){
+    if(window.PWALogger){
       window.PWALogger.log('address', 'ZIP prefetch started', {
         zip_count: zipList.length,
         base_url: ZIP_BASE_URL
@@ -263,7 +263,7 @@
       if(i < zipList.length - 1) await new Promise(r=>setTimeout(r, 100));
     }
 
-    if(window.PWALogger && window.PWALogger.debugEnabled){
+    if(window.PWALogger){
       window.PWALogger.log('address', 'ZIP prefetch completed', {
         total_zips: zipList.length,
         success_count: successCount,
@@ -605,7 +605,7 @@
   function renderDropdown(inputEl, items, opts){
     opts = opts || {};
 
-    if(window.PWALogger && window.PWALogger.debugEnabled){
+    if(window.PWALogger){
       window.PWALogger.log('address', 'Address suggestions displayed', {
         suggestions_count: items ? items.length : 0
       });
@@ -665,7 +665,7 @@
       // unify selection logic so we can trigger it from pointer/touch/click
       const doSelect = ()=>{
 
-        if(window.PWALogger && window.PWALogger.debugEnabled){
+        if(window.PWALogger){
           window.PWALogger.log('address', 'Address suggestion selected', {
             selected_address: normalizeAddress(it),
             city: it.city || '',
@@ -831,7 +831,7 @@
         // throttle repeated requests
         const now = Date.now(); if(now - lastFetchTs < 1000) return; lastFetchTs = now;
 
-        if(window.PWALogger && window.PWALogger.debugEnabled){
+        if(window.PWALogger){
           window.PWALogger.log('address', 'Address input search triggered', {
             query_length: q.length,
             has_zip_loaded: !!currentZipLoaded,
@@ -969,7 +969,7 @@
     
     btn.addEventListener('click', ()=>{
 
-      if(window.PWALogger && window.PWALogger.debugEnabled){
+      if(window.PWALogger){
         window.PWALogger.log('address', 'Manual address entry mode activated');
       }
       
@@ -1042,7 +1042,7 @@
         return;
       }
 
-      if(window.PWALogger && window.PWALogger.debugEnabled){
+      if(window.PWALogger){
         window.PWALogger.log('address', 'Use my location clicked');
       }
       
@@ -1053,7 +1053,7 @@
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
 
-        if(window.PWALogger && window.PWALogger.debugEnabled){
+        if(window.PWALogger){
           window.PWALogger.log('address', 'GPS coordinates obtained', {lat, lng});
         }
         
@@ -1084,7 +1084,7 @@
           inputEl.value = normalizeAddress(nearest.item);
           try{ inputEl.dataset.entryMethod = 'gps'; }catch(e){}
 
-          if(window.PWALogger && window.PWALogger.debugEnabled){
+          if(window.PWALogger){
             window.PWALogger.log('address', 'Address filled from nearest cached record', {
               address: inputEl.value,
               distance_feet: Math.round(nearest.distanceFeet)
@@ -1094,7 +1094,7 @@
           // Say so instead of guessing. The field is left alone so whatever the
           // seller has already typed survives, and the phone's own coordinates
           // are still saved with the order regardless of this button.
-          if(window.PWALogger && window.PWALogger.debugEnabled){
+          if(window.PWALogger){
             window.PWALogger.log('address', 'Location too far from any known address to fill', {
               distance_feet: nearest ? Math.round(nearest.distanceFeet) : null
             });
@@ -1108,6 +1108,34 @@
         btn.innerHTML = '📍 Use my location';
       }, (error)=>{
         console.warn('subsalesNearby: geolocation error', error);
+
+        // The one event worth having and it was never recorded: this branch
+        // alerted the seller and wrote to a console nobody can read from a
+        // doorstep. code 1 = permission denied, 2 = position unavailable,
+        // 3 = timeout, and which one it is decides whether the fix is iOS
+        // settings, the browser, or the site.
+        if (window.PWALogger) {
+          var gctx = {
+            error_code: error.code,
+            error_message: error.message,
+            is_ios: (typeof isIOS === 'function' ? isIOS() : null),
+            standalone: !!(window.navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)),
+            secure_context: window.isSecureContext,
+            user_agent: navigator.userAgent
+          };
+          window.PWALogger.log('gps', 'Use my location failed', gctx);
+          // Asked separately: the browser can say denied even when it never
+          // prompted, which is the iOS "Location Services off for the app" case.
+          try {
+            if (navigator.permissions && navigator.permissions.query) {
+              navigator.permissions.query({ name: 'geolocation' }).then(function(st){
+                window.PWALogger.log('gps', 'Geolocation permission state', {
+                  state: st.state, after_error_code: error.code
+                });
+              }).catch(function(){});
+            }
+          } catch(e) {}
+        }
         
         // Provide specific error messages based on error code
         let errorMsg = 'Could not get your location.';

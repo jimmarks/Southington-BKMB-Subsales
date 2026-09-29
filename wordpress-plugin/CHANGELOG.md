@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.79.0] - 2026-09-29
+
+### Added
+- **A failed &ldquo;Use my location&rdquo; is now recorded.** It used to tell the seller on screen and write to the phone's own console, which nobody can read from a doorstep &mdash; so the one thing worth knowing never left the device. The log now says whether the location was refused, unavailable or timed out, whether it is an iPhone, whether the app is installed to the home screen, and what the browser separately reports the location permission to be. A browser with no location support at all is recorded too, rather than looking like nothing happened.
+
+### Fixed
+- Location events were skipped unless logging was already switched on at that instant, which defeated the holding buffer added in 3.78.1 &mdash; the very events it exists to keep.
+
 ## [3.78.2] - 2026-09-29
 
 ### Fixed
