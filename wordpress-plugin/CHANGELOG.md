@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.76.2] - 2026-09-29
+
+### Fixed
+- **&ldquo;Could not start the digital payment&rdquo; when the app was opened without the www.** The site answers on both subsales.southingtonbkmb.com and www.subsales.southingtonbkmb.com, but the app's address is the www one. On the bare address the browser has to ask permission before sending anything, and WordPress's fixed list of allowed headers did not include the ones the app uses to say who the seller is &mdash; so the browser refused and the payment request was never sent at all. Nothing reached the server, which is why nothing appeared in the logs. Cash and check were unaffected, as was the same seller on the www address.
+
 ## [3.76.1] - 2026-09-29
 
 ### Security

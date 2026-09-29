@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.76.1
+ * Version: 3.76.2
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.76.1' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.76.2' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -4132,6 +4132,22 @@ add_action( 'template_redirect', 'subsales_serve_portal_assets', 1 );
 add_action( 'wp', 'subsales_catch_signup_404', 1 );
 
 // REST endpoint: nearby addresses by lat/lng + radius (meters)
+/**
+ * The app identifies itself with its own headers (digitalAuthHeaders() in
+ * app.js). WordPress's CORS allow-list is fixed - Authorization, X-WP-Nonce,
+ * Content-Disposition, Content-MD5, Content-Type - so a browser on any origin
+ * other than home_url fails the preflight and never sends the request.
+ *
+ * That is what happened on 2026-09-29: a seller opened the app on
+ * subsales.southingtonbkmb.com while home_url is the www host, and every
+ * attempt to start a digital payment stopped at the preflight. The app showed
+ * "Could not start the digital payment" and nothing reached the server, so
+ * there was nothing in the logs to find - five OPTIONS and not one POST.
+ */
+add_filter( 'rest_allowed_cors_headers', function( $headers ) {
+    return array_merge( (array) $headers, array( 'X-User-ID', 'X-Team-ID', 'X-Team-Name', 'X-Access-Code' ) );
+} );
+
 add_action( 'rest_api_init', function(){
     register_rest_route( 'subsales/v1', '/nearby', array(
         'methods' => 'GET',
