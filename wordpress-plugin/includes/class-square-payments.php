@@ -83,7 +83,14 @@ class Subsales_Square_Payments {
 
         $pre = array();
 
-        if ( 10 === strlen( $phone ) ) {
+        // Donation-only orders carry a placeholder number (0000000000) because
+        // there is nobody to deliver to and no receipt to send. Square rejects
+        // it outright - INVALID_PHONE_NUMBER on buyer_phone_number - which
+        // failed the whole payment link, so a donation-only order could never
+        // get a QR code at all. A number that cannot be real is simply left
+        // out; Square asks the customer for one if it wants one.
+        $placeholder = ( '' === rtrim( $phone, '0' ) ) || preg_match( '/^(\d)\1{9}$/', $phone );
+        if ( 10 === strlen( $phone ) && ! $placeholder && ! in_array( $phone[0], array( '0', '1' ), true ) ) {
             $pre['buyer_phone_number'] = '+1' . $phone;
         }
 

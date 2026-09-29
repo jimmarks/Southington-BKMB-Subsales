@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.77.0] - 2026-09-29
+
+### Fixed
+- **A donation-only order could never be paid by card.** Those orders carry a placeholder phone number, because there is nobody to deliver to and no receipt to send, and Square rejected it outright &mdash; which failed the whole payment link, so no QR code ever appeared. A number that cannot be real is now simply left out of what we send Square, and the customer is asked for one there if it wants one. A donation on its own now reaches the QR code like any other order, and the donation is charged.
+- **The order total could sit at $0.00 with a donation typed in.** The total only recalculated while someone was typing in the donation box, so a donation filled in by the app &mdash; restoring a saved order, opening one to edit, or switching on donation-only &mdash; was not counted on screen. The amount actually charged was always right; the figure on the seller's screen was not.
+
 ## [3.76.2] - 2026-09-29
 
 ### Fixed

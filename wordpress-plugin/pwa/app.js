@@ -345,6 +345,9 @@
       try{ if (qs('#notes')) qs('#notes').value = orderObj.notes || ''; }catch(e){}
       try{ if (qs('#donationAmount')) qs('#donationAmount').value = (orderObj.donationAmount !== undefined) ? orderObj.donationAmount : (orderObj.donation || ''); }catch(e){}
       try{ if (qs('#checkNumber')) qs('#checkNumber').value = orderObj.checkNumber || ''; }catch(e){}
+      // Writing .value fires nothing, so the total kept the previous order's
+      // figure - or $0.00 - until something else was touched.
+      try{ if (typeof window.refreshTotal === 'function') window.refreshTotal(); }catch(e){}
       // products: set qty inputs
       try{
         // ensure products inputs are present (re-render if needed) then clear and populate
@@ -1800,7 +1803,16 @@
     }catch(e){ console.warn('computeTotal error', e); return 0; }
   }
   // attach listeners: donation and product inputs will add listeners when rendered
-  if (donationAmount) donationAmount.addEventListener('input', computeTotal);
+  // 'input' alone misses every value set by code - restoring a saved order,
+  // loading one to edit, the donation-only toggle - so the total could sit at
+  // $0.00 with a donation clearly typed in the box. 'change' catches the rest,
+  // and refreshTotal() is what those paths call after writing the field.
+  if (donationAmount) {
+    donationAmount.addEventListener('input', computeTotal);
+    donationAmount.addEventListener('change', computeTotal);
+    donationAmount.addEventListener('blur', computeTotal);
+  }
+  window.refreshTotal = computeTotal;
 
   // Clear the order form inputs after a successful save
   function clearOrderForm(){
