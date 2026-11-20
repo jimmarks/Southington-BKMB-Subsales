@@ -131,7 +131,7 @@
     ]);
 
     var box = h('div', { class: 'signin' }, [
-      h('h1', { text: 'Sub Sale Admin' }),
+      h('h1', { text: 'BKMB SubSales Admin' }),
       h('p', { text: cfg.brand || '' })
     ]);
     if (cfg.denied) {

@@ -88,8 +88,8 @@ class Subsales_Admin_App {
 		if ( $file === 'manifest.json' ) {
 			header( 'Content-Type: application/manifest+json; charset=utf-8' );
 			echo wp_json_encode( array(
-				'name'             => 'Sub Sale Admin',
-				'short_name'       => 'Sale Admin',
+				'name'             => 'BKMB SubSales Admin',
+				'short_name'       => 'BKMB Admin',
 				'start_url'        => home_url( '/admin-portal/' ),
 				'scope'            => home_url( '/admin-portal/' ),
 				'display'          => 'standalone',
@@ -143,9 +143,9 @@ class Subsales_Admin_App {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#7a1f1f">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Sale Admin">
+<meta name="apple-mobile-web-app-title" content="BKMB Admin">
 <meta name="robots" content="noindex,nofollow">
-<title>Sub Sale Admin</title>
+<title>BKMB SubSales Admin</title>
 <link rel="manifest" href="<?php echo esc_url( home_url( '/admin-portal/manifest.json' ) ); ?>">
 <link rel="apple-touch-icon" href="<?php echo esc_url( $url . 'icon-192.png' ); ?>">
 <link rel="stylesheet" href="<?php echo esc_url( $url . 'app.css?v=' . $v ); ?>">
