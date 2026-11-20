@@ -383,6 +383,7 @@ class Subsales_Database {
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             sent_at datetime DEFAULT NULL,
             read_at datetime DEFAULT NULL,
+            sent_by varchar(100) DEFAULT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY uniq_twilio_sid (twilio_sid),
             KEY idx_status_next (status, next_attempt_at),

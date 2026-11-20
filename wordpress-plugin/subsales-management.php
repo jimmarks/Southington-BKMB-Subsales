@@ -3,7 +3,7 @@
  * Plugin Name: Subsales Management
  * Plugin URI: https://github.com/jimmarks/Southington-BKMB-Subsales
  * Description: A comprehensive order management system for mobile app synchronization with WordPress backend. Includes multi-team management, Google Maps integration, and professional admin interface. ⚠️ WARNING: By default, deleting this plugin will permanently remove ALL data. Configure deletion settings in BKMB Subsales → Settings.
- * Version: 3.80.2
+ * Version: 3.81.0
  * Author: Jim Marks
  * Author URI: https://github.com/jimmarks
  * Requires at least: 5.0
@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // ---- Plugin constants ----
-if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.80.2' );
+if ( ! defined( 'SUBSALES_VERSION' ) ) define( 'SUBSALES_VERSION', '3.81.0' );
 if ( ! defined( 'SUBSALES_PLUGIN_URL' ) ) define( 'SUBSALES_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_PATH' ) ) define( 'SUBSALES_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
 if ( ! defined( 'SUBSALES_PLUGIN_BASENAME' ) ) define( 'SUBSALES_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -73,6 +73,7 @@ require_once SUBSALES_PLUGIN_PATH . 'includes/class-orders.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-teams.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-signups.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-driver-signup.php';
+require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-app.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-admin-pages.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-ajax-handlers.php';
 require_once SUBSALES_PLUGIN_PATH . 'includes/class-zip-boundary.php';
@@ -118,6 +119,7 @@ Subsales_Signups::init();
 
 // Initialize Driver Signups (parent/driver self-registration)
 Subsales_Driver_Signup::init();
+Subsales_Admin_App::init();
 
 // Initialize Admin Pages
 Subsales_Admin_Pages::init();

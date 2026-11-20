@@ -238,6 +238,9 @@ class Subsales_Orders {
         if ( current_user_can( 'manage_options' ) ) {
             return true;
         }
+        if ( class_exists( 'Subsales_Admin_App' ) && Subsales_Admin_App::acting() ) {
+            return true;
+        }
 
         $ctx = class_exists( 'Subsales_REST_API' ) ? Subsales_REST_API::auth_context() : null;
         if ( ! is_array( $ctx ) ) {
@@ -589,7 +592,12 @@ class Subsales_Orders {
         // Being logged in is not the same as being an admin. This flag also
         // decides whether the captured-payment edit lock is skipped, so a
         // logged-in Subscriber or Contributor must not satisfy it.
-        $is_admin = ( $current_user && $current_user->ID && current_user_can( 'manage_options' ) );
+        // A Sub Sale Manager saving through the admin app counts as an admin
+        // here, and only here: acting() is true solely while that app's own
+        // save endpoint is calling this, so the capability cannot be used to
+        // reach this route directly.
+        $via_app  = class_exists( 'Subsales_Admin_App' ) && Subsales_Admin_App::acting();
+        $is_admin = ( $current_user && $current_user->ID && ( current_user_can( 'manage_options' ) || $via_app ) );
         
         $user_id = null;
         $user_name = '';
@@ -599,7 +607,8 @@ class Subsales_Orders {
             // WordPress admin is authenticated
             $user_id = $current_user->ID;
             $user_name = $current_user->display_name;
-            $auth_source = 'admin';
+            // Recorded in the edit history so it says where a change came from.
+            $auth_source = $via_app ? 'admin-app' : 'admin';
         } else {
             // Check for user-based authentication (X-User-ID header)
             $header_user_id = $request->get_header( 'X-User-ID' );
@@ -654,7 +663,7 @@ class Subsales_Orders {
         // stay editable; correcting those is the point of the text receipt.
         // Admins are exempt: fixing a wrong order is their job, and the refund
         // path is admin-only by design.
-        if ( 'admin' !== $auth_source ) {
+        if ( ! $is_admin ) {
             $captured = self::captured_digital_payment( $before_data );
 
             // A card-paid order must be protected even when the attempt id is
