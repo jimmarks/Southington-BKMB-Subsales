@@ -72,7 +72,12 @@ button{cursor:pointer}
 .empty{padding:40px 20px;text-align:center;color:var(--muted)}
 
 /* Chat */
-.chat{display:flex;flex-direction:column;gap:4px;padding:12px 12px 8px}
+/* clip, not hidden: hidden would make these scroll boxes of their own, which
+   is the trap the seller app fell into. Nothing in a chat may widen the page. */
+body{overflow-x:clip}
+.chat{display:flex;flex-direction:column;gap:4px;padding:12px 12px 8px;max-width:100%;overflow-x:clip}
+.bubble,.stamp,.status{min-width:0}
+.bar .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stamp{align-self:center;color:var(--muted);font-size:11px;margin:10px 0 4px}
 .bubble{max-width:78%;padding:9px 13px;border-radius:18px;font-size:16px;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}
 .bubble.in{align-self:flex-start;background:var(--bubble-in);border-bottom-left-radius:5px}
@@ -81,9 +86,9 @@ button{cursor:pointer}
 .status{align-self:flex-end;font-size:11px;color:var(--muted);margin:0 6px 2px}
 .orderline{display:block;width:100%;text-align:left;background:var(--card);border:0;border-bottom:1px solid var(--line);
   padding:10px 14px;min-height:44px;font-size:14px;color:var(--accent);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.reply{position:fixed;left:0;right:0;bottom:calc(var(--tabs) + env(safe-area-inset-bottom,0));background:var(--card);
+.reply{position:fixed;left:0;right:0;width:100%;box-sizing:border-box;bottom:calc(var(--tabs) + env(safe-area-inset-bottom,0));background:var(--card);
   border-top:1px solid var(--line);padding:8px 10px;display:flex;gap:8px;align-items:flex-end;max-width:720px;margin:0 auto}
-.reply textarea{flex:1 1 auto;border:1px solid var(--line);border-radius:18px;padding:9px 13px;font-size:16px;resize:none;max-height:120px;min-height:42px}
+.reply textarea{flex:1 1 auto;min-width:0;width:100%;border:1px solid var(--line);border-radius:18px;padding:9px 13px;font-size:16px;resize:none;max-height:120px;min-height:42px}
 .reply button{flex:0 0 auto;background:var(--accent);color:#fff;border:0;border-radius:18px;min-height:42px;padding:0 16px;font-weight:700}
 .reply button:disabled{opacity:.5}
 .reply.off{justify-content:center;color:var(--warn);font-weight:600;padding:14px}
